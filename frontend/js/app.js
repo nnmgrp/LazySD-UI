@@ -290,10 +290,13 @@ const App = {
       panel.style.display = "none";
     });
 
-    // Show selected
-    const activePanel = document.getElementById(`tab-${tabName}`);
+    // Map tab aliases (e.g. img2img / image_edit -> tab-generate)
+    const targetId = (tabName === "img2img" || tabName === "image_edit") ? "tab-generate" : `tab-${tabName}`;
+
+    // Show selected panel
+    const activePanel = document.getElementById(targetId);
     if (activePanel) {
-      activePanel.style.display = "block";
+      activePanel.style.display = (targetId === "tab-generate") ? "flex" : "block";
     }
 
     // Auto-load history when history tab opens
