@@ -1,0 +1,144 @@
+{
+  "id": "flux_klein_4b",
+  "name": "Flux.2 Klein 4B",
+  "family": "klein",
+  "pipeline": "text_to_image",
+  "key_protected": true,
+  "description": "Compact 4B-parameter Flux.2 Klein — the smallest Klein variant (~2.1 GB transformer). Lighting backend, 4 steps. Key-protected: requires the bundled free-trial test key (config.json) or a personal QuantFunc API key.",
+  "upstream": {
+    "model": "black-forest-labs/FLUX.2-klein-4b",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "modelscope",
+      "repo_id": "QuantFunc/Klein-4B-Series"
+    },
+    "mirror": {
+      "type": "huggingface",
+      "repo_id": "QuantFunc/Klein-4B-Series"
+    }
+  },
+  "base_models": {
+    "50x-above": "klein-4b-series-50x-above-base-model/",
+    "50x-below": "klein-4b-series-50x-below-base-model/"
+  },
+  "transformers": [
+    {
+      "id": "lighting-50x",
+      "path": "transformer/klein-4b-50x-lighting.safetensors",
+      "tier": "50x-above",
+      "klein_tier": "50x",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.11,
+      "size_bytes": 2266010588,
+      "sha256": "29b33cbea482052ce02e15befd07f3fa120f60f59c10d784edac163e803af644",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 5060 Ti", "RTX 5070", "RTX 5070 Ti", "RTX 5080", "RTX 5090", "B200", "GB300"]
+    },
+    {
+      "id": "lighting-50x-base",
+      "path": "transformer/klein-4b-base-50x-lighting.safetensors",
+      "tier": "50x-above",
+      "klein_tier": "50x",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.11,
+      "size_bytes": 2266010649,
+      "sha256": "d674eb9aedf0728c1039acae95dba1881b1a7bc1e1cf79975a826de4cf5c9ae0",
+      "recommended": false,
+      "note": "Base (non-consistency-tuned) variant"
+    },
+    {
+      "id": "lighting-40x",
+      "path": "transformer/klein-4b-40x-lighting.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "40x",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.0,
+      "size_bytes": 2150994043,
+      "sha256": "c67f0aca623481084a55a03f30e965df7db85afb87bdf7977f3503d1c0a53a4c",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090", "RTX 6000 Ada"]
+    },
+    {
+      "id": "lighting-40x-base",
+      "path": "transformer/klein-4b-base-40x-lighting.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "40x",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.0,
+      "size_bytes": 2150993993,
+      "sha256": "60d2f332a565390b9e85d7e92c7f8b425118a2bba6710284cd56fb313e338929",
+      "recommended": false,
+      "note": "Base (non-consistency-tuned) variant"
+    },
+    {
+      "id": "lighting-30x-below",
+      "path": "transformer/klein-4b-30x-below-lighting.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "30x-below",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.0,
+      "size_bytes": 2150994007,
+      "sha256": "f078353fa7388fd57fe250ea3d1503edbd2a8c9b5a4d3cc99390b853dab66562",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 2060", "RTX 2070", "RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090", "A100", "A4000"]
+    },
+    {
+      "id": "lighting-30x-below-base",
+      "path": "transformer/klein-4b-base-30x-below-lighting.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "30x-below",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.0,
+      "size_bytes": 2150993972,
+      "sha256": "a43579b524fc81395c90854742a4e4fa580a534f8f7994c9f1cbeae521a10b34",
+      "recommended": false,
+      "note": "Base (non-consistency-tuned) variant"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [
+    {
+      "id": "fp4-f8-50x",
+      "path": "precision-config/50x-fp4-f8-sample.json",
+      "tier": "50x-above",
+      "klein_tier": "50x"
+    },
+    {
+      "id": "int4-f8-40x",
+      "path": "precision-config/40x-int4-f8-sample.json",
+      "tier": "50x-below",
+      "klein_tier": "40x"
+    },
+    {
+      "id": "int4-i8-30x-below",
+      "path": "precision-config/30x-below-int4-i8-sample.json",
+      "tier": "50x-below",
+      "klein_tier": "30x-below"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 6,
+    "vram_recommended_gb": 8,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "lighting-4steps": {"steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple"}
+  }
+}

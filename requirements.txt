@@ -1,0 +1,31 @@
+# QuantFunc WebUI dependencies
+# Tested with Python 3.12 on Windows 10/11
+#
+# CRITICAL: We do NOT use gradio (we use FastAPI + uvicorn directly,
+# serving custom index.html — same pattern as the HF Space reference).
+# This avoids the gradio <-> huggingface_hub version conflict
+# (gradio 4.x needs HfFolder, which was removed in huggingface_hub 1.0).
+
+# Web framework — serves custom HTML + JSON API
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9        # For FastAPI form data
+
+# Model source SDKs
+# CRITICAL: pin huggingface_hub < 1.0 to keep API stable (snapshot_download,
+# hf_hub_download, HfApi). huggingface_hub 1.x changed the API significantly.
+huggingface_hub>=0.24.0,<1.0.0
+modelscope>=1.18.0,<2.0.0
+
+# HTTP for engine binary download + verify.json
+requests>=2.31.0
+
+# Settings + data validation
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0
+
+# Image handling (output thumbnails)
+Pillow>=10.0.0
+
+# Process management (worker subprocess)
+psutil>=5.9.0

@@ -1,0 +1,23 @@
+# Python / Virtualenv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Models cache & binaries
+models/cache/
+bin/
+settings.json
+
+# Outputs (keep directory structure)
+outputs/*
+!outputs/.gitkeep
+!outputs/uploads/
+outputs/uploads/*
+!outputs/uploads/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

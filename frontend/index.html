@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuantFunc WebUI</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EQ%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- ============== MENUBAR ============== -->
+    <header class="menubar">
+      <div class="menubar-left">
+        <div class="brand">
+          <div class="brand-logo">Q</div>
+          <span>QuantFunc WebUI</span>
+        </div>
+        <div class="gpu-indicator" title="GPU status">
+          <span class="gpu-dot" id="gpu-status"></span>
+          <span id="gpu-name">Checking GPU...</span>
+        </div>
+      </div>
+      <div class="menubar-right">
+        <div class="lang-toggle">
+          <button class="lang-btn" data-lang="en">EN</button>
+          <button class="lang-btn" data-lang="ru">RU</button>
+        </div>
+        <button class="icon-btn" id="settings-btn" title="Settings" onclick="App.switchTab('settings')">⚙</button>
+      </div>
+    </header>
+
+    <!-- ============== SIDEBAR ============== -->
+    <aside class="sidebar">
+      <div class="nav-section">
+        <div class="nav-section-title" data-i18n="nav.section.pipelines">Pipelines</div>
+        <button class="nav-item active" data-tab="generate">
+          <span class="nav-icon">✨</span>
+          <span class="nav-label" data-i18n="nav.generate">Generate</span>
+        </button>
+        <button class="nav-item" data-tab="image_edit" disabled>
+          <span class="nav-icon">🖼</span>
+          <span class="nav-label" data-i18n="nav.image_edit">Image Edit</span>
+          <span class="badge">soon</span>
+        </button>
+        <button class="nav-item" data-tab="img2img" disabled>
+          <span class="nav-icon">🔄</span>
+          <span class="nav-label" data-i18n="nav.img2img">Img2Img</span>
+          <span class="badge">soon</span>
+        </button>
+        <button class="nav-item" data-tab="inpaint" disabled>
+          <span class="nav-icon">🎨</span>
+          <span class="nav-label" data-i18n="nav.inpaint">Inpaint</span>
+          <span class="badge">soon</span>
+        </button>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title" data-i18n="nav.section.tools">Tools</div>
+        <button class="nav-item" data-tab="models">
+          <span class="nav-icon">📦</span>
+          <span class="nav-label" data-i18n="nav.models">Models</span>
+        </button>
+        <button class="nav-item" data-tab="templates" disabled>
+          <span class="nav-icon">📋</span>
+          <span class="nav-label" data-i18n="nav.templates">Templates</span>
+          <span class="badge">soon</span>
+        </button>
+        <button class="nav-item" data-tab="history">
+          <span class="nav-icon">🕐</span>
+          <span class="nav-label" data-i18n="nav.history">History</span>
+        </button>
+      </div>
+
+      <div class="sidebar-spacer"></div>
+
+      <div class="nav-section">
+        <button class="nav-item" data-tab="settings">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-label" data-i18n="nav.settings">Settings</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ============== MAIN ============== -->
+    <main class="main">
+
+      <!-- ===== Tab: Generate ===== -->
+      <section class="tab-panel" id="tab-generate" style="display: flex; flex-direction: column; height: 100%;">
+        <div class="preview-area">
+          <div class="preview-placeholder" id="preview-placeholder">
+            <div class="placeholder-icon">🖼</div>
+            <div class="placeholder-text" data-i18n="preview.placeholder">Generated image will appear here</div>
+          </div>
+          <div class="preview-image-wrap" id="preview-image-wrap" style="display: none;">
+            <img id="preview-img" alt="Generated image">
+            <div class="preview-toolbar">
+              <button class="icon-btn" title="Fit" onclick="zoomFit()">⤢</button>
+              <button class="icon-btn" title="1:1" onclick="zoomOriginal()">1:1</button>
+              <button class="icon-btn" title="Download" onclick="downloadImage()">⬇</button>
+              <button class="icon-btn" title="Open folder" onclick="openOutputDir()">📂</button>
+            </div>
+          </div>
+
+          <!-- Progress overlay -->
+          <div class="progress-overlay" id="progress-overlay" style="display: none;">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Starting...</div>
+            <button class="progress-cancel" id="progress-cancel" data-i18n="controls.cancel">Cancel</button>
+          </div>
+
+          <!-- Drop overlay for drag&drop -->
+          <div class="drop-overlay" id="drop-overlay"></div>
+        </div>
+
+        <div class="prompt-panel">
+          <div class="prompt-row">
+            <textarea id="prompt-input"
+                      data-i18n-placeholder="prompt.placeholder"
+                      placeholder="Describe the image to generate..."></textarea>
+          </div>
+          <div class="controls-row">
+            <div class="control-group">
+              <label data-i18n="controls.model">Model</label>
+              <select id="model-select"></select>
+            </div>
+            <div class="control-group">
+              <label data-i18n="controls.backend">Backend</label>
+              <select id="variant-select">
+                <option value="lighting" data-i18n="backend.lighting">Lighting (4 steps)</option>
+                <option value="svdq" data-i18n="backend.svdq">SVDQ (4 steps)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label data-i18n="controls.steps">Steps</label>
+              <input type="number" id="steps-input" value="4" min="1" max="50">
+            </div>
+            <div class="control-group">
+              <label data-i18n="controls.seed">Seed</label>
+              <input type="text" id="seed-input" value="random" data-i18n-placeholder="controls.seed.random">
+            </div>
+            <div class="control-group">
+              <label data-i18n="controls.resolution">Resolution</label>
+              <select id="resolution-select">
+                <option value="1024" data-i18n="controls.resolution.1024">1024 × 1024</option>
+                <option value="1536" data-i18n="controls.resolution.1536">1536 × 1536</option>
+                <option value="2048" data-i18n="controls.resolution.2048">2048 × 2048</option>
+              </select>
+            </div>
+            <button class="generate-btn" id="generate-btn" data-i18n="controls.generate">Generate</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Tab: Models ===== -->
+      <section class="tab-panel" id="tab-models" style="display: none; padding: 24px; overflow-y: auto;">
+        <h2 data-i18n="nav.models">Models</h2>
+        <div id="models-list"></div>
+      </section>
+
+      <!-- ===== Tab: History ===== -->
+      <section class="tab-panel" id="tab-history" style="display: none; overflow-y: auto;">
+        <div class="history-toolbar">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <h2 data-i18n="history.title" style="margin: 0;">History</h2>
+            <span class="history-count" id="history-count">0</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="text" id="history-search" class="history-search-input" placeholder="Search prompt..." data-i18n-placeholder="history.search">
+            <button class="icon-btn" onclick="loadHistory()" data-i18n="history.refresh">Refresh</button>
+          </div>
+        </div>
+        <div class="history-grid" id="history-grid">
+          <div class="preview-placeholder" style="grid-column: 1 / -1;">
+            <div class="placeholder-text" data-i18n="history.empty">No generations yet</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Tab: Settings ===== -->
+      <section class="tab-panel" id="tab-settings" style="display: none; padding: 24px; overflow-y: auto;">
+        <h2 data-i18n="settings.title">Settings</h2>
+
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.engine">Engine</h3>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.engine_version">Engine version</div>
+            <div class="setting-value" id="setting-engine-version">0.0.12</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.cuda_version">CUDA version</div>
+            <div class="setting-value" id="setting-cuda-version">13</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.engine_path">Engine path</div>
+            <div class="setting-value" id="setting-engine-path">—</div>
+            <button class="icon-btn" onclick="verifyEngine()" data-i18n="settings.verify_engine">Verify</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.download_engine">Download engine</div>
+            <div class="setting-value" id="setting-engine-status">—</div>
+            <button class="icon-btn" onclick="downloadEngine()" data-i18n="settings.download_engine">Download</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.check_updates">Check for updates</div>
+            <div class="setting-value"></div>
+            <button class="icon-btn" onclick="checkUpdates()" data-i18n="settings.check_updates">Check</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">CUDA deps</div>
+            <div class="setting-value" id="setting-cuda-status">—</div>
+            <button class="icon-btn" onclick="downloadCudaDeps()">Download</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.qf_api_key">QuantFunc API key</div>
+            <div class="setting-value">
+              <input type="password" id="setting-qf-apikey" placeholder="qf_... (empty = use bundled test key)"
+                     style="width: 100%; font-family: monospace; font-size: 11px;">
+            </div>
+            <button class="icon-btn" id="qf-apikey-status" title="—" onclick="restoreBundledKey()" data-i18n="settings.qf_api_key.restore">Restore test key</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label"></div>
+            <div class="setting-value">
+              <small style="color: var(--text-dim);" data-i18n="settings.qf_api_key.hint">
+                Leave empty to use the shared free-trial test key from bin/&lt;os&gt;/config.json (no registration needed).
+                After the public beta get your own key at quantfunc.com — it is stored here and passed to the engine as --apikey.
+              </small>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">CUDA bin path<br><small style="color: var(--text-dim);">if auto-detect fails</small></div>
+            <div class="setting-value">
+              <input type="text" id="setting-cuda-bin-path" placeholder="auto-detect"
+                     style="width: 100%; font-family: monospace; font-size: 11px;"
+                     title="Path to folder with cublas64_13.dll etc. Example: G:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin\x64">
+            </div>
+            <button class="icon-btn" onclick="saveCudaBinPath()" title="Save">✓</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label"></div>
+            <div class="setting-value">
+              <small style="color: var(--text-dim);">
+                Searched paths (auto-detect):
+                <div id="setting-cuda-search-paths" style="margin-top: 4px; font-family: monospace; font-size: 10px;"></div>
+              </small>
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.gpu">GPU</h3>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.gpu_name">GPU name</div>
+            <div class="setting-value" id="setting-gpu-name">—</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.gpu_sm">SM capability</div>
+            <div class="setting-value" id="setting-gpu-sm">—</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.gpu_vram">VRAM</div>
+            <div class="setting-value" id="setting-gpu-vram">—</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.gpu_driver">Driver</div>
+            <div class="setting-value" id="setting-gpu-driver">—</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.vram_mode">VRAM mode</div>
+            <div class="setting-value">
+              <select id="setting-vram-mode">
+                <option value="auto" data-i18n="settings.vram_mode.auto">Auto</option>
+                <option value="conservative" data-i18n="settings.vram_mode.conservative">Conservative</option>
+                <option value="balanced" data-i18n="settings.vram_mode.balanced">Balanced</option>
+                <option value="maximum" data-i18n="settings.vram_mode.maximum">Maximum</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.auto_optimize">Auto optimize</div>
+            <div class="setting-value">
+              <input type="checkbox" id="setting-auto-optimize" checked>
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.paths">Paths</h3>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.models_dir">Models directory</div>
+            <div class="setting-value" id="setting-models-dir">—</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.output_dir">Output directory</div>
+            <div class="setting-value" id="setting-output-dir">—</div>
+            <div></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.network">Network</h3>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.download_source">Download source priority</div>
+            <div class="setting-value">
+              <select id="setting-download-source">
+                <option value="auto" data-i18n="settings.download_source.auto">Auto</option>
+                <option value="hf_first" data-i18n="settings.download_source.hf_first">HF first</option>
+                <option value="ms_first" data-i18n="settings.download_source.ms_first">MS first</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.hf_token">HuggingFace token</div>
+            <div class="setting-value">
+              <input type="password" id="setting-hf-token" placeholder="hf_...">
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.ms_token">ModelScope token</div>
+            <div class="setting-value">
+              <input type="password" id="setting-ms-token" placeholder="ms-...">
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.auto_update">Auto-update engine</div>
+            <div class="setting-value">
+              <input type="checkbox" id="setting-auto-update" disabled>
+              <small style="margin-left: 8px; color: var(--text-dim);" data-i18n="settings.auto_update.warn">Auto-update is OFF by default</small>
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.advanced">Advanced</h3>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.fbcache_cond">FBCache cond threshold</div>
+            <div class="setting-value">
+              <input type="number" id="setting-fbcache-cond" step="0.01" placeholder="auto">
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.fbcache_uncond">FBCache uncond threshold</div>
+            <div class="setting-value">
+              <input type="number" id="setting-fbcache-uncond" step="0.01" placeholder="auto">
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.rotation_block_size">Rotation block size</div>
+            <div class="setting-value">
+              <select id="setting-rotation-block">
+                <option value="128">128</option>
+                <option value="256" selected>256</option>
+                <option value="512">512</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.log_level">Log level</div>
+            <div class="setting-value">
+              <select id="setting-log-level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO" selected>INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.worker_restart">Auto-restart worker on crash</div>
+            <div class="setting-value">
+              <input type="checkbox" id="setting-worker-restart" checked>
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px;">
+          <button class="generate-btn" onclick="saveSettings()" data-i18n="common.save">Save</button>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ============== STATUSBAR ============== -->
+    <footer class="statusbar">
+      <div class="statusbar-left">
+        <span class="status-pill" id="status-pill">
+          <span data-i18n="status.ready">Ready</span>
+        </span>
+        <span id="status-message"></span>
+      </div>
+      <div class="statusbar-right">
+        <span>v0.1.0 Phase 2</span>
+        <span>·</span>
+        <span>Z.ai · 2026</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- ============== Scripts ============== -->
+  <script src="/js/i18n.js"></script>
+  <script src="/js/dropzone.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    // ---------- Settings tab helpers ----------
+    async function verifyEngine() {
+      try {
+        App.toast("info", "Verifying engine...");
+        const res = await App.apiPost("/api/engine/verify");
+        App.toast(res.status === "ok" ? "success" : "warning", res.message);
+      } catch (e) {
+        App.toast("error", e.message);
+      }
+    }
+
+    async function downloadEngine() {
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; btn.textContent = "Downloading..."; }
+      try {
+        App.toast("info", "Downloading engine (~120 MB)...");
+        const res = await App.apiPost("/api/engine/download");
+        App.toast("success", res.message);
+        // Refresh config to update UI state
+        await App.refreshConfig();
+      } catch (e) {
+        App.toast("error", "Engine download failed: " + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Download"; }
+      }
+    }
+
+    async function checkUpdates() {
+      try {
+        App.toast("info", "Checking for updates...");
+        const res = await App.apiPost("/api/engine/verify");
+        if (res.status === "ok") {
+          App.toast("success", t("toast.engine_verify_ok"));
+        } else if (res.status === "outdated") {
+          App.toast("warning", t("toast.engine_update_available") + " (v" + res.remote_version + ")");
+        } else if (res.status === "offline") {
+          App.toast("warning", t("toast.engine_offline"));
+        }
+      } catch (e) {
+        App.toast("error", e.message);
+      }
+    }
+
+    async function checkCudaStatus() {
+      try {
+        const status = await App.apiGet("/api/cuda/status");
+        const el = document.getElementById("setting-cuda-status");
+        if (!el) return status;
+
+        // Show search paths in info section
+        const pathsEl = document.getElementById("setting-cuda-search-paths");
+        if (pathsEl && status.search_paths) {
+          pathsEl.innerHTML = status.search_paths
+            .map(p => `<div>${p}</div>`)
+            .join("");
+        }
+
+        // Show current cuda_bin_path in input
+        const inputEl = document.getElementById("setting-cuda-bin-path");
+        if (inputEl) {
+          inputEl.value = status.cuda_bin_path || "";
+        }
+
+        // Status badge
+        if (status.installed) {
+          // Check if optional (cuDNN) is also missing
+          const missingOpt = status.missing_optional || [];
+          if (missingOpt.length > 0) {
+            el.innerHTML = `<span class="state-badge installed">✓ CUDA ready</span> <small style="color: var(--text-dim);">⚠ ${missingOpt.join(", ")} optional</small>`;
+          } else {
+            el.innerHTML = '<span class="state-badge installed">✓ CUDA libs ready</span>';
+          }
+        } else {
+          const missing = (status.missing || []).slice(0, 5).join(", ");
+          const more = (status.missing || []).length > 5 ? ` +${status.missing.length - 5} more` : "";
+          el.innerHTML = `<span class="state-badge missing">✗ Missing: ${missing}${more}</span>`;
+        }
+        return status;
+      } catch (e) {
+        console.error("[cuda] Status check failed:", e);
+      }
+    }
+
+    async function saveCudaBinPath() {
+      const val = document.getElementById("setting-cuda-bin-path").value.trim();
+      const btn = event?.target;
+      if (btn) { btn.textContent = "..."; }
+      try {
+        await App.apiPatch("/api/settings", {
+          cuda_bin_path: val || null,
+        });
+        App.toast("success", "CUDA bin path saved — re-checking...");
+        await checkCudaStatus();
+      } catch (e) {
+        App.toast("error", "Save failed: " + e.message);
+      } finally {
+        if (btn) { btn.textContent = "✓"; }
+      }
+    }
+
+    async function downloadCudaDeps() {
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; btn.textContent = "Downloading..."; }
+      try {
+        App.toast("info", "Downloading CUDA deps (~1 GB) — this may take several minutes...");
+        const res = await App.apiPost("/api/cuda/download");
+        // Poll for progress
+        const jobId = res.job_id;
+        const overlay = document.getElementById("progress-overlay");
+        if (overlay) overlay.style.display = "flex";
+
+        const interval = setInterval(async () => {
+          try {
+            const status = await App.apiGet(`/api/jobs/${jobId}`);
+            App.updateProgress(status);
+            if (status.status === "complete") {
+              clearInterval(interval);
+              if (overlay) overlay.style.display = "none";
+              if (btn) { btn.disabled = false; btn.textContent = "Download"; }
+              App.toast("success", "CUDA deps installed ✓");
+              await checkCudaStatus();
+            } else if (status.status === "error") {
+              clearInterval(interval);
+              if (overlay) overlay.style.display = "none";
+              if (btn) { btn.disabled = false; btn.textContent = "Download"; }
+              App.toast("error", "CUDA download failed: " + (status.error || ""));
+            }
+          } catch (e) {
+            console.error("[cuda] Polling failed:", e);
+          }
+        }, 1000);
+      } catch (e) {
+        App.toast("error", "CUDA download failed: " + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = "Download"; }
+      }
+    }
+
+    async function saveSettings() {
+      const body = {
+        vram_mode: document.getElementById("setting-vram-mode").value,
+        auto_optimize: document.getElementById("setting-auto-optimize").checked,
+        download_source_priority: document.getElementById("setting-download-source").value,
+        huggingface_token: document.getElementById("setting-hf-token").value || null,
+        modelscope_token: document.getElementById("setting-ms-token").value || null,
+        // Raw string (may be "") — empty value explicitly clears the stored key
+        quantfunc_api_key: document.getElementById("setting-qf-apikey").value.trim(),
+        rotation_block_size: parseInt(document.getElementById("setting-rotation-block").value, 10),
+        log_level: document.getElementById("setting-log-level").value,
+        worker_restart_on_crash: document.getElementById("setting-worker-restart").checked,
+      };
+      const cond = parseFloat(document.getElementById("setting-fbcache-cond").value);
+      const uncond = parseFloat(document.getElementById("setting-fbcache-uncond").value);
+      if (!isNaN(cond)) body.fbcache_cond_threshold = cond;
+      if (!isNaN(uncond)) body.fbcache_uncond_threshold = uncond;
+
+      try {
+        await App.apiPatch("/api/settings", body);
+        App.toast("success", t("toast.settings_saved"));
+        updateApiKeyStatus();
+      } catch (e) {
+        App.toast("error", e.message);
+      }
+    }
+
+    async function restoreBundledKey() {
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; }
+      try {
+        App.toast("info", "Restoring bundled test key...");
+        const res = await App.apiPost("/api/engine/ensure-config", { force: true });
+        App.toast("success", res.message);
+        updateApiKeyStatus();
+      } catch (e) {
+        App.toast("error", "Restore failed: " + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; }
+      }
+    }
+
+    function updateApiKeyStatus() {
+      // Reflect auth status from the injected config: badge text on the Restore button
+      const config = window.QF_INITIAL_CONFIG;
+      const el = document.getElementById("qf-apikey-status");
+      if (!config || !el || !config.api_auth) return;
+      const auth = config.api_auth;
+      if (auth.user_key_set) {
+        el.innerHTML = '<span class="state-badge installed">✓ own key</span>';
+        el.disabled = true;
+        el.title = "A personal API key is set — it overrides config.json";
+      } else if (auth.config_has_key) {
+        el.innerHTML = '<span class="state-badge installed">✓ test key</span>';
+        el.disabled = true;
+        el.title = "Bundled test key is active (bin/<os>/config.json)";
+      } else {
+        el.innerHTML = '<span class="state-badge missing">⚠ no key</span>';
+        el.disabled = false;
+        el.title = "No API key found — click to restore the bundled test key";
+      }
+    }
+
+    // ---------- Preview helpers ----------
+    function zoomFit() {
+      const img = document.getElementById("preview-img");
+      if (img) {
+        img.style.maxWidth = "100%";
+        img.style.maxHeight = "100%";
+        img.style.width = "auto";
+        img.style.height = "auto";
+      }
+    }
+    function zoomOriginal() {
+      const img = document.getElementById("preview-img");
+      if (img) {
+        img.style.maxWidth = "none";
+        img.style.maxHeight = "none";
+        img.style.width = "auto";
+        img.style.height = "auto";
+      }
+    }
+    function downloadImage() {
+      const img = document.getElementById("preview-img");
+      if (img && img.src) {
+        const a = document.createElement("a");
+        a.href = img.src;
+        a.download = "quantfunc_" + Date.now() + ".png";
+        a.click();
+      }
+    }
+    function openOutputDir() {
+      // Backend doesn't expose this — open in new tab as file listing
+      window.open("/api/history", "_blank");
+    }
+
+    // ---------- Populate settings tab on first render ----------
+    function populateSettingsTab() {
+      const config = window.QF_INITIAL_CONFIG;
+      if (!config) return;
+
+      // Engine section
+      document.getElementById("setting-engine-version").textContent = config.settings.engine_version;
+      document.getElementById("setting-cuda-version").textContent = config.settings.cuda_version;
+      document.getElementById("setting-engine-path").textContent = config.settings.engine_platform + "/quantfunc";
+
+      // Engine status
+      const statusEl = document.getElementById("setting-engine-status");
+      if (config.engine_status.status === "ok") {
+        statusEl.innerHTML = '<span class="state-badge installed">✓ installed</span>';
+      } else if (config.engine_status.status === "missing") {
+        statusEl.innerHTML = '<span class="state-badge missing">✗ missing</span>';
+      } else {
+        statusEl.textContent = config.engine_status.status;
+      }
+
+      // GPU section
+      if (config.gpu) {
+        document.getElementById("setting-gpu-name").textContent = config.gpu.name;
+        document.getElementById("setting-gpu-sm").textContent = config.gpu.sm + " (tier: " + config.gpu.tier + ")";
+        document.getElementById("setting-gpu-vram").textContent = (config.gpu.vram_mb / 1024).toFixed(1) + " GB";
+        document.getElementById("setting-gpu-driver").textContent = config.gpu.driver_version;
+      }
+
+      // Paths
+      document.getElementById("setting-models-dir").textContent = config.settings.models_dir;
+      document.getElementById("setting-output-dir").textContent = config.settings.output_dir;
+
+      // VRAM mode
+      if (config.settings.vram_mode) {
+        document.getElementById("setting-vram-mode").value = config.settings.vram_mode;
+      }
+    }
+
+    // Run after DOM is ready
+    document.addEventListener("DOMContentLoaded", () => {
+      populateSettingsTab();
+      checkCudaStatus();  // Check if CUDA libs are available
+      updateApiKeyStatus();  // Check engine auth (bundled test key / own key)
+    });
+  </script>
+
+  <!-- Modal: History Detail -->
+  <div id="history-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content history-modal-content">
+      <button class="modal-close" onclick="closeHistoryModal()">✕</button>
+      <div class="history-modal-body">
+        <div class="history-modal-image-col">
+          <img id="history-modal-img" src="" alt="Preview">
+        </div>
+        <div class="history-modal-info-col">
+          <h3 data-i18n="history.details">Generation Details</h3>
+          <div class="history-modal-prompt-box">
+            <div class="label" data-i18n="prompt.label">Prompt</div>
+            <p id="history-modal-prompt">—</p>
+          </div>
+          <div class="history-modal-meta-grid">
+            <div><span class="meta-label" data-i18n="controls.model">Model</span><span class="meta-val" id="history-modal-model">—</span></div>
+            <div><span class="meta-label" data-i18n="controls.seed">Seed</span><span class="meta-val" id="history-modal-seed">—</span></div>
+            <div><span class="meta-label" data-i18n="controls.resolution">Resolution</span><span class="meta-val" id="history-modal-res">—</span></div>
+            <div><span class="meta-label" data-i18n="controls.steps">Steps</span><span class="meta-val" id="history-modal-steps">—</span></div>
+            <div><span class="meta-label" data-i18n="controls.backend">Backend</span><span class="meta-val" id="history-modal-backend">—</span></div>
+            <div><span class="meta-label">Time</span><span class="meta-val" id="history-modal-time">—</span></div>
+          </div>
+          <div class="history-modal-actions">
+            <button class="generate-btn" id="history-modal-reuse-btn">⚡ <span data-i18n="history.reuse">Use prompt & settings</span></button>
+            <button class="icon-btn" id="history-modal-copy-btn">📋 <span data-i18n="history.copy_prompt">Copy prompt</span></button>
+            <button class="icon-btn danger" id="history-modal-delete-btn">🗑 <span data-i18n="history.delete">Delete</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

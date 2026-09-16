@@ -1,0 +1,126 @@
+{
+  "id": "z_image_turbo",
+  "name": "Z-Image Turbo",
+  "family": "z-image",
+  "pipeline": "text_to_image",
+  "key_protected": false,
+  "description": "Ultra-fast distilled text-to-image model (Alibaba Tongyi Z-Image-Turbo), pre-quantized for the QuantFunc Lighting engine. ~1.2s per image on RTX 4090. Lightest series (~6.5 GB total) — best choice for a first end-to-end test. Runs on RTX 20-series and above.",
+  "upstream": {
+    "model": "Tongyi-MAI/Z-Image-Turbo",
+    "license": "Apache-2.0 (upstream) + QuantFunc Model License (packaging)",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "modelscope",
+      "repo_id": "QuantFunc/Z-Image-Series"
+    },
+    "mirror": {
+      "type": "huggingface",
+      "repo_id": "QuantFunc/Z-Image-Series"
+    }
+  },
+  "base_models": {
+    "50x-above": "z-image-series-50x-above-base-model/",
+    "50x-below": "z-image-series-50x-below-base-model/"
+  },
+  "transformers": [
+    {
+      "id": "lighting-50x-above-better",
+      "path": "transformer/z-image-turbo-50x-above-lighting-better.safetensors",
+      "tier": "50x-above",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 3.52,
+      "size_bytes": 3779255836,
+      "sha256": "38d75e20b3bf9b1a59cdb7c04293d6fd63c466c0e399b3a9954ce1b8cd76e9b6",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 5060 Ti", "RTX 5070", "RTX 5070 Ti", "RTX 5080", "RTX 5090", "B200", "GB300"]
+    },
+    {
+      "id": "lighting-50x-above-v2",
+      "path": "transformer/z-image-turbo-50x-above-lighting-v2.safetensors",
+      "tier": "50x-above",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 3.41,
+      "size_bytes": 3663094367,
+      "sha256": "73678b506088b576bcd0c22ac34453154e3552a78fdd496a647875fca551480c",
+      "recommended": false,
+      "note": "v2 export — alternative to the -better variant"
+    },
+    {
+      "id": "lighting-50x-below-v2",
+      "path": "transformer/z-image-turbo-50x-below-lighting-v2.safetensors",
+      "tier": "50x-below",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 3.24,
+      "size_bytes": 3475087364,
+      "sha256": "e4aa952a1d948ef7966fcf89576b39487932abb5e95e0a661a15557a3e48a443",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090", "RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090", "A100", "H100"]
+    },
+    {
+      "id": "lighting-40x-better",
+      "path": "transformer/z-image-turbo-40x-lighting-better.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "40x",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 3.35,
+      "size_bytes": 3599543110,
+      "sha256": "2f92f284393e2906720ca772040a433dee6f164a0cfb635967600ec6a0045c51",
+      "recommended": false,
+      "note": "40x Klein-tier variant (RTX 40-class optimization)"
+    },
+    {
+      "id": "lighting-30x-below-better",
+      "path": "transformer/z-image-turbo-30x-below-lighting-better.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "30x-below",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 3.36,
+      "size_bytes": 3603577608,
+      "sha256": "7db1bcabe26f6acd902c786b1773e432b72e253fadf6f5c8acd914aa5fd40fcd",
+      "recommended": false,
+      "note": "30x-below Klein-tier variant (RTX 20/30-class optimization)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [
+    {
+      "id": "fp4-f8-50x-better",
+      "path": "precision-config/50x-fp4-f8-better.json",
+      "tier": "50x-above"
+    },
+    {
+      "id": "int4-f8-40x-better",
+      "path": "precision-config/40x-int4-f8-better.json",
+      "tier": "50x-below",
+      "klein_tier": "40x"
+    },
+    {
+      "id": "int4-i8-30x-below-better",
+      "path": "precision-config/30x-below-int4-i8-better.json",
+      "tier": "50x-below",
+      "klein_tier": "30x-below"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "lighting-4steps": {"steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple"}
+  }
+}
