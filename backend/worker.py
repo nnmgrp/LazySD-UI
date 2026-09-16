@@ -486,10 +486,12 @@ class Worker:
             args.extend(["--precision-config", str(local_paths["precision_config"])])
 
         if request.init_image_path:
-            validate_path(str(request.init_image_path), base_dir=settings.output_dir, must_exist=True)
+            resolved_init = validate_path(str(request.init_image_path), base_dir=settings.output_dir, must_exist=True)
+            from .security import validate_float
+            strength = validate_float(request.init_image_strength, "init_image_strength", min_val=0.01, max_val=1.0)
             args.extend([
-                "--ref-image", str(request.init_image_path),
-                "--init-img-strength", str(request.init_image_strength),
+                "--ref-image", str(resolved_init),
+                "--init-img-strength", str(strength),
             ])
 
         # QuantFunc API key — user key from Settings takes precedence.

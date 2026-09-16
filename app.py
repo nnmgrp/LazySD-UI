@@ -58,7 +58,7 @@ from backend.worker import (
 # pattern: gradio.Server is replaced by a hand-rolled FastAPI app serving
 # custom index.html + JSON API endpoints. This avoids gradio's heavy
 # dependencies (huggingface_hub version conflicts, etc.).
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -560,6 +560,45 @@ def create_app() -> FastAPI:
 
         return {"job_id": job_id, "status": "downloading", "variant_id": selected.id}
 
+    # ---------- API: Upload reference image for Img2Img ----------
+    @app.post("/api/upload")
+    async def api_upload(file: UploadFile = File(...)):
+        """Upload a reference image for Img2Img / Image Edit mode."""
+        if not file.filename:
+            raise HTTPException(400, "No file provided")
+
+        ext = Path(file.filename).suffix.lower()
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            raise HTTPException(400, f"Unsupported file type: {ext}. Allowed: .png, .jpg, .jpeg, .webp")
+
+        settings = get_settings()
+        uploads_dir = settings.output_dir / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+
+        from backend.security import validate_filename
+        safe_stem = validate_filename(f"ref_{uuid.uuid4().hex[:8]}{ext}")
+        target_path = uploads_dir / safe_stem
+
+        try:
+            content = await file.read()
+            if len(content) > 25 * 1024 * 1024:
+                raise HTTPException(400, "File too large. Max 25 MB.")
+
+            with open(target_path, "wb") as f:
+                f.write(content)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Failed to save upload: {e}")
+
+        rel_path = f"uploads/{safe_stem}"
+        return {
+            "status": "ok",
+            "filename": safe_stem,
+            "path": rel_path,
+            "url": f"/outputs/uploads/{safe_stem}",
+        }
+
     # ---------- API: Generate ----------
     @app.post("/api/generate")
     async def api_generate(body: dict):
@@ -580,6 +619,8 @@ def create_app() -> FastAPI:
             height = int(body.get("height", 1024))
             steps = int(body.get("steps", 4))
             backend = body.get("backend", "lighting")
+            init_image_path = body.get("init_image_path")
+            init_image_strength = float(body.get("init_image_strength", 0.7))
         except (KeyError, TypeError, ValueError) as e:
             raise HTTPException(400, f"Invalid request: {e}")
 
@@ -610,6 +651,8 @@ def create_app() -> FastAPI:
             steps=selected.steps,
             backend=selected.backend,
             use_prequant=selected.prequant,
+            init_image_path=Path(init_image_path) if init_image_path else None,
+            init_image_strength=init_image_strength,
         )
 
         # Create job
