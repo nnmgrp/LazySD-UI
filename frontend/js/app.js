@@ -488,14 +488,16 @@ const App = {
       return;
     }
 
+    const res = this.parseResolution();
+
     // Collect params
     const params = {
       model_id: this.state.selectedModel,
       variant_id: this.state.selectedVariant,
       prompt: prompt,
       seed: this.parseSeed(),
-      width: 1024,
-      height: 1024,
+      width: res.width,
+      height: res.height,
       steps: parseInt(document.getElementById("steps-input")?.value || "4", 10),
       backend: "lighting",
     };
@@ -523,6 +525,22 @@ const App = {
       this.toast("error", t("errors.missing_files") + ": " + e.message);
       this.setGenerating(false);
     }
+  },
+
+  parseResolution() {
+    const val = document.getElementById("resolution-select")?.value?.trim() || "1024x1024";
+    if (val.includes("x")) {
+      const parts = val.split("x");
+      const w = parseInt(parts[0], 10);
+      const h = parseInt(parts[1], 10);
+      return {
+        width: !isNaN(w) && w > 0 ? w : 1024,
+        height: !isNaN(h) && h > 0 ? h : 1024,
+      };
+    }
+    const num = parseInt(val, 10);
+    const sz = !isNaN(num) && num > 0 ? num : 1024;
+    return { width: sz, height: sz };
   },
 
   parseSeed() {
@@ -817,9 +835,12 @@ const App = {
     if (item.width) {
       const resSelect = document.getElementById("resolution-select");
       if (resSelect) {
-        const val = item.width.toString();
-        if (resSelect.querySelector(`option[value="${val}"]`)) {
-          resSelect.value = val;
+        const combo = `${item.width}x${item.height || item.width}`;
+        const square = item.width.toString();
+        if (resSelect.querySelector(`option[value="${combo}"]`)) {
+          resSelect.value = combo;
+        } else if (resSelect.querySelector(`option[value="${square}"]`)) {
+          resSelect.value = square;
         }
       }
     }

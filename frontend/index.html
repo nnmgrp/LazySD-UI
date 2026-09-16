@@ -163,9 +163,13 @@
             <div class="control-group">
               <label data-i18n="controls.resolution">Resolution</label>
               <select id="resolution-select">
-                <option value="1024" data-i18n="controls.resolution.1024">1024 × 1024</option>
-                <option value="1536" data-i18n="controls.resolution.1536">1536 × 1536</option>
-                <option value="2048" data-i18n="controls.resolution.2048">2048 × 2048</option>
+                <option value="1024x1024" data-i18n="controls.resolution.1024">1024 × 1024 (1:1)</option>
+                <option value="1152x896" data-i18n="controls.resolution.1152_896">1152 × 896 (4:3)</option>
+                <option value="896x1152" data-i18n="controls.resolution.896_1152">896 × 1152 (3:4)</option>
+                <option value="1344x768" data-i18n="controls.resolution.1344_768">1344 × 768 (16:9)</option>
+                <option value="768x1344" data-i18n="controls.resolution.768_1344">768 × 1344 (9:16)</option>
+                <option value="1536x1536" data-i18n="controls.resolution.1536">1536 × 1536 (1:1 HD)</option>
+                <option value="2048x2048" data-i18n="controls.resolution.2048">2048 × 2048 (1:1 Ultra HD)</option>
               </select>
             </div>
             <button class="generate-btn" id="generate-btn" data-i18n="controls.generate">Generate</button>
