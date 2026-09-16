@@ -149,7 +149,16 @@
   "history.no_prompt": "(Промпт не сохранён)",
 
   "dropzone.title": "Перетащите изображение или нажмите для загрузки",
-  "dropzone.subtitle": "PNG, JPG, WEBP до 20 МБ",
+  "dropzone.subtitle": "PNG, JPG, WEBP до 25 МБ",
+
+  "img2img.title": "Режим редактирования (Img2Img)",
+  "img2img.drop_hint": "Перетащите референсное изображение или нажмите для выбора",
+  "img2img.strength": "Сила изменений (Strength)",
+  "img2img.strength_hint": "Степень изменения референса (0.1 — минимальная правка, 0.9 — сильная переработка)",
+  "img2img.remove": "Удалить референс",
+  "img2img.send_to": "Редактировать в Img2Img",
+
+  "errors.upload_failed": "Ошибка при загрузке референсного изображения",
 
   "toast.engine_downloaded": "Engine скачан и проверен ✓",
   "toast.engine_verify_ok": "Engine актуален ✓",

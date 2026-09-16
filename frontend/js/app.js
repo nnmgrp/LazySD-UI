@@ -41,6 +41,9 @@ const App = {
     selectedVariant: null,
     historyItems: [],
     selectedHistoryItem: null,
+    img2imgRef: null,
+    lastPreviewName: null,
+    lastPreviewUrl: null,
   },
 
   // ---------- Init ----------
@@ -246,6 +249,18 @@ const App = {
     const historySearch = document.getElementById("history-search");
     if (historySearch) {
       historySearch.addEventListener("input", () => this.renderHistory());
+    }
+
+    // Dropzone setup for Img2Img upload
+    const previewArea = document.getElementById("tab-generate");
+    if (previewArea && window.Dropzone) {
+      this.dropzone = new window.Dropzone(previewArea, {
+        onFile: (fileInfo) => {
+          this.uploadImg2ImgFile(fileInfo.file);
+        },
+        acceptedTypes: ["image/png", "image/jpeg", "image/webp"],
+        maxSizeMb: 25,
+      });
     }
 
     // Modal background click to close
@@ -482,6 +497,13 @@ const App = {
       backend: "lighting",
     };
 
+    if (this.state.img2imgRef) {
+      params.init_image_path = this.state.img2imgRef.path;
+      params.init_image_strength = parseFloat(
+        document.getElementById("img2img-strength")?.value || "0.7"
+      );
+    }
+
     // Disable button + show progress
     this.setGenerating(true);
 
@@ -621,7 +643,10 @@ const App = {
       // The server mounts /outputs/ as a static directory (app.py), so we only
       // need the filename. Cache-bust query forces the browser to reload.
       const filename = imagePath.split(/[\/\\]/).pop();
-      img.src = `/outputs/${encodeURIComponent(filename)}?t=${Date.now()}`;
+      const url = `/outputs/${encodeURIComponent(filename)}?t=${Date.now()}`;
+      img.src = url;
+      this.state.lastPreviewName = filename;
+      this.state.lastPreviewUrl = url;
     }
   },
 
@@ -721,12 +746,20 @@ const App = {
 
     // Bind modal action buttons
     const reuseBtn = document.getElementById("history-modal-reuse-btn");
+    const sendImg2ImgBtn = document.getElementById("history-modal-send-img2img-btn");
     const copyBtn = document.getElementById("history-modal-copy-btn");
     const deleteBtn = document.getElementById("history-modal-delete-btn");
 
     if (reuseBtn) {
       reuseBtn.onclick = () => {
         this.reuseHistoryItem(item);
+        this.closeHistoryModal();
+      };
+    }
+
+    if (sendImg2ImgBtn) {
+      sendImg2ImgBtn.onclick = () => {
+        this.setImg2ImgRef({ path: item.name, url: item.url });
         this.closeHistoryModal();
       };
     }
@@ -835,11 +868,93 @@ const App = {
       setTimeout(() => toast.remove(), 200);
     }, 4000);
   },
+
+  // ---------- Img2Img ----------
+  async uploadImg2ImgFile(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    this.toast("info", t("common.loading"));
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      this.setImg2ImgRef({
+        path: data.path,
+        url: data.url,
+        filename: data.filename,
+      });
+      this.toast("success", t("img2img.title") + " ✓");
+    } catch (e) {
+      console.error("[app] Upload failed:", e);
+      this.toast("error", t("errors.upload_failed") + ": " + e.message);
+    }
+  },
+
+  setImg2ImgRef(refData) {
+    this.state.img2imgRef = refData;
+    const container = document.getElementById("img2img-container");
+    const thumb = document.getElementById("img2img-thumb");
+
+    if (refData && refData.url) {
+      if (thumb) thumb.src = refData.url;
+      if (container) container.style.display = "flex";
+      this.switchTab("generate");
+    } else {
+      if (container) container.style.display = "none";
+    }
+  },
+
+  clearImg2ImgRef() {
+    this.state.img2imgRef = null;
+    const container = document.getElementById("img2img-container");
+    if (container) container.style.display = "none";
+  },
+
+  updateStrengthLabel(val) {
+    const label = document.getElementById("img2img-strength-val");
+    if (label) label.textContent = parseFloat(val).toFixed(2);
+  },
+
+  sendCurrentPreviewToImg2Img() {
+    if (!this.state.lastPreviewName && !this.state.lastPreviewUrl) {
+      const img = document.getElementById("preview-img");
+      if (img && img.src && !img.src.endsWith("#")) {
+        const src = img.src;
+        const filename = src.split("/").pop();
+        if (filename) {
+          this.setImg2ImgRef({
+            path: filename,
+            url: src,
+            filename: filename,
+          });
+          this.toast("success", t("img2img.send_to") + " ✓");
+          return;
+        }
+      }
+      this.toast("warning", t("history.empty"));
+      return;
+    }
+    this.setImg2ImgRef({
+      path: this.state.lastPreviewName || (this.state.lastPreviewUrl ? this.state.lastPreviewUrl.split("/").pop() : ""),
+      url: this.state.lastPreviewUrl,
+    });
+    this.toast("success", t("img2img.send_to") + " ✓");
+  },
 };
 
 // Global handlers for inline HTML onclick attributes
 window.loadHistory = () => App.loadHistory();
 window.closeHistoryModal = () => App.closeHistoryModal();
+window.clearImg2ImgRef = () => App.clearImg2ImgRef();
+window.updateStrengthLabel = (val) => App.updateStrengthLabel(val);
+window.sendCurrentPreviewToImg2Img = () => App.sendCurrentPreviewToImg2Img();
 
 // ---------- Boot ----------
 document.addEventListener("DOMContentLoaded", () => {

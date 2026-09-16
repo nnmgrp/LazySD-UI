@@ -44,10 +44,9 @@
           <span class="nav-label" data-i18n="nav.image_edit">Image Edit</span>
           <span class="badge">soon</span>
         </button>
-        <button class="nav-item" data-tab="img2img" disabled>
+        <button class="nav-item" data-tab="img2img">
           <span class="nav-icon">🔄</span>
           <span class="nav-label" data-i18n="nav.img2img">Img2Img</span>
-          <span class="badge">soon</span>
         </button>
         <button class="nav-item" data-tab="inpaint" disabled>
           <span class="nav-icon">🎨</span>
@@ -99,6 +98,7 @@
               <button class="icon-btn" title="Fit" onclick="zoomFit()">⤢</button>
               <button class="icon-btn" title="1:1" onclick="zoomOriginal()">1:1</button>
               <button class="icon-btn" title="Download" onclick="downloadImage()">⬇</button>
+              <button class="icon-btn" title="Edit in Img2Img" onclick="sendCurrentPreviewToImg2Img()">🔄</button>
               <button class="icon-btn" title="Open folder" onclick="openOutputDir()">📂</button>
             </div>
           </div>
@@ -117,6 +117,24 @@
         </div>
 
         <div class="prompt-panel">
+          <!-- Img2Img Reference Image Container -->
+          <div class="img2img-container" id="img2img-container" style="display: none; margin-bottom: 12px; padding: 10px 12px; background: var(--bg-card); border: 1px dashed var(--accent); border-radius: 6px; align-items: center; gap: 12px; position: relative;">
+            <div style="position: relative; width: 64px; height: 64px; flex-shrink: 0; background: var(--bg-hover); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+              <img id="img2img-thumb" style="width: 100%; height: 100%; object-fit: cover;" alt="Reference preview">
+            </div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                <span style="font-weight: 500; font-size: 13px;" data-i18n="img2img.title">Reference Image (Img2Img)</span>
+                <button class="icon-btn danger" onclick="clearImg2ImgRef()" title="Remove image" style="padding: 2px 8px; font-size: 11px;" data-i18n="img2img.remove">✕ Remove</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-size: 11px; color: var(--text-dim); white-space: nowrap;" data-i18n="img2img.strength">Strength:</label>
+                <input type="range" id="img2img-strength" min="0.05" max="0.95" step="0.05" value="0.70" oninput="updateStrengthLabel(this.value)" style="flex: 1; accent-color: var(--accent);">
+                <span id="img2img-strength-val" style="font-size: 11px; font-family: monospace; width: 36px; text-align: right;">0.70</span>
+              </div>
+            </div>
+          </div>
+
           <div class="prompt-row">
             <textarea id="prompt-input"
                       data-i18n-placeholder="prompt.placeholder"
@@ -730,6 +748,7 @@
           </div>
           <div class="history-modal-actions">
             <button class="generate-btn" id="history-modal-reuse-btn">⚡ <span data-i18n="history.reuse">Use prompt & settings</span></button>
+            <button class="icon-btn" id="history-modal-send-img2img-btn">🔄 <span data-i18n="img2img.send_to">Edit in Img2Img</span></button>
             <button class="icon-btn" id="history-modal-copy-btn">📋 <span data-i18n="history.copy_prompt">Copy prompt</span></button>
             <button class="icon-btn danger" id="history-modal-delete-btn">🗑 <span data-i18n="history.delete">Delete</span></button>
           </div>

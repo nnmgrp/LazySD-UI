@@ -149,7 +149,16 @@
   "history.no_prompt": "(No prompt recorded)",
 
   "dropzone.title": "Drop image here or click to upload",
-  "dropzone.subtitle": "PNG, JPG, WEBP up to 20 MB",
+  "dropzone.subtitle": "PNG, JPG, WEBP up to 25 MB",
+
+  "img2img.title": "Reference Image (Img2Img)",
+  "img2img.drop_hint": "Drop reference image here or click to upload",
+  "img2img.strength": "Image Strength",
+  "img2img.strength_hint": "How much to modify reference image (0.1 = subtle tweak, 0.9 = heavy rewrite)",
+  "img2img.remove": "Remove image",
+  "img2img.send_to": "Edit in Img2Img",
+
+  "errors.upload_failed": "Failed to upload reference image",
 
   "toast.engine_downloaded": "Engine downloaded and verified ✓",
   "toast.engine_verify_ok": "Engine is up to date ✓",
