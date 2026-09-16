@@ -1,0 +1,76 @@
+{
+  "id": "qwen_image",
+  "name": "Qwen-Image 13B (Quantized)",
+  "family": "qwen",
+  "pipeline": "text_to_image",
+  "key_protected": true,
+  "description": "Flagship 13B-parameter Qwen-Image model by QuantFunc. Exceptional prompt comprehension, photorealism, and complex multi-subject composition. Pre-quantized for RTX 30/40/50 series.",
+  "upstream": {
+    "model": "Qwen/Qwen-Image",
+    "license": "Apache-2.0",
+    "commercial_use": true
+  },
+  "sources": {
+    "primary": {
+      "type": "modelscope",
+      "repo_id": "QuantFunc/Qwen-Image-Series"
+    },
+    "mirror": {
+      "type": "huggingface",
+      "repo_id": "QuantFunc/Qwen-Image-Series"
+    }
+  },
+  "base_models": {
+    "50x-above": "qwen-image-50x-above-base-model/",
+    "50x-below": "qwen-image-50x-below-base-model/"
+  },
+  "transformers": [
+    {
+      "id": "lighting-50x-above",
+      "path": "transformer/qwen-image-50x-above-lighting.safetensors",
+      "tier": "50x-above",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 7.2,
+      "size_bytes": 7200000000,
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"]
+    },
+    {
+      "id": "lighting-50x-below",
+      "path": "transformer/qwen-image-50x-below-lighting.safetensors",
+      "tier": "50x-below",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 6.9,
+      "size_bytes": 6900000000,
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 3080", "RTX 3090", "RTX 4070", "RTX 4080", "RTX 4090"]
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [
+    {
+      "id": "fp4-f8-50x",
+      "path": "precision-config/50x-fp4-f8.json",
+      "tier": "50x-above"
+    },
+    {
+      "id": "int4-f8-40x",
+      "path": "precision-config/40x-int4-f8.json",
+      "tier": "50x-below"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 12,
+    "vram_recommended_gb": 16,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "balanced"
+  },
+  "scheduler_presets": {
+    "lighting-4steps": {"steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple"}
+  }
+}
