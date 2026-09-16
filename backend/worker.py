@@ -535,6 +535,8 @@ class Worker:
                 new_path_parts.append(existing_path)
             env["PATH"] = _os.pathsep.join(new_path_parts)
 
+            print(f"[worker] Launching QuantFunc engine: width={width}, height={height}, steps={request.steps}, backend={request.backend}")
+            print(f"[worker] CLI args: {' '.join(args)}")
             print(f"[worker] subprocess PATH (first 3): {new_path_parts[:3]}")
             print(f"[worker] subprocess cwd: {settings.engine_dir}")
 
