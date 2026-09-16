@@ -1096,3 +1096,132 @@ textarea {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ============================================================
+   Models Tab Grid & Cards
+   ============================================================ */
+.models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.model-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.model-card:hover {
+  border-color: var(--accent);
+}
+
+.model-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.model-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.model-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.model-badge.key-protected {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.model-badge.free {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.model-badge.pipeline {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.model-badge.family {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.model-card-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.model-card-reqs {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-hover);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.model-variants-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-top: 4px;
+}
+
+.variant-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.variant-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.variant-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.variant-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+}

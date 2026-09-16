@@ -199,6 +199,80 @@ const App = {
       this.state.selectedModel = compatible[0].id;
       this.onModelChange();
     }
+    this.renderModelsTab();
+  },
+
+  renderModelsTab() {
+    const listEl = document.getElementById("models-list");
+    if (!listEl) return;
+
+    if (!this.state.models.length) {
+      listEl.innerHTML = `<div class="placeholder-text">${t("common.loading")}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "models-grid";
+
+    for (const model of this.state.models) {
+      const card = document.createElement("div");
+      card.className = "model-card";
+
+      const keyBadge = model.key_protected
+        ? `<span class="model-badge key-protected">🔑 Key Protected</span>`
+        : `<span class="model-badge free">🔓 Free Access</span>`;
+      
+      const pipelineBadge = `<span class="model-badge pipeline">${escapeHtml(model.pipeline)}</span>`;
+      const familyBadge = `<span class="model-badge family">${escapeHtml(model.family)}</span>`;
+
+      const vramStr = model.requirements ? `${model.requirements.vram_min_gb} GB VRAM min` : "";
+
+      let variantsHtml = "";
+      if (model.transformers && model.transformers.length) {
+        for (const v of model.transformers) {
+          variantsHtml += `
+            <div class="variant-item">
+              <div class="variant-info">
+                <span class="variant-name">${escapeHtml(v.id)}</span>
+                <span class="variant-sub">${escapeHtml(v.backend)} · ${v.steps} steps · ${(v.size_gb || 0).toFixed(1)} GB</span>
+              </div>
+              <button class="icon-btn" onclick="App.downloadModelVariant('${escapeHtml(model.id)}', '${escapeHtml(v.id)}')">⬇ Download</button>
+            </div>
+          `;
+        }
+      }
+
+      card.innerHTML = `
+        <div>
+          <div class="model-card-header">
+            <span class="model-card-title">${escapeHtml(model.name)}</span>
+            <div class="model-card-badges">
+              ${keyBadge}
+              ${pipelineBadge}
+              ${familyBadge}
+            </div>
+          </div>
+          <p class="model-card-description" style="margin-top: 8px;">${escapeHtml(model.description || "")}</p>
+          <div class="model-card-reqs" style="margin-top: 10px;">
+            <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
+            <span>📼 ${vramStr}</span>
+          </div>
+          <div class="model-variants-title">Transformers (${model.transformers?.length || 0})</div>
+          <div class="model-variants-list">${variantsHtml}</div>
+        </div>
+      `;
+
+      grid.appendChild(card);
+    }
+
+    listEl.appendChild(grid);
+  },
+
+  async downloadModelVariant(modelId, variantId) {
+    this.state.selectedModel = modelId;
+    this.state.selectedVariant = variantId;
+    await this.downloadModel();
   },
 
   // ---------- Event handlers ----------
@@ -299,9 +373,11 @@ const App = {
       activePanel.style.display = (targetId === "tab-generate") ? "flex" : "block";
     }
 
-    // Auto-load history when history tab opens
+    // Auto-load history or models tab
     if (tabName === "history") {
       this.loadHistory();
+    } else if (tabName === "models") {
+      this.renderModelsTab();
     }
   },
 
