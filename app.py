@@ -614,15 +614,29 @@ def create_app() -> FastAPI:
             model_id = body["model_id"]
             prompt = body["prompt"]
             variant_id = body.get("variant_id")
-            seed = body.get("seed")
+            raw_seed = body.get("seed")
+            seed = int(raw_seed) if raw_seed not in (None, "", "random") else None
             width = int(body.get("width", 1024))
             height = int(body.get("height", 1024))
             steps = int(body.get("steps", 4))
             backend = body.get("backend", "lighting")
-            init_image_path = body.get("init_image_path")
+            raw_init_path = body.get("init_image_path")
             init_image_strength = float(body.get("init_image_strength", 0.7))
         except (KeyError, TypeError, ValueError) as e:
             raise HTTPException(400, f"Invalid request: {e}")
+
+        # Normalize init_image_path
+        init_image_path = None
+        if raw_init_path:
+            norm = str(raw_init_path).strip().replace("\\", "/")
+            if norm.startswith("/outputs/"):
+                norm = norm[len("/outputs/"):]
+            elif norm.startswith("outputs/"):
+                norm = norm[len("outputs/"):]
+            elif norm.startswith("/"):
+                norm = norm[1:]
+            if norm:
+                init_image_path = norm
 
         # Look up variant to determine backend + use_prequant
         registry = get_registry()
@@ -630,6 +644,9 @@ def create_app() -> FastAPI:
             model = registry.get(model_id)
         except KeyError:
             raise HTTPException(404, f"Model not found: {model_id}")
+
+        if model.pipeline == "image_edit" and not init_image_path:
+            raise HTTPException(400, "Reference image is required for image_edit models (upload an image or select one from preview/history)")
 
         # Find the selected transformer
         transformers_for_gpu = model.get_transformers_for_tier(STATE.gpu_info.sm, backend=backend)
