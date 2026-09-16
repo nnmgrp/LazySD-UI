@@ -27,27 +27,42 @@
   "transformers": [
     {
       "id": "lighting-50x-above",
-      "path": "transformer/qwen-image-50x-above-lighting.safetensors",
+      "path": "transformer/qwen-image-2512-50x-above-lighting-4steps-better.safetensors",
       "tier": "50x-above",
+      "klein_tier": "50x",
       "backend": "lighting",
       "steps": 4,
       "prequant": false,
-      "size_gb": 7.2,
-      "size_bytes": 7200000000,
+      "size_gb": 13.65,
+      "size_bytes": 14652390473,
       "recommended": true,
       "recommended_for_gpu": ["RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"]
     },
     {
-      "id": "lighting-50x-below",
-      "path": "transformer/qwen-image-50x-below-lighting.safetensors",
+      "id": "lighting-40x",
+      "path": "transformer/qwen-image-2512-40x-lighting-4steps-better.safetensors",
       "tier": "50x-below",
+      "klein_tier": "40x",
       "backend": "lighting",
       "steps": 4,
       "prequant": false,
-      "size_gb": 6.9,
-      "size_bytes": 6900000000,
+      "size_gb": 13.39,
+      "size_bytes": 14377321481,
       "recommended": true,
-      "recommended_for_gpu": ["RTX 3080", "RTX 3090", "RTX 4070", "RTX 4080", "RTX 4090"]
+      "recommended_for_gpu": ["RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090"]
+    },
+    {
+      "id": "lighting-30x-below",
+      "path": "transformer/qwen-image-2512-30x-below-lighting-4steps-better.safetensors",
+      "tier": "50x-below",
+      "klein_tier": "30x-below",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 13.39,
+      "size_bytes": 14382482511,
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090"]
     }
   ],
   "prequant_weights": [],

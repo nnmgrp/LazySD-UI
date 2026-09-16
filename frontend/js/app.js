@@ -225,8 +225,11 @@ const App = {
       
       const pipelineBadge = `<span class="model-badge pipeline">${escapeHtml(model.pipeline)}</span>`;
       const familyBadge = `<span class="model-badge family">${escapeHtml(model.family)}</span>`;
+      const statusBadge = model.available === false || model.status === "coming_soon"
+        ? `<span class="model-badge key-protected" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border-color: rgba(245, 158, 11, 0.4);">⏳ Coming Soon</span>`
+        : "";
 
-      const vramStr = model.requirements ? `${model.requirements.vram_min_gb} GB VRAM min` : "";
+      const vramStr = model.requirements?.vram_min_gb ? `${model.requirements.vram_min_gb} GB VRAM min` : "";
 
       let variantsHtml = "";
       if (model.transformers && model.transformers.length) {
@@ -237,10 +240,12 @@ const App = {
                 <span class="variant-name">${escapeHtml(v.id)}</span>
                 <span class="variant-sub">${escapeHtml(v.backend)} · ${v.steps} steps · ${(v.size_gb || 0).toFixed(1)} GB</span>
               </div>
-              <button class="icon-btn" onclick="App.downloadModelVariant('${escapeHtml(model.id)}', '${escapeHtml(v.id)}')">⬇ Download</button>
+              <button class="icon-btn" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)">⬇ Download</button>
             </div>
           `;
         }
+      } else {
+        variantsHtml = `<div class="placeholder-text" style="padding: 8px 0; font-size: 13px; text-align: left;">Weights pending release on ModelScope</div>`;
       }
 
       card.innerHTML = `
@@ -248,6 +253,7 @@ const App = {
           <div class="model-card-header">
             <span class="model-card-title">${escapeHtml(model.name)}</span>
             <div class="model-card-badges">
+              ${statusBadge}
               ${keyBadge}
               ${pipelineBadge}
               ${familyBadge}
@@ -256,7 +262,7 @@ const App = {
           <p class="model-card-description" style="margin-top: 8px;">${escapeHtml(model.description || "")}</p>
           <div class="model-card-reqs" style="margin-top: 10px;">
             <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
-            <span>📼 ${vramStr}</span>
+            ${vramStr ? `<span>📼 ${vramStr}</span>` : ""}
           </div>
           <div class="model-variants-title">Transformers (${model.transformers?.length || 0})</div>
           <div class="model-variants-list">${variantsHtml}</div>
@@ -269,9 +275,21 @@ const App = {
     listEl.appendChild(grid);
   },
 
-  async downloadModelVariant(modelId, variantId) {
+  async downloadModelVariant(modelId, variantId, btnEl) {
     this.state.selectedModel = modelId;
     this.state.selectedVariant = variantId;
+    
+    // Sync model select dropdown in generate tab if present
+    const modelSelect = document.getElementById("model-select");
+    if (modelSelect) {
+      modelSelect.value = modelId;
+      this.onModelChange();
+    }
+
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = "Downloading...";
+    }
     await this.downloadModel();
   },
 
@@ -1027,7 +1045,8 @@ const App = {
       const img = document.getElementById("preview-img");
       if (img && img.src && !img.src.endsWith("#")) {
         const src = img.src;
-        const filename = src.split("/").pop();
+        const cleanSrc = src.split("?")[0];
+        const filename = cleanSrc.split("/").pop();
         if (filename) {
           this.setImg2ImgRef({
             path: filename,
@@ -1041,9 +1060,12 @@ const App = {
       this.toast("warning", t("history.empty"));
       return;
     }
+    const cleanUrl = this.state.lastPreviewUrl ? this.state.lastPreviewUrl.split("?")[0] : "";
+    const cleanFilename = this.state.lastPreviewName ? this.state.lastPreviewName.split("?")[0] : (cleanUrl ? cleanUrl.split("/").pop() : "");
     this.setImg2ImgRef({
-      path: this.state.lastPreviewName || (this.state.lastPreviewUrl ? this.state.lastPreviewUrl.split("/").pop() : ""),
+      path: cleanFilename,
       url: this.state.lastPreviewUrl,
+      filename: cleanFilename,
     });
     this.toast("success", t("img2img.send_to") + " ✓");
   },
