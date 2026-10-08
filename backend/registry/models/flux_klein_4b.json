@@ -4,6 +4,7 @@
   "family": "klein",
   "pipeline": "text_to_image",
   "key_protected": true,
+  "engine_version": "0.0.12",
   "description": "Compact 4B-parameter Flux.2 Klein — the smallest Klein variant (~2.1 GB transformer). Lighting backend, 4 steps. Key-protected: requires the bundled free-trial test key (config.json) or a personal QuantFunc API key.",
   "upstream": {
     "model": "black-forest-labs/FLUX.2-klein-4b",

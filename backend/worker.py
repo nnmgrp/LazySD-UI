@@ -195,11 +195,12 @@ class Worker:
         self._lock = threading.Lock()
 
     # ---------- Pre-flight checks ----------
-    def _check_engine(self) -> None:
-        """Verify engine binary is installed."""
-        if not is_engine_installed():
+    def _check_engine(self, version: Optional[str] = None) -> None:
+        """Verify engine binary is installed for target version."""
+        if not is_engine_installed(version):
+            ver_str = f" v{version}" if version else ""
             raise RuntimeError(
-                "QuantFunc engine not installed. "
+                f"QuantFunc engine{ver_str} not installed. "
                 "Go to Settings → Download engine to install it."
             )
 
@@ -507,16 +508,27 @@ class Worker:
             if progress_callback:
                 progress_callback(event)
 
-        # ----- Phase 1: Pre-flight checks -----
-        emit(ProgressEvent(status=JobStatus.LOADING, message="Checking engine..."))
-        self._check_engine()
-
-        emit(ProgressEvent(status=JobStatus.LOADING, message="Checking CUDA libraries..."))
-        self._check_cuda_libs()
-
         # Load model from registry
         registry = get_registry()
         model = registry.get(request.model_id)
+
+        # Determine engine version:
+        engine_ver = getattr(model, "engine_version", None)
+        if not engine_ver:
+            # Auto-route: models with FP4 precision (Flux.2 Klein and Z-Image on 50x-above tier)
+            # were quantized with FP4 text encoder and precision maps which engine v0.0.17 removed.
+            # They run with native NVFP4 support in v0.0.12.
+            if model.family in ("klein", "z-image") and gpu_info.tier == "50x-above":
+                engine_ver = "0.0.12"
+            else:
+                engine_ver = "0.0.17"
+
+        # ----- Phase 1: Pre-flight checks -----
+        emit(ProgressEvent(status=JobStatus.LOADING, message=f"Checking engine (v{engine_ver})..."))
+        self._check_engine(version=engine_ver)
+
+        emit(ProgressEvent(status=JobStatus.LOADING, message="Checking CUDA libraries..."))
+        self._check_cuda_libs()
 
         emit(ProgressEvent(status=JobStatus.LOADING, message=f"Checking GPU compatibility for {model.name}..."))
         self._check_gpu(gpu_info, model)
@@ -568,7 +580,8 @@ class Worker:
         local_paths["transformer"] = validate_path(str(local_paths["transformer"]), base_dir=settings.models_dir, must_exist=True)
 
         # ----- Phase 4: Build subprocess args -----
-        cli_path = engine_cli_path()
+        cli_path = engine_cli_path(version=engine_ver)
+        engine_dir = cli_path.parent
         vram_budget = self._compute_vram_budget(gpu_info, model)
 
         args = [
@@ -640,16 +653,16 @@ class Worker:
             env = _os.environ.copy()
             cuda_paths = get_cuda_search_paths()
             existing_path = env.get("PATH", "")
-            # Prepend CUDA dirs so they take precedence
-            new_path_parts = [str(p) for p in cuda_paths if p.exists()]
+            # Prepend engine dir and CUDA dirs so they take precedence
+            new_path_parts = [str(engine_dir), str(settings.engine_dir)] + [str(p) for p in cuda_paths if p.exists()]
             if existing_path:
                 new_path_parts.append(existing_path)
             env["PATH"] = _os.pathsep.join(new_path_parts)
 
-            print(f"[worker] Launching QuantFunc engine: width={width}, height={height}, steps={request.steps}, backend={request.backend}")
+            print(f"[worker] Launching QuantFunc engine (v{engine_ver}): width={width}, height={height}, steps={request.steps}, backend={request.backend}")
             print(f"[worker] CLI args: {' '.join(args)}")
             print(f"[worker] subprocess PATH (first 3): {new_path_parts[:3]}")
-            print(f"[worker] subprocess cwd: {settings.engine_dir}")
+            print(f"[worker] subprocess cwd: {engine_dir}")
 
             self._current_process = subprocess.Popen(
                 args,
@@ -659,7 +672,7 @@ class Worker:
                 bufsize=1,  # Line-buffered
                 encoding="utf-8",
                 errors="replace",
-                cwd=str(settings.engine_dir),  # Engine may need its dir as CWD
+                cwd=str(engine_dir),  # Engine needs its dir as CWD
                 env=env,  # Inject CUDA paths
             )
         except FileNotFoundError as e:

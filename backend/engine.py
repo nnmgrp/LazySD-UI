@@ -308,29 +308,58 @@ def _plan_engine_files(
 
 
 # ---------- Public API ----------
-def get_engine_paths() -> tuple[Path, Path]:
-    """Get (binary_path, cli_path) for current platform + CUDA version."""
+def get_engine_paths(version: Optional[str] = None) -> tuple[Path, Path]:
+    """Get (binary_path, cli_path) for current platform + CUDA version.
+
+    If `version` is specified and differs from DEFAULT_ENGINE_VERSION:
+    looks for `settings.engine_dir / f"v{version}" / ...`.
+    If that subfolder exists and contains the binary, returns paths in that subfolder.
+    Otherwise returns default paths in `settings.engine_dir`.
+    """
     settings = get_settings()
     key = (settings.engine_platform, settings.cuda_version)
     if key not in ENGINE_FILENAMES:
         raise ValueError(f"Unsupported platform/CUDA combo: {key}")
 
     binary_name, cli_name = ENGINE_FILENAMES[key]
+
+    if version and version != DEFAULT_ENGINE_VERSION:
+        for sub in (settings.engine_dir / f"v{version}", settings.engine_dir / version):
+            if (sub / cli_name).exists():
+                return sub / binary_name, sub / cli_name
+
     return settings.engine_dir / binary_name, settings.engine_dir / cli_name
 
 
-def engine_binary_path() -> Path:
-    return get_engine_paths()[0]
+def engine_binary_path(version: Optional[str] = None) -> Path:
+    return get_engine_paths(version)[0]
 
 
-def engine_cli_path() -> Path:
-    return get_engine_paths()[1]
+def engine_cli_path(version: Optional[str] = None) -> Path:
+    return get_engine_paths(version)[1]
 
 
-def is_engine_installed() -> bool:
+def is_engine_installed(version: Optional[str] = None) -> bool:
     """Quick existence check (no SHA verification)."""
-    binary, cli = get_engine_paths()
+    binary, cli = get_engine_paths(version)
     return binary.exists() and cli.exists()
+
+
+def list_installed_engine_versions() -> list[str]:
+    """List all installed engine versions available in bin/<platform>/."""
+    versions = []
+    settings = get_settings()
+    key = (settings.engine_platform, settings.cuda_version)
+    if key in ENGINE_FILENAMES:
+        _, cli_name = ENGINE_FILENAMES[key]
+        if (settings.engine_dir / cli_name).exists():
+            versions.append(DEFAULT_ENGINE_VERSION)
+        for item in settings.engine_dir.glob("v*"):
+            if item.is_dir() and (item / cli_name).exists():
+                ver_name = item.name.lstrip("v")
+                if ver_name not in versions:
+                    versions.append(ver_name)
+    return versions
 
 
 def engine_config_json_path() -> Path:

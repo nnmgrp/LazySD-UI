@@ -4,6 +4,7 @@
   "family": "z-image",
   "pipeline": "text_to_image",
   "key_protected": false,
+  "engine_version": "0.0.12",
   "description": "Ultra-fast distilled text-to-image model (Alibaba Tongyi Z-Image-Turbo), pre-quantized for the QuantFunc Lighting engine. ~1.2s per image on RTX 4090. Lightest series (~6.5 GB total) — best choice for a first end-to-end test. Runs on RTX 20-series and above.",
   "upstream": {
     "model": "Tongyi-MAI/Z-Image-Turbo",

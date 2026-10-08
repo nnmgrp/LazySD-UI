@@ -141,14 +141,16 @@ def test_registry():
 
         klein4b = registry.get("flux_klein_4b")
         assert klein4b.key_protected is True, "Klein 4B must be key_protected"
+        assert klein4b.engine_version == "0.0.12", "Klein 4B must use engine v0.0.12"
         req4b = klein4b.resolve_required_files(gpu_sm=120, backend="lighting", steps=4)
         assert req4b["transformer_path"] == "transformer/klein-4b-50x-lighting.safetensors"
-        print(f"  ✓ Klein 4B: {len(klein4b.transformers)} transformers, key_protected={klein4b.key_protected}")
+        print(f"  ✓ Klein 4B: {len(klein4b.transformers)} transformers, key_protected={klein4b.key_protected}, engine_version={klein4b.engine_version}")
 
         assert "qwen_image_2_1" in registry.models, "qwen_image_2_1 missing from registry"
         qwen21 = registry.get("qwen_image_2_1")
         assert qwen21.family == "qwen"
         assert qwen21.pipeline == "text_to_image"
+        assert qwen21.engine_version == "0.0.17", "Qwen-Image-2.1 must use engine v0.0.17"
         assert len(qwen21.transformers) >= 2
         req_qwen21 = qwen21.resolve_required_files(gpu_sm=120, backend="lighting", steps=4)
         assert "qwen_image_21_base_quantfunc_int4_r128.safetensors" in req_qwen21["transformer_path"]
@@ -314,11 +316,18 @@ def test_engine_auth():
 def test_engine_status():
     print("\n[7/7] Testing engine status check...")
     try:
-        from backend.engine import check_engine_status, is_engine_installed
+        from backend.engine import check_engine_status, is_engine_installed, get_engine_paths, list_installed_engine_versions
         status = check_engine_status()
         print(f"  ✓ Engine status: {status.status}")
         print(f"    Message: {status.message}")
-        print(f"  ✓ Engine installed: {is_engine_installed()}")
+        print(f"  ✓ Engine installed (default): {is_engine_installed()}")
+        print(f"  ✓ Engine installed (v0.0.12): {is_engine_installed('0.0.12')}")
+        installed_vers = list_installed_engine_versions()
+        print(f"  ✓ Installed engine versions: {installed_vers}")
+        assert "0.0.17" in installed_vers
+        assert "0.0.12" in installed_vers
+        p12_bin, p12_cli = get_engine_paths("0.0.12")
+        assert "v0.0.12" in str(p12_cli)
         return True
     except Exception as e:
         print(f"  ✗ Engine status test failed: {e}")

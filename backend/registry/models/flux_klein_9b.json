@@ -4,6 +4,7 @@
   "family": "klein",
   "pipeline": "text_to_image",
   "key_protected": true,
+  "engine_version": "0.0.12",
   "description": "Flagship 9B-parameter Flux.2 Klein for high-quality text-to-image. Lighting backend only (no SVDQ for 9B). Optimized for RTX 50-series+ via FP4 native path. Key-protected: requires the bundled free-trial test key (config.json) or a personal QuantFunc API key.",
   "upstream": {
     "model": "black-forest-labs/FLUX.2-klein-9b",

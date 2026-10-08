@@ -123,6 +123,9 @@ class ModelSpec:
     # (bundled free-trial test key or a user key from quantfunc.com).
     key_protected: bool = False
 
+    # Target engine version (e.g. "0.0.12" for FP4 Klein models, "0.0.17" for Qwen-Image-2.1)
+    engine_version: Optional[str] = None
+
     @classmethod
     def from_dict(cls, data: dict) -> "ModelSpec":
         """Build ModelSpec from a JSON dict."""
@@ -155,6 +158,7 @@ class ModelSpec:
             requirements=requirements,
             scheduler_presets=data.get("scheduler_presets", {}),
             key_protected=bool(data.get("key_protected", False)),
+            engine_version=data.get("engine_version"),
         )
 
     # ---------- Helpers ----------

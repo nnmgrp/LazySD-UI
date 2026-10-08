@@ -4,6 +4,7 @@
   "family": "qwen",
   "pipeline": "text_to_image",
   "key_protected": true,
+  "engine_version": "0.0.17",
   "description": "Flagship 13B-parameter Qwen-Image model by QuantFunc. Exceptional prompt comprehension, photorealism, and complex multi-subject composition. Pre-quantized for RTX 30/40/50 series.",
   "upstream": {
     "model": "Qwen/Qwen-Image",
