@@ -1,0 +1,102 @@
+{
+  "id": "qwen_image_2_1",
+  "name": "Qwen-Image-2.1 (4-bit INT4)",
+  "family": "qwen",
+  "pipeline": "text_to_image",
+  "key_protected": false,
+  "description": "Pre-quantized Qwen-Image-2.1 INT4 model by QuantFunc. SVDQuant 4-bit compression (4x reduction) with visual quality close to 16-bit baseline. Features r128 (quality-first) and r32 (compact) INT4 variants for all NVIDIA SM75+ GPUs (RTX 20/30/40/50 series).",
+  "upstream": {
+    "model": "Qwen/Qwen-Image-2.1",
+    "license": "Qwen Research License",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "QuantFunc/Qwen-Image-2.1-4bit"
+    },
+    "mirror": {
+      "type": "modelscope",
+      "repo_id": "QuantFunc/Qwen-Image-2.1-4bit"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "transformers": [
+    {
+      "id": "int4-r128",
+      "path": "qwen_image_21_base_quantfunc_int4_r128.safetensors",
+      "tier": "universal",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 4.34,
+      "size_bytes": 4664877408,
+      "sha256": "920a3be0b5b559ea67e97586f68fae72aa0fd60ab97537ebdcfbf1a598634776",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090", "RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090", "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"],
+      "note": "r128 rank: Quality-first (recommended)"
+    },
+    {
+      "id": "int4-r32",
+      "path": "qwen_image_21_base_quantfunc_int4_r32.safetensors",
+      "tier": "universal",
+      "backend": "lighting",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 4.03,
+      "size_bytes": 4325133120,
+      "sha256": "177a9b59a7d65ad41925cb3fc29d9a8a7b1deb5732d7aea1b36405f35b612653",
+      "recommended": false,
+      "recommended_for_gpu": ["RTX 2060", "RTX 2070", "RTX 2080", "RTX 3060", "RTX 4060"],
+      "note": "r32 rank: Size/VRAM-first compact"
+    },
+    {
+      "id": "svdq-r128",
+      "path": "qwen_image_21_base_quantfunc_int4_r128.safetensors",
+      "tier": "universal",
+      "backend": "svdq",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 4.34,
+      "size_bytes": 4664877408,
+      "sha256": "920a3be0b5b559ea67e97586f68fae72aa0fd60ab97537ebdcfbf1a598634776",
+      "recommended": true,
+      "recommended_for_gpu": ["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090", "RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090", "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"],
+      "note": "r128 rank: SVDQuant"
+    },
+    {
+      "id": "svdq-r32",
+      "path": "qwen_image_21_base_quantfunc_int4_r32.safetensors",
+      "tier": "universal",
+      "backend": "svdq",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 4.03,
+      "size_bytes": 4325133120,
+      "sha256": "177a9b59a7d65ad41925cb3fc29d9a8a7b1deb5732d7aea1b36405f35b612653",
+      "recommended": false,
+      "recommended_for_gpu": ["RTX 2060", "RTX 2070", "RTX 2080", "RTX 3060", "RTX 4060"],
+      "note": "r32 rank: SVDQuant"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "lighting-4steps": {
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler": "euler",
+      "scheduler": "simple"
+    }
+  }
+}

@@ -283,6 +283,17 @@ def create_app() -> FastAPI:
                     "gpu_min_sm": m.requirements.gpu_min_sm,
                     "default_vram_mode": m.requirements.default_vram_mode,
                 },
+                "transformers": [
+                    {
+                        "id": t.id,
+                        "backend": t.backend,
+                        "steps": t.steps,
+                        "size_gb": t.size_gb,
+                        "recommended": t.recommended,
+                        "note": t.note,
+                    }
+                    for t in m.transformers
+                ],
             })
 
         return {
@@ -329,6 +340,17 @@ def create_app() -> FastAPI:
                     "vram_recommended_gb": m.requirements.vram_recommended_gb,
                     "gpu_min_sm": m.requirements.gpu_min_sm,
                 },
+                "transformers": [
+                    {
+                        "id": t.id,
+                        "backend": t.backend,
+                        "steps": t.steps,
+                        "size_gb": t.size_gb,
+                        "recommended": t.recommended,
+                        "note": t.note,
+                    }
+                    for t in m.transformers
+                ],
             }
             for m in registry.list_all()
         ]
@@ -427,7 +449,9 @@ def create_app() -> FastAPI:
         include_base = body.get("include_base", True)
         include_precision = body.get("include_precision", True)
 
-        transformers_for_gpu = model.get_transformers_for_tier(STATE.gpu_info.sm)
+        gpu_sm = STATE.gpu_info.sm if STATE.gpu_info else 0
+        gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "50x-below"
+        transformers_for_gpu = model.get_transformers_for_tier(gpu_sm) if gpu_sm else model.transformers
         selected = None
         if variant_id:
             selected = next((t for t in transformers_for_gpu if t.id == variant_id), None)
@@ -435,7 +459,7 @@ def create_app() -> FastAPI:
             # Pick first recommended, or first available
             selected = next((t for t in transformers_for_gpu if t.recommended), None) or transformers_for_gpu[0]
         if not selected:
-            raise HTTPException(400, f"No compatible transformer found for GPU SM={STATE.gpu_info.sm}")
+            raise HTTPException(400, f"No compatible transformer found for GPU SM={gpu_sm}")
 
         # Create a download job (reuse the job system)
         job_id = str(uuid.uuid4())[:8]
@@ -454,7 +478,12 @@ def create_app() -> FastAPI:
                     message=f"Preparing to download {model.name} files...",
                 ))
 
+                settings = get_settings()
                 source_spec = model.sources.primary
+                if settings.download_source_priority == "hf_first" and model.sources.mirror and model.sources.mirror.type == "huggingface":
+                    source_spec = model.sources.mirror
+                elif settings.download_source_priority == "ms_first" and model.sources.mirror and model.sources.mirror.type == "modelscope":
+                    source_spec = model.sources.mirror
                 source = get_source(source_spec.type, token=_get_token_for_source(source_spec.type))
                 repo_id = source_spec.repo_id
                 revision = "master" if source_spec.type == "modelscope" else "main"
@@ -463,18 +492,27 @@ def create_app() -> FastAPI:
 
                 tasks = []
                 if include_base:
-                    base_path = model.get_base_model_path(STATE.gpu_info.tier)
+                    base_path = model.get_base_model_path(gpu_tier)
                     if base_path:
                         local_base = local_repo_dir / base_path
                         if not (local_base / "model_index.json").exists():
-                            tasks.append(("base", base_path.rstrip("/"), f"{base_path.rstrip('/')}/**"))
+                            sub = base_path.rstrip("/")
+                            if sub in ("", "."):
+                                patterns = [
+                                    "model_index.json", "config.json", "*.json",
+                                    "text_encoder/**", "text_encoder*/**",
+                                    "vae/**", "scheduler/**", "tokenizer/**", "processor/**",
+                                ]
+                                tasks.append(("base", ".", patterns))
+                            else:
+                                tasks.append(("base", sub, [f"{sub}/**"]))
                         else:
                             STATE.update_job(job_id, ProgressEvent(
                                 status=JobStatus.DOWNLOADING, progress=0.1,
                                 message="Base model already installed ✓",
                             ))
                     else:
-                        raise RuntimeError(f"No base model for tier {STATE.gpu_info.tier}")
+                        raise RuntimeError(f"No base model for tier {gpu_tier}")
 
                 # Transformer
                 local_transformer = local_repo_dir / selected.path
@@ -488,8 +526,11 @@ def create_app() -> FastAPI:
 
                 # Precision config
                 if include_precision:
+                    klein_tier = STATE.gpu_info.klein_tier if STATE.gpu_info else None
                     for pc in model.precision_configs:
-                        if pc.tier == STATE.gpu_info.tier:
+                        if pc.tier == gpu_tier:
+                            if pc.klein_tier and klein_tier and pc.klein_tier != klein_tier:
+                                continue
                             local_pc = local_repo_dir / pc.path
                             if not local_pc.exists():
                                 tasks.append(("precision", pc.path, pc.path))
@@ -515,10 +556,11 @@ def create_app() -> FastAPI:
 
                     if kind == "base":
                         # Snapshot download with allow_pattern for recursive dir
+                        allow_pat = pattern if isinstance(pattern, list) else [pattern]
                         source.download_snapshot(
                             repo_id=repo_id,
                             local_dir=local_repo_dir,
-                            allow_patterns=[pattern],
+                            allow_patterns=allow_pat,
                             revision=revision,
                         )
                     else:
@@ -943,21 +985,66 @@ def create_app() -> FastAPI:
 # ============================================================
 def main():
     """Entry point — initialize state, build app, launch server."""
-    init_state()
+    import argparse
+    from backend.logging_config import setup_logging
 
+    parser = argparse.ArgumentParser(description="QuantFunc WebUI server")
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help="Show detailed debug output and HTTP access logs in console (default: quiet)",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7860,
+        help="Port to bind to (default: 7860)",
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Directory to store log files (default: logs/)",
+    )
+
+    args = parser.parse_args()
+
+    log_file, uvicorn_log_config = setup_logging(verbose=args.verbose, log_dir=args.log_dir)
+
+    init_state()
     app = create_app()
 
-    # Launch via uvicorn directly — no gradio dependency needed.
     import uvicorn
 
-    print("\nLaunching QuantFunc WebUI on http://127.0.0.1:7860")
-    print("Press Ctrl+C to stop.\n")
+    gpu_desc = (
+        f"{STATE.gpu_info.name} (SM {STATE.gpu_info.sm}, {STATE.gpu_info.vram_gb:.1f} GB VRAM)"
+        if STATE.gpu_info else "No NVIDIA GPU detected"
+    )
+
+    print("\n" + "=" * 60)
+    print(" QuantFunc WebUI")
+    print(f" URL:     http://{args.host}:{args.port}")
+    print(f" GPU:     {gpu_desc}")
+    print(f" Logs:    {log_file} (all activity logged silently)")
+    if args.verbose:
+        print(" Mode:    VERBOSE (detailed console logs enabled)")
+    else:
+        print(" Mode:    QUIET console (use --verbose for detailed HTTP/debug logs)")
+    print("=" * 60 + "\n")
 
     uvicorn.run(
         app,
-        host="127.0.0.1",
-        port=7860,
-        log_level="info",
+        host=args.host,
+        port=args.port,
+        log_config=uvicorn_log_config,
+        log_level="debug" if args.verbose else "info",
         reload=False,
     )
 

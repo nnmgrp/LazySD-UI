@@ -109,7 +109,7 @@ class GenerateResult:
 _STEP_RE = re.compile(r"\[step\s+(\d+)/(\d+)\]", re.IGNORECASE)
 _PROGRESS_RE = re.compile(r"\[progress\s+([0-9.]+)\]", re.IGNORECASE)
 _COMPLETE_RE = re.compile(r"\[complete\]\s*(\S+)", re.IGNORECASE)
-_ERROR_RE = re.compile(r"\[error\]\s*(.+)", re.IGNORECASE)
+_ERROR_RE = re.compile(r"\[error\]\s*(.+)|^(?:Error|Exception):\s*(.+)", re.IGNORECASE)
 
 # Engine-side key-protection failure (checkObfuscation in ComponentImpl.cpp).
 # Matched against raw output lines so we can give actionable advice.
@@ -170,10 +170,11 @@ def parse_engine_output(line: str) -> Optional[ProgressEvent]:
     # Error
     m = _ERROR_RE.search(line)
     if m:
+        err_msg = m.group(1) or m.group(2)
         return ProgressEvent(
             status=JobStatus.ERROR,
-            error=m.group(1),
-            message=m.group(1),
+            error=err_msg.strip(),
+            message=err_msg.strip(),
         )
 
     # Unrecognized line — treat as info message
@@ -239,6 +240,70 @@ class Worker:
                 f"for model {model.name}."
             )
 
+    def _ensure_qwen_image_2_1_configs(self, model_dir: Path) -> None:
+        """Ensure QwenImage21Pipeline configs are present and valid."""
+        midx_path = model_dir / "model_index.json"
+        t_cfg_path = model_dir / "transformer" / "config.json"
+        s_cfg_path = model_dir / "scheduler" / "scheduler_config.json"
+
+        need_midx = False
+        if not midx_path.exists():
+            need_midx = True
+        else:
+            try:
+                data = json.loads(midx_path.read_text(encoding="utf-8"))
+                if data.get("_class_name") != "QwenImage21Pipeline" or "transformer" not in data:
+                    need_midx = True
+            except Exception:
+                need_midx = True
+
+        if need_midx:
+            midx = {
+                "_class_name": "QwenImage21Pipeline",
+                "_diffusers_version": "0.37.0.dev0",
+                "scheduler": ["diffusers", "FlowMatchEulerDiscreteScheduler"],
+                "text_encoder": ["transformers", "Qwen3VLForConditionalGeneration"],
+                "transformer": ["diffusers", "QwenImage21Transformer2DModel"],
+                "vae": ["diffusers", "AutoencoderKLQwenImage21"],
+            }
+            midx_path.write_text(json.dumps(midx, indent=2), encoding="utf-8")
+
+        if not t_cfg_path.exists():
+            t_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            t_cfg = {
+                "_class_name": "QwenImage21Transformer2DModel",
+                "_diffusers_version": "0.37.0.dev0",
+                "attention_head_dim": 128,
+                "axes_dims_rope": [16, 56, 56],
+                "context_in_dim": 4096,
+                "in_channels": 64,
+                "num_attention_heads": 32,
+                "num_layers": 32,
+                "out_channels": 64,
+                "patch_size": 1,
+                "mlp_ratio": 3,
+                "eps": 1e-06,
+                "causal_condition": True,
+            }
+            t_cfg_path.write_text(json.dumps(t_cfg, indent=2), encoding="utf-8")
+
+        if not s_cfg_path.exists():
+            s_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            s_cfg = {
+                "_class_name": "FlowMatchEulerDiscreteScheduler",
+                "_diffusers_version": "0.37.0.dev0",
+                "base_image_seq_len": 256,
+                "base_shift": 0.5,
+                "max_image_seq_len": 8192,
+                "max_shift": 0.9,
+                "num_train_timesteps": 1000,
+                "shift": 1.0,
+                "shift_terminal": 0.02,
+                "time_shift_type": "exponential",
+                "use_dynamic_shifting": True,
+            }
+            s_cfg_path.write_text(json.dumps(s_cfg, indent=2), encoding="utf-8")
+
     def _resolve_local_paths(
         self,
         model: ModelSpec,
@@ -258,6 +323,10 @@ class Worker:
 
         settings = get_settings()
         source_spec = model.sources.primary
+        if settings.download_source_priority == "hf_first" and model.sources.mirror and model.sources.mirror.type == "huggingface":
+            source_spec = model.sources.mirror
+        elif settings.download_source_priority == "ms_first" and model.sources.mirror and model.sources.mirror.type == "modelscope":
+            source_spec = model.sources.mirror
         source = get_source(source_spec.type, token=self._get_token(source_spec.type))
 
         # Repo ID for cache lookup
@@ -273,6 +342,42 @@ class Worker:
         # Base model — check if directory exists with model_index.json
         base_path = required_files["base_model_path"]
         local_base = local_repo_dir / base_path
+
+        # Qwen-Image-2.1 specific handling
+        if model.id == "qwen_image_2_1":
+            self._ensure_qwen_image_2_1_configs(local_base)
+            vae_file = local_base / "qwen_image_2.1_vae_bf16.safetensors"
+            te_file = local_base / "qwen3vl_8b_bf16.safetensors"
+
+            # Auto-download VAE (644 MB) if missing
+            if not vae_file.exists():
+                emit(ProgressEvent(
+                    status=JobStatus.DOWNLOADING,
+                    progress=0.1,
+                    message="Downloading Qwen-Image-2.1 VAE (qwen_image_2.1_vae_bf16.safetensors, 644 MB)...",
+                ))
+                from .sources import HuggingFaceSource
+                hf = HuggingFaceSource(token=self._get_token("huggingface"))
+                hf.download_file(
+                    repo_id="Comfy-Org/Qwen-Image-2.1",
+                    file_path="vae/qwen_image_2.1_vae_bf16.safetensors",
+                    local_dir=local_base,
+                )
+                downloaded_vae = local_base / "vae" / "qwen_image_2.1_vae_bf16.safetensors"
+                if downloaded_vae.exists() and not vae_file.exists():
+                    downloaded_vae.rename(vae_file)
+
+            # Check text encoder
+            if not te_file.exists() and not (local_base / "text_encoder").exists():
+                raise RuntimeError(
+                    f"Qwen-Image-2.1 text encoder weights not found.\n"
+                    f"Expected 'qwen3vl_8b_bf16.safetensors' in:\n"
+                    f"{local_base}\n\n"
+                    f"To complete setup:\n"
+                    f"  1. If you use ComfyUI: copy 'qwen3vl_8b_bf16.safetensors' from your ComfyUI models/text_encoders/ directory.\n"
+                    f"  2. Or download directly from: https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_bf16.safetensors"
+                )
+
         if not (local_base / "model_index.json").exists():
             need_base_download = True
         required_paths["model_dir"] = local_base
@@ -312,8 +417,14 @@ class Worker:
                 message=f"Downloading base model ({base_path.rstrip('/')})...",
             ))
             base_subdir = base_path.rstrip("/")
-            # Use ** pattern for recursive download of the entire base model dir
-            allow_patterns = [f"{base_subdir}/**"]
+            if base_subdir in ("", "."):
+                allow_patterns = [
+                    "model_index.json", "config.json", "*.json",
+                    "text_encoder/**", "text_encoder*/**",
+                    "vae/**", "scheduler/**", "tokenizer/**", "processor/**",
+                ]
+            else:
+                allow_patterns = [f"{base_subdir}/**"]
             source.download_snapshot(
                 repo_id=repo_id,
                 local_dir=local_repo_dir,
@@ -453,8 +564,8 @@ class Worker:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Validate that model_dir and transformer are within cache (path traversal protection)
-        validate_path(str(local_paths["model_dir"]), base_dir=settings.models_dir, must_exist=True)
-        validate_path(str(local_paths["transformer"]), base_dir=settings.models_dir, must_exist=True)
+        local_paths["model_dir"] = validate_path(str(local_paths["model_dir"]), base_dir=settings.models_dir, must_exist=True)
+        local_paths["transformer"] = validate_path(str(local_paths["transformer"]), base_dir=settings.models_dir, must_exist=True)
 
         # ----- Phase 4: Build subprocess args -----
         cli_path = engine_cli_path()
@@ -593,11 +704,19 @@ class Worker:
                 return_code = -1  # Unknown
 
         # ----- Phase 6.5: Check process exit code -----
-        # If the engine crashed (e.g., missing DLL), return_code will be non-zero
-        # and no output file will exist. Show the ACTUAL error, not "file not found".
+        # If the engine crashed, return_code will be non-zero and no output file will exist.
         if return_code != 0 and not engine_reported_complete:
-            # Collect last 20 lines of output for diagnosis
             tail = "\n".join(full_output_lines[-20:]) if full_output_lines else "(no output)"
+            explicit_errors = [
+                l.strip() for l in full_output_lines
+                if l.strip().startswith("Error:") or "[error]" in l.lower()
+            ]
+            if explicit_errors:
+                primary = explicit_errors[-1]
+                raise RuntimeError(
+                    f"Engine error: {primary}\n"
+                    f"--- Engine output (last 20 lines) ---\n{tail}"
+                )
             raise RuntimeError(
                 f"Engine process exited with code {return_code} (crashed). "
                 f"This usually means a DLL is missing (e.g., cublas64_13.dll, cudnn64_9.dll). "

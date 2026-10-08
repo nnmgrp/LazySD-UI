@@ -8,6 +8,7 @@ __pycache__/
 models/cache/
 bin/
 settings.json
+logs/
 
 # Outputs (keep directory structure)
 outputs/*
