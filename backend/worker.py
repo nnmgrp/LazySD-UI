@@ -512,6 +512,16 @@ class Worker:
         registry = get_registry()
         model = registry.get(request.model_id)
 
+        # Dispatch: stable-diffusion.cpp engine
+        if getattr(model, "engine", "quantfunc") == "sd_cpp":
+            from .sd_cpp import SDCppWorker
+            sd_worker = SDCppWorker()
+            self._sd_worker = sd_worker
+            try:
+                return sd_worker.generate(request, model, gpu_info, progress_callback=emit)
+            finally:
+                self._sd_worker = None
+
         # Determine engine version:
         engine_ver = getattr(model, "engine_version", None)
         if not engine_ver:
@@ -799,6 +809,11 @@ class Worker:
     def cancel(self) -> None:
         """Cancel the current generation job."""
         self._cancel_flag.set()
+        if hasattr(self, "_sd_worker") and self._sd_worker:
+            try:
+                self._sd_worker.cancel()
+            except Exception:
+                pass
         if self._current_process:
             try:
                 self._current_process.terminate()

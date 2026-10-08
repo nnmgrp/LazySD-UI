@@ -43,6 +43,7 @@ from backend.engine import (
     read_engine_api_key,
     verify_engine,
 )
+from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_version
 from backend.gpu import detect_gpu, GPUInfo
 from backend.registry import get_registry, reload_registry
 from backend.settings import get_settings, reload_settings
@@ -263,6 +264,20 @@ def create_app() -> FastAPI:
 
     def _model_is_installed(model, cache: CacheManager, gpu_tier: str) -> bool:
         try:
+            if getattr(model, "engine", "quantfunc") == "sd_cpp":
+                repo_id = model.sources.primary.repo_id if model.sources else ""
+                repo_dir = cache.repo_dir_for(repo_id) if repo_id else get_settings().models_dir
+                ckpt_rel = model.engine_args.get("checkpoint")
+                if ckpt_rel:
+                    return (repo_dir / ckpt_rel).exists()
+                diff_rel = model.engine_args.get("diffusion_model")
+                if diff_rel:
+                    return (repo_dir / diff_rel).exists()
+                for t in model.transformers:
+                    if t.recommended and (repo_dir / t.path).exists():
+                        return True
+                return False
+
             base_path = model.get_base_model_path(gpu_tier) if gpu_tier != "unknown" else None
             if not base_path and model.base_models:
                 base_path = list(model.base_models.values())[0]
@@ -297,6 +312,7 @@ def create_app() -> FastAPI:
                 "name": m.name,
                 "family": m.family,
                 "pipeline": m.pipeline,
+                "engine": getattr(m, "engine", "quantfunc"),
                 "engine_version": m.engine_version,
                 "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
@@ -319,6 +335,10 @@ def create_app() -> FastAPI:
                     for t in m.transformers
                 ],
             })
+
+        installed_engines = list_installed_engine_versions()
+        if is_sd_cpp_installed():
+            installed_engines.append("sd_cpp")
 
         return {
             "settings": {
@@ -343,7 +363,9 @@ def create_app() -> FastAPI:
                 "status": check_engine_status().status,
                 "message": check_engine_status().message,
             },
-            "installed_engines": list_installed_engine_versions(),
+            "installed_engines": installed_engines,
+            "sd_cpp_installed": is_sd_cpp_installed(),
+            "sd_cpp_version": get_sd_cpp_version(),
             "api_auth": _api_auth_status(),
             "models": models_list,
         }
@@ -360,6 +382,7 @@ def create_app() -> FastAPI:
                 "name": m.name,
                 "family": m.family,
                 "pipeline": m.pipeline,
+                "engine": getattr(m, "engine", "quantfunc"),
                 "engine_version": m.engine_version,
                 "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
@@ -446,6 +469,8 @@ def create_app() -> FastAPI:
         if base_path:
             local_base = cache.repo_dir_for(repo_id) / base_path
             base_installed = (local_base / "model_index.json").exists()
+        elif getattr(model, "engine", "quantfunc") == "sd_cpp" or not model.base_models:
+            base_installed = True
 
         return {
             "model_id": model_id,
@@ -520,7 +545,7 @@ def create_app() -> FastAPI:
                 local_repo_dir = cache.repo_dir_for(repo_id)
 
                 tasks = []
-                if include_base:
+                if include_base and getattr(model, "engine", "quantfunc") != "sd_cpp" and model.base_models:
                     base_path = model.get_base_model_path(gpu_tier)
                     if base_path:
                         local_base = local_repo_dir / base_path

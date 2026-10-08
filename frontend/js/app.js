@@ -221,7 +221,7 @@ const App = {
 
     nameEl.textContent = current.name;
     const variant = this.state.selectedVariant || current.transformers?.[0]?.id || "default";
-    const engineVer = current.engine_version ? `v${current.engine_version}` : "";
+    const engineVer = current.engine === "sd_cpp" ? "SD.CPP" : (current.engine_version ? `v${current.engine_version}` : "");
     const steps = document.getElementById("steps-input")?.value || current.transformers?.[0]?.steps || 4;
     
     if (subEl) {
@@ -233,7 +233,11 @@ const App = {
     }
 
     if (badgeEl) {
-      badgeEl.textContent = current.engine_version ? `⚡ v${current.engine_version}` : "⚡";
+      if (current.engine === "sd_cpp") {
+        badgeEl.textContent = "⚡ SD.CPP";
+      } else {
+        badgeEl.textContent = current.engine_version ? `⚡ v${current.engine_version}` : "⚡";
+      }
     }
   },
 
@@ -301,6 +305,8 @@ const App = {
         return m.family === "qwen" || m.id.includes("qwen");
       } else if (filter === "z-image") {
         return m.family === "z-image" || m.id.includes("z_image");
+      } else if (filter === "sd_cpp") {
+        return m.engine === "sd_cpp" || m.id.includes("gguf");
       }
       return true;
     });
@@ -318,9 +324,12 @@ const App = {
       const card = document.createElement("div");
       card.className = `model-picker-card ${isSelected ? "active" : ""}`;
 
-      const engineBadge = model.engine_version
-        ? `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ Engine v${escapeHtml(model.engine_version)}</span>`
-        : "";
+      let engineBadge = "";
+      if (model.engine === "sd_cpp") {
+        engineBadge = `<span class="badge-engine sd-cpp" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">⚡ Engine: SD.CPP</span>`;
+      } else if (model.engine_version) {
+        engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ Engine v${escapeHtml(model.engine_version)}</span>`;
+      }
 
       const statusBadge = isInstalled
         ? `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`
@@ -441,9 +450,12 @@ const App = {
       
       const pipelineBadge = `<span class="model-badge pipeline">${escapeHtml(model.pipeline)}</span>`;
       const familyBadge = `<span class="model-badge family">${escapeHtml(model.family)}</span>`;
-      const engineBadge = model.engine_version
-        ? `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ v${escapeHtml(model.engine_version)}</span>`
-        : "";
+      let engineBadge = "";
+      if (model.engine === "sd_cpp") {
+        engineBadge = `<span class="badge-engine sd-cpp" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">⚡ SD.CPP</span>`;
+      } else if (model.engine_version) {
+        engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ v${escapeHtml(model.engine_version)}</span>`;
+      }
       const installedBadge = model.installed
         ? `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`
         : `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;

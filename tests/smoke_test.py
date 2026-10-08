@@ -191,6 +191,18 @@ def test_registry():
         print(f"  ✓ Resolve required files (RTX 5060 Ti + Lighting-4steps):")
         print(f"    Base: {required['base_model_path']}")
         print(f"    Transformer: {required['transformer_path']}")
+
+        # SD.CPP models
+        sdxl = registry.get("sdxl_turbo_gguf")
+        assert sdxl.engine == "sd_cpp"
+        assert sdxl.engine_args.get("checkpoint") == "sdxl-turbo-Q4_0.gguf"
+        assert len(sdxl.transformers) == 1
+        print(f"  ✓ SDXL Turbo GGUF loaded: engine={sdxl.engine}, checkpoint={sdxl.engine_args.get('checkpoint')}")
+
+        flux_gguf = registry.get("flux_schnell_gguf")
+        assert flux_gguf.engine == "sd_cpp"
+        assert flux_gguf.engine_args.get("diffusion_model") == "flux1-schnell-Q4_K_S.gguf"
+        print(f"  ✓ Flux Schnell GGUF loaded: engine={flux_gguf.engine}, diffusion={flux_gguf.engine_args.get('diffusion_model')}")
         return True
     except Exception as e:
         print(f"  ✗ Registry test failed: {e}")
@@ -328,6 +340,13 @@ def test_engine_status():
         assert "0.0.12" in installed_vers
         p12_bin, p12_cli = get_engine_paths("0.0.12")
         assert "v0.0.12" in str(p12_cli)
+
+        from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version
+        print(f"  ✓ SD.CPP installed: {is_sd_cpp_installed()}")
+        print(f"    SD.CPP CLI path: {get_sd_cpp_cli_path()}")
+        print(f"    SD.CPP version: {get_sd_cpp_version()}")
+        assert is_sd_cpp_installed()
+        assert get_sd_cpp_cli_path().exists()
         return True
     except Exception as e:
         print(f"  ✗ Engine status test failed: {e}")

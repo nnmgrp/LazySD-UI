@@ -123,6 +123,10 @@ class ModelSpec:
     # (bundled free-trial test key or a user key from quantfunc.com).
     key_protected: bool = False
 
+    # Target engine (e.g. "quantfunc" or "sd_cpp")
+    engine: str = "quantfunc"
+    engine_args: dict = field(default_factory=dict)
+
     # Target engine version (e.g. "0.0.12" for FP4 Klein models, "0.0.17" for Qwen-Image-2.1)
     engine_version: Optional[str] = None
 
@@ -158,6 +162,8 @@ class ModelSpec:
             requirements=requirements,
             scheduler_presets=data.get("scheduler_presets", {}),
             key_protected=bool(data.get("key_protected", False)),
+            engine=data.get("engine", "quantfunc"),
+            engine_args=data.get("engine_args", {}),
             engine_version=data.get("engine_version"),
         )
 

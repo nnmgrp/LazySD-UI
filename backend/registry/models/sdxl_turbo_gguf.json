@@ -1,0 +1,48 @@
+{
+  "id": "sdxl_turbo_gguf",
+  "name": "SDXL Turbo (GGUF)",
+  "family": "sdxl",
+  "pipeline": "text_to_image",
+  "engine": "sd_cpp",
+  "engine_version": "sd_cpp",
+  "description": "Ultra-fast single-step SDXL Turbo via stable-diffusion.cpp (Q4_0 GGUF). Produces high quality 512x512 images in 1-4 steps with very low VRAM requirements (fits in 6-8 GB).",
+  "upstream": {
+    "model": "stabilityai/sdxl-turbo",
+    "license": "SAIL",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "second-state/SDXL-Turbo-GGUF"
+    }
+  },
+  "engine_args": {
+    "checkpoint": "sdxl-turbo-Q4_0.gguf"
+  },
+  "transformers": [
+    {
+      "id": "q4_0",
+      "path": "sdxl-turbo-Q4_0.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 1,
+      "size_gb": 3.8,
+      "recommended": true,
+      "note": "4-bit quantized monolithic checkpoint"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 6,
+    "vram_recommended_gb": 8,
+    "gpu_min_sm": 75,
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "sampler": "euler_a",
+      "steps": 1,
+      "guidance_scale": 1.0
+    }
+  }
+}

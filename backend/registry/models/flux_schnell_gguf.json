@@ -1,0 +1,49 @@
+{
+  "id": "flux_schnell_gguf",
+  "name": "Flux.1 Schnell (GGUF)",
+  "family": "flux",
+  "pipeline": "text_to_image",
+  "engine": "sd_cpp",
+  "engine_version": "sd_cpp",
+  "description": "Black Forest Labs FLUX.1 [schnell] 4-step distilled diffusion model via stable-diffusion.cpp. Uses 4-bit quantized diffusion weights and quantized T5-XXL text encoder, fitting in 8-12 GB VRAM.",
+  "upstream": {
+    "model": "black-forest-labs/FLUX.1-schnell",
+    "license": "Apache-2.0",
+    "commercial_use": true
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "city96/FLUX.1-schnell-gguf"
+    }
+  },
+  "engine_args": {
+    "diffusion_model": "flux1-schnell-Q4_K_S.gguf",
+    "guidance_type": "distilled"
+  },
+  "transformers": [
+    {
+      "id": "q4_k_s",
+      "path": "flux1-schnell-Q4_K_S.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 4,
+      "size_gb": 6.8,
+      "recommended": true,
+      "note": "4-bit quantized Schnell DiT"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "sampler": "euler",
+      "steps": 4,
+      "guidance_scale": 3.5
+    }
+  }
+}

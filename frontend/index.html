@@ -248,6 +248,11 @@
             <button class="icon-btn" onclick="downloadCudaDeps()">Download</button>
           </div>
           <div class="setting-row">
+            <div class="setting-label">SD.CPP engine<br><small style="color: var(--text-dim);">GGUF fallback</small></div>
+            <div class="setting-value" id="setting-sd-cpp-status">—</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
             <div class="setting-label" data-i18n="settings.qf_api_key">QuantFunc API key</div>
             <div class="setting-value">
               <input type="password" id="setting-qf-apikey" placeholder="qf_... (empty = use bundled test key)"
@@ -711,6 +716,16 @@
         statusEl.textContent = config.engine_status.status;
       }
 
+      // SD.CPP engine status
+      const sdCppEl = document.getElementById("setting-sd-cpp-status");
+      if (sdCppEl) {
+        if (config.sd_cpp_installed) {
+          sdCppEl.innerHTML = '<span class="state-badge installed">✓ installed (' + (config.sd_cpp_version || 'ready') + ')</span>';
+        } else {
+          sdCppEl.innerHTML = '<span class="state-badge missing">✗ missing</span>';
+        }
+      }
+
       // GPU section
       if (config.gpu) {
         document.getElementById("setting-gpu-name").textContent = config.gpu.name;
@@ -792,6 +807,7 @@
             <button class="filter-chip" data-filter="klein" onclick="App.setModelPickerFilter('klein', this)">Flux.2</button>
             <button class="filter-chip" data-filter="qwen" onclick="App.setModelPickerFilter('qwen', this)">Qwen</button>
             <button class="filter-chip" data-filter="z-image" onclick="App.setModelPickerFilter('z-image', this)">Z-Image</button>
+            <button class="filter-chip" data-filter="sd_cpp" onclick="App.setModelPickerFilter('sd_cpp', this)">SD.CPP (GGUF)</button>
           </div>
         </div>
       </div>
