@@ -44,6 +44,9 @@ const App = {
     img2imgRef: null,
     lastPreviewName: null,
     lastPreviewUrl: null,
+    modelPickerSearch: "",
+    modelPickerFilter: "all",
+    isModelPickerOpen: false,
   },
 
   // ---------- Init ----------
@@ -199,7 +202,220 @@ const App = {
       this.state.selectedModel = compatible[0].id;
       this.onModelChange();
     }
+    this.updateModelTrigger();
     this.renderModelsTab();
+  },
+
+  updateModelTrigger() {
+    const nameEl = document.getElementById("model-trigger-name");
+    const subEl = document.getElementById("model-trigger-sub");
+    const badgeEl = document.getElementById("model-trigger-badge");
+    if (!nameEl) return;
+
+    const current = this.state.models.find(m => m.id === this.state.selectedModel);
+    if (!current) {
+      nameEl.textContent = "—";
+      if (subEl) subEl.textContent = "—";
+      return;
+    }
+
+    nameEl.textContent = current.name;
+    const variant = this.state.selectedVariant || current.transformers?.[0]?.id || "default";
+    const engineVer = current.engine_version ? `v${current.engine_version}` : "";
+    const steps = document.getElementById("steps-input")?.value || current.transformers?.[0]?.steps || 4;
+    
+    if (subEl) {
+      const parts = [];
+      if (engineVer) parts.push(engineVer);
+      parts.push(`${steps} steps`);
+      if (variant) parts.push(variant.replace(/-(?:50x|40x|30x-below)(?:-base)?/g, ""));
+      subEl.textContent = parts.join(" · ");
+    }
+
+    if (badgeEl) {
+      badgeEl.textContent = current.engine_version ? `⚡ v${current.engine_version}` : "⚡";
+    }
+  },
+
+  // ---------- Model Hub Modal ----------
+  openModelPickerModal() {
+    const modal = document.getElementById("model-picker-modal");
+    if (!modal) return;
+    this.state.isModelPickerOpen = true;
+    modal.style.display = "flex";
+    this.renderModelPickerModal();
+    const searchInput = document.getElementById("model-picker-search");
+    if (searchInput) {
+      searchInput.value = this.state.modelPickerSearch || "";
+      searchInput.focus();
+    }
+  },
+
+  closeModelPickerModal() {
+    const modal = document.getElementById("model-picker-modal");
+    if (!modal) return;
+    this.state.isModelPickerOpen = false;
+    modal.style.display = "none";
+  },
+
+  onModelPickerSearch(query) {
+    this.state.modelPickerSearch = (query || "").toLowerCase().trim();
+    this.renderModelPickerModal();
+  },
+
+  setModelPickerFilter(filter, btnEl) {
+    this.state.modelPickerFilter = filter;
+    document.querySelectorAll("#model-picker-filters .filter-chip").forEach(el => {
+      el.classList.toggle("active", el === btnEl);
+    });
+    this.renderModelPickerModal();
+  },
+
+  renderModelPickerModal() {
+    const grid = document.getElementById("model-picker-grid");
+    if (!grid) return;
+
+    if (!this.state.models || !this.state.models.length) {
+      grid.innerHTML = `<div class="placeholder-text">${t("common.loading")}</div>`;
+      return;
+    }
+
+    const gpuSm = this.state.gpuInfo?.sm || 0;
+    const query = this.state.modelPickerSearch || "";
+    const filter = this.state.modelPickerFilter || "all";
+
+    const filtered = this.state.models.filter(m => {
+      // Search query
+      if (query) {
+        const matchesName = m.name?.toLowerCase().includes(query);
+        const matchesFamily = m.family?.toLowerCase().includes(query);
+        const matchesDesc = m.description?.toLowerCase().includes(query);
+        if (!matchesName && !matchesFamily && !matchesDesc) return false;
+      }
+      // Category filter
+      if (filter === "installed") {
+        return m.installed === true;
+      } else if (filter === "klein") {
+        return m.family === "klein" || m.id.includes("klein");
+      } else if (filter === "qwen") {
+        return m.family === "qwen" || m.id.includes("qwen");
+      } else if (filter === "z-image") {
+        return m.family === "z-image" || m.id.includes("z_image");
+      }
+      return true;
+    });
+
+    if (!filtered.length) {
+      grid.innerHTML = `<div class="placeholder-text" style="grid-column: 1 / -1; padding: 40px 0;">${t("models.no_results")}</div>`;
+      return;
+    }
+
+    grid.innerHTML = "";
+    for (const model of filtered) {
+      const isSelected = model.id === this.state.selectedModel;
+      const isInstalled = model.installed === true;
+
+      const card = document.createElement("div");
+      card.className = `model-picker-card ${isSelected ? "active" : ""}`;
+
+      const engineBadge = model.engine_version
+        ? `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ Engine v${escapeHtml(model.engine_version)}</span>`
+        : "";
+
+      const statusBadge = isInstalled
+        ? `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`
+        : `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;
+
+      const keyBadge = model.key_protected
+        ? `<span class="model-badge key-protected" style="font-size: 10px; padding: 2px 6px;">🔑 Key Protected</span>`
+        : "";
+
+      const vramMin = model.requirements?.vram_min_gb ? `${model.requirements.vram_min_gb} GB` : "8 GB";
+      const defaultSteps = model.transformers?.[0]?.steps || 4;
+
+      // Variants select
+      let variantsHtml = "";
+      if (model.transformers && model.transformers.length > 1) {
+        variantsHtml = `
+          <div class="card-variants-row">
+            <span class="card-variants-label">Variant:</span>
+            <select class="card-variants-select" id="card-variant-${escapeHtml(model.id)}" onclick="event.stopPropagation()">
+              ${model.transformers.map(tr => `<option value="${escapeHtml(tr.id)}" ${tr.id === this.state.selectedVariant ? "selected" : ""}>${escapeHtml(tr.id)} (${tr.backend}, ${tr.steps}st)</option>`).join("")}
+            </select>
+          </div>
+        `;
+      }
+
+      let actionBtnHtml = "";
+      if (isSelected) {
+        actionBtnHtml = `<button class="card-action-btn active" disabled>✓ ${t("models.active_model")}</button>`;
+      } else if (isInstalled) {
+        actionBtnHtml = `<button class="card-action-btn primary" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">${t("models.select_model")}</button>`;
+      } else {
+        actionBtnHtml = `<button class="card-action-btn download" onclick="App.downloadModelVariant('${escapeHtml(model.id)}', null, this)">⬇ ${t("models.download_and_select")}</button>`;
+      }
+
+      card.innerHTML = `
+        <div class="card-top">
+          <div class="card-header-row">
+            <div class="card-title-group">
+              <span class="card-model-name">${escapeHtml(model.name)}</span>
+              <span class="card-family-tag">${escapeHtml(model.family || model.pipeline)}</span>
+            </div>
+            <div class="card-badges">
+              ${engineBadge}
+              ${statusBadge}
+              ${keyBadge}
+            </div>
+          </div>
+          <p class="card-desc">${escapeHtml(model.description || "")}</p>
+          <div class="card-specs">
+            <span>📼 ${t("models.vram_min")}: ${vramMin}</span>
+            <span>⏱ ${t("models.steps")}: ${defaultSteps}</span>
+            <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
+          </div>
+          ${variantsHtml}
+        </div>
+        <div class="card-footer">
+          ${actionBtnHtml}
+        </div>
+      `;
+
+      // Allow clicking card to select if installed
+      if (!isSelected && isInstalled) {
+        card.style.cursor = "pointer";
+        card.addEventListener("click", (e) => {
+          if (e.target.tagName === "SELECT" || e.target.tagName === "BUTTON") return;
+          this.selectModelFromModal(model.id);
+        });
+      }
+
+      grid.appendChild(card);
+    }
+  },
+
+  async selectModelFromModal(modelId) {
+    this.state.selectedModel = modelId;
+    
+    // Check if variant was selected in the card
+    const cardVariantSelect = document.getElementById(`card-variant-${modelId}`);
+    if (cardVariantSelect && cardVariantSelect.value) {
+      this.state.selectedVariant = cardVariantSelect.value;
+    }
+
+    const select = document.getElementById("model-select");
+    if (select) {
+      select.value = modelId;
+    }
+    
+    if (this.state.currentTab !== "generate") {
+      this.switchTab("generate");
+    }
+
+    await this.onModelChange();
+    this.updateModelTrigger();
+    this.closeModelPickerModal();
+    this.toast("info", `${t("models.active_model")}: ${modelId}`);
   },
 
   renderModelsTab() {
@@ -225,6 +441,12 @@ const App = {
       
       const pipelineBadge = `<span class="model-badge pipeline">${escapeHtml(model.pipeline)}</span>`;
       const familyBadge = `<span class="model-badge family">${escapeHtml(model.family)}</span>`;
+      const engineBadge = model.engine_version
+        ? `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ v${escapeHtml(model.engine_version)}</span>`
+        : "";
+      const installedBadge = model.installed
+        ? `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`
+        : `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;
       const statusBadge = model.available === false || model.status === "coming_soon"
         ? `<span class="model-badge key-protected" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border-color: rgba(245, 158, 11, 0.4);">⏳ Coming Soon</span>`
         : "";
@@ -248,11 +470,18 @@ const App = {
         variantsHtml = `<div class="placeholder-text" style="padding: 8px 0; font-size: 13px; text-align: left;">Weights pending release on ModelScope</div>`;
       }
 
+      const isSelected = model.id === this.state.selectedModel;
+      const selectBtnHtml = isSelected
+        ? `<button class="card-action-btn active" style="margin-top: 12px; width: auto;" disabled>✓ ${t("models.active_model")}</button>`
+        : `<button class="card-action-btn primary" style="margin-top: 12px; width: auto;" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">⚡ ${t("models.select_model")}</button>`;
+
       card.innerHTML = `
         <div>
           <div class="model-card-header">
             <span class="model-card-title">${escapeHtml(model.name)}</span>
             <div class="model-card-badges">
+              ${engineBadge}
+              ${installedBadge}
               ${statusBadge}
               ${keyBadge}
               ${pipelineBadge}
@@ -266,6 +495,9 @@ const App = {
           </div>
           <div class="model-variants-title">Transformers (${model.transformers?.length || 0})</div>
           <div class="model-variants-list">${variantsHtml}</div>
+          <div style="margin-top: 8px;">
+            ${selectBtnHtml}
+          </div>
         </div>
       `;
 
@@ -277,13 +509,15 @@ const App = {
 
   async downloadModelVariant(modelId, variantId, btnEl) {
     this.state.selectedModel = modelId;
-    this.state.selectedVariant = variantId;
+    if (variantId) {
+      this.state.selectedVariant = variantId;
+    }
     
     // Sync model select dropdown in generate tab if present
     const modelSelect = document.getElementById("model-select");
     if (modelSelect) {
       modelSelect.value = modelId;
-      this.onModelChange();
+      await this.onModelChange();
     }
 
     if (btnEl) {
@@ -321,7 +555,14 @@ const App = {
             stepsInput.value = currentVariant.steps;
           }
         }
+        this.updateModelTrigger();
       });
+    }
+
+    // Steps input
+    const stepsInput = document.getElementById("steps-input");
+    if (stepsInput) {
+      stepsInput.addEventListener("input", () => this.updateModelTrigger());
     }
 
     // Generate button
@@ -336,9 +577,11 @@ const App = {
         e.preventDefault();
         this.onGenerate();
       }
-      // ESC: close history modal first, then cancel generation
+      // ESC: close modals first, then cancel generation
       if (e.key === "Escape") {
-        if (this.state.selectedHistoryItem) {
+        if (this.state.isModelPickerOpen) {
+          this.closeModelPickerModal();
+        } else if (this.state.selectedHistoryItem) {
           this.closeHistoryModal();
         } else if (this.state.currentJob) {
           this.cancelJob();
@@ -375,6 +618,13 @@ const App = {
     if (historyModal) {
       historyModal.addEventListener("click", (e) => {
         if (e.target === historyModal) this.closeHistoryModal();
+      });
+    }
+
+    const modelPickerModal = document.getElementById("model-picker-modal");
+    if (modelPickerModal) {
+      modelPickerModal.addEventListener("click", (e) => {
+        if (e.target === modelPickerModal) this.closeModelPickerModal();
       });
     }
 
@@ -427,6 +677,7 @@ const App = {
     } catch (e) {
       console.error("[app] Failed to fetch model state:", e);
     }
+    this.updateModelTrigger();
   },
 
   renderVariants(modelState) {
@@ -485,6 +736,7 @@ const App = {
         stepsInput.value = activeVar.steps;
       }
     }
+    this.updateModelTrigger();
   },
 
   updateDownloadButton(showButton, modelState) {

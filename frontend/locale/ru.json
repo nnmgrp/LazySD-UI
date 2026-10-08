@@ -193,5 +193,21 @@
   "errors.key_protected": "Модель защищена ключом. Восстановите тестовый ключ (Настройки → Engine → Восстановить тестовый ключ) или введите свой QuantFunc API-ключ.",
   "errors.history_load_failed": "Не удалось загрузить историю",
   "errors.history_delete_failed": "Не удалось удалить изображение",
-  "errors.clipboard_denied": "Доступ к буферу обмена запрещён"
+  "errors.clipboard_denied": "Доступ к буферу обмена запрещён",
+
+  "models.hub_title": "Каталог моделей",
+  "models.hub_subtitle": "Выбор активной модели, архитектуры и варианта квантизации",
+  "models.search_placeholder": "Поиск модели по имени или семейству...",
+  "models.filter_all": "Все",
+  "models.filter_installed": "Установленные",
+  "models.select_model": "Выбрать модель",
+  "models.active_model": "Выбрана",
+  "models.download_and_select": "Скачать и выбрать",
+  "models.engine_badge": "Движок",
+  "models.vram_min": "Мин. VRAM",
+  "models.steps": "Шаги",
+  "models.no_results": "Подходящие модели не найдены",
+  "models.change_model": "Сменить модель...",
+  "models.status_ready": "Готова",
+  "models.status_download": "Требуется загрузка"
 }

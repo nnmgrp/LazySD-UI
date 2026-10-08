@@ -143,7 +143,16 @@
           <div class="controls-row">
             <div class="control-group">
               <label data-i18n="controls.model">Model</label>
-              <select id="model-select"></select>
+              <div class="model-picker-trigger-wrap">
+                <button type="button" class="model-picker-trigger" id="model-picker-trigger" onclick="App.openModelPickerModal()">
+                  <div class="model-trigger-info">
+                    <span class="model-trigger-name" id="model-trigger-name">—</span>
+                    <span class="model-trigger-sub" id="model-trigger-sub">—</span>
+                  </div>
+                  <span class="model-trigger-badge" id="model-trigger-badge">⚡</span>
+                </button>
+              </div>
+              <select id="model-select" style="display: none;"></select>
             </div>
             <div class="control-group">
               <label data-i18n="controls.backend">Backend</label>
@@ -756,6 +765,39 @@
             <button class="icon-btn" id="history-modal-copy-btn">📋 <span data-i18n="history.copy_prompt">Copy prompt</span></button>
             <button class="icon-btn danger" id="history-modal-delete-btn">🗑 <span data-i18n="history.delete">Delete</span></button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Model Picker Hub -->
+  <div id="model-picker-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content model-picker-modal-content">
+      <button class="modal-close" onclick="App.closeModelPickerModal()">✕</button>
+      <div class="model-picker-header">
+        <div class="model-picker-title-row">
+          <div class="model-picker-icon">📦</div>
+          <div>
+            <h2 class="model-picker-title" data-i18n="models.hub_title">Model Hub</h2>
+            <p class="model-picker-subtitle" data-i18n="models.hub_subtitle">Select active generation model, architecture and precision variant</p>
+          </div>
+        </div>
+        <div class="model-picker-toolbar">
+          <div class="model-picker-search-wrap">
+            <input type="text" id="model-picker-search" class="model-picker-search-input" placeholder="Search models by name or family..." data-i18n-placeholder="models.search_placeholder" oninput="App.onModelPickerSearch(this.value)">
+          </div>
+          <div class="model-picker-filters" id="model-picker-filters">
+            <button class="filter-chip active" data-filter="all" onclick="App.setModelPickerFilter('all', this)" data-i18n="models.filter_all">All</button>
+            <button class="filter-chip" data-filter="installed" onclick="App.setModelPickerFilter('installed', this)" data-i18n="models.filter_installed">Installed</button>
+            <button class="filter-chip" data-filter="klein" onclick="App.setModelPickerFilter('klein', this)">Flux.2</button>
+            <button class="filter-chip" data-filter="qwen" onclick="App.setModelPickerFilter('qwen', this)">Qwen</button>
+            <button class="filter-chip" data-filter="z-image" onclick="App.setModelPickerFilter('z-image', this)">Z-Image</button>
+          </div>
+        </div>
+      </div>
+      <div class="model-picker-body">
+        <div class="model-picker-grid" id="model-picker-grid">
+          <!-- Dynamically populated by App.renderModelPickerModal() -->
         </div>
       </div>
     </div>

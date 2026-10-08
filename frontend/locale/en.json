@@ -193,5 +193,21 @@
   "errors.key_protected": "Model is key-protected. Restore the bundled test key (Settings → Engine → Restore test key) or enter your own QuantFunc API key.",
   "errors.history_load_failed": "Failed to load history",
   "errors.history_delete_failed": "Failed to delete image",
-  "errors.clipboard_denied": "Clipboard access denied"
+  "errors.clipboard_denied": "Clipboard access denied",
+
+  "models.hub_title": "Model Hub",
+  "models.hub_subtitle": "Select active generation model, architecture and precision variant",
+  "models.search_placeholder": "Search models by name or family...",
+  "models.filter_all": "All",
+  "models.filter_installed": "Installed",
+  "models.select_model": "Select Model",
+  "models.active_model": "Active",
+  "models.download_and_select": "Download & Select",
+  "models.engine_badge": "Engine",
+  "models.vram_min": "Min VRAM",
+  "models.steps": "Steps",
+  "models.no_results": "No matching models found",
+  "models.change_model": "Change model...",
+  "models.status_ready": "Ready",
+  "models.status_download": "Needs download"
 }

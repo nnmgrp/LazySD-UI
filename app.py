@@ -39,6 +39,7 @@ from backend.engine import (
     engine_config_json_path,
     ensure_config_json,
     is_engine_installed,
+    list_installed_engine_versions,
     read_engine_api_key,
     verify_engine,
 )
@@ -260,12 +261,33 @@ def create_app() -> FastAPI:
     settings.output_dir.mkdir(parents=True, exist_ok=True)  # Ensure it exists before mount
     app.mount("/outputs", StaticFiles(directory=str(settings.output_dir)), name="outputs")
 
+    def _model_is_installed(model, cache: CacheManager, gpu_tier: str) -> bool:
+        try:
+            base_path = model.get_base_model_path(gpu_tier) if gpu_tier != "unknown" else None
+            if not base_path and model.base_models:
+                base_path = list(model.base_models.values())[0]
+            if not base_path:
+                return False
+            local_base = cache.repo_dir_for(model.sources.primary.repo_id) / base_path
+            if not (local_base / "model_index.json").exists():
+                return False
+            for t in model.transformers:
+                if t.recommended:
+                    f = cache.repo_dir_for(model.sources.primary.repo_id) / t.path
+                    if f.exists():
+                        return True
+            return False
+        except Exception:
+            return False
+
     # ---------- API: Config ----------
     @app.get("/api/config")
     async def api_config():
         """Initial config for frontend."""
         settings = get_settings()
         registry = get_registry()
+        cache = CacheManager()
+        gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "unknown"
 
         # Convert models to JSON-serializable list
         models_list = []
@@ -275,6 +297,8 @@ def create_app() -> FastAPI:
                 "name": m.name,
                 "family": m.family,
                 "pipeline": m.pipeline,
+                "engine_version": m.engine_version,
+                "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
                 "requirements": {
@@ -319,6 +343,7 @@ def create_app() -> FastAPI:
                 "status": check_engine_status().status,
                 "message": check_engine_status().message,
             },
+            "installed_engines": list_installed_engine_versions(),
             "api_auth": _api_auth_status(),
             "models": models_list,
         }
@@ -327,12 +352,16 @@ def create_app() -> FastAPI:
     @app.get("/api/models")
     async def api_models():
         registry = get_registry()
+        cache = CacheManager()
+        gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "unknown"
         return [
             {
                 "id": m.id,
                 "name": m.name,
                 "family": m.family,
                 "pipeline": m.pipeline,
+                "engine_version": m.engine_version,
+                "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
                 "requirements": {
