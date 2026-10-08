@@ -21,8 +21,8 @@
     }
   },
   "base_models": {
-    "50x-above": "qwen-image-50x-above-base-model/",
-    "50x-below": "qwen-image-50x-below-base-model/"
+    "50x-above": "qwen-image-series-50x-above-base-model/",
+    "50x-below": "qwen-image-series-50x-below-base-model/"
   },
   "transformers": [
     {
@@ -69,13 +69,20 @@
   "precision_configs": [
     {
       "id": "fp4-f8-50x",
-      "path": "precision-config/50x-fp4-f8.json",
+      "path": "precision-config/50x-fp4-f8-better.json",
       "tier": "50x-above"
     },
     {
       "id": "int4-f8-40x",
-      "path": "precision-config/40x-int4-f8.json",
-      "tier": "50x-below"
+      "path": "precision-config/40x-int4-f8-better.json",
+      "tier": "50x-below",
+      "klein_tier": "40x"
+    },
+    {
+      "id": "int4-i8-30x-below",
+      "path": "precision-config/30x-below-int4-i8-better.json",
+      "tier": "50x-below",
+      "klein_tier": "30x-below"
     }
   ],
   "requirements": {

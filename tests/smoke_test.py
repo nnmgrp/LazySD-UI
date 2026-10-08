@@ -159,6 +159,16 @@ def test_registry():
         assert "qwen_image_21_base_quantfunc_int4_r128.safetensors" in req_qwen21_svdq["transformer_path"]
         print(f"  ✓ Qwen-Image-2.1: {len(qwen21.transformers)} transformers, resolves for SM 120, SM 86, and SVDQ")
 
+        # Test precision config resolution by klein_tier
+        qwen = registry.get("qwen_image")
+        req_50x = qwen.resolve_required_files(gpu_sm=120, backend="lighting", steps=4)
+        assert req_50x["precision_config_path"] == "precision-config/50x-fp4-f8-better.json"
+        req_40x = qwen.resolve_required_files(gpu_sm=89, backend="lighting", steps=4)
+        assert req_40x["precision_config_path"] == "precision-config/40x-int4-f8-better.json"
+        req_30x = qwen.resolve_required_files(gpu_sm=86, backend="lighting", steps=4)
+        assert req_30x["precision_config_path"] == "precision-config/30x-below-int4-i8-better.json"
+        print(f"  ✓ Qwen-Image precision configs resolve correctly for SM 120, 89, 86")
+
         # RTX 5060 Ti (SM 120) — 50x-above tier
         tier_above = model.get_transformers_for_tier(gpu_sm=120)
         print(f"  ✓ For RTX 5060 Ti (SM 120): {len(tier_above)} compatible transformers (Klein 9B)")

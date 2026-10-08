@@ -250,8 +250,11 @@ class ModelSpec:
         # Optional precision config (only for Lighting backend)
         precision_path = None
         if backend == "lighting" and self.precision_configs:
+            klein_tier = klein_tier_for_sm(gpu_sm)
             for pc in self.precision_configs:
                 if pc.tier == tier:
+                    if pc.klein_tier and pc.klein_tier != klein_tier:
+                        continue
                     precision_path = pc.path
                     break
 

@@ -309,6 +309,21 @@ const App = {
       modelSelect.addEventListener("change", () => this.onModelChange());
     }
 
+    // Variant select
+    const variantSelect = document.getElementById("variant-select");
+    if (variantSelect) {
+      variantSelect.addEventListener("change", () => {
+        this.state.selectedVariant = variantSelect.value;
+        const currentVariant = this.state.modelState?.transformers?.find(v => v.id === variantSelect.value);
+        if (currentVariant) {
+          const stepsInput = document.getElementById("steps-input");
+          if (stepsInput && currentVariant.steps) {
+            stepsInput.value = currentVariant.steps;
+          }
+        }
+      });
+    }
+
     // Generate button
     const genBtn = document.getElementById("generate-btn");
     if (genBtn) {
@@ -415,6 +430,7 @@ const App = {
   },
 
   renderVariants(modelState) {
+    this.state.modelState = modelState;
     const variantSelect = document.getElementById("variant-select");
     if (!variantSelect) return;
 
@@ -441,7 +457,7 @@ const App = {
       for (const v of recommended) {
         const opt = document.createElement("option");
         opt.value = v.id;
-        opt.textContent = `${v.backend} · ${v.steps} steps · ${v.size_gb.toFixed(1)} GB · ${v.state_label}`;
+        opt.textContent = `${v.id} (${v.backend}, ${v.steps} steps, ${(v.size_gb || 0).toFixed(1)} GB) · ${v.state_label}`;
         grp.appendChild(opt);
       }
       variantSelect.appendChild(grp);
@@ -453,19 +469,21 @@ const App = {
       for (const v of others) {
         const opt = document.createElement("option");
         opt.value = v.id;
-        opt.textContent = `${v.backend} · ${v.steps} steps · ${v.size_gb.toFixed(1)} GB · ${v.state_label}`;
+        opt.textContent = `${v.id} (${v.backend}, ${v.steps} steps, ${(v.size_gb || 0).toFixed(1)} GB) · ${v.state_label}`;
         grp.appendChild(opt);
       }
       variantSelect.appendChild(grp);
     }
 
     // Auto-select first recommended
-    if (recommended[0]) {
-      variantSelect.value = recommended[0].id;
-      this.state.selectedVariant = recommended[0].id;
-    } else if (variants[0]) {
-      variantSelect.value = variants[0].id;
-      this.state.selectedVariant = variants[0].id;
+    const activeVar = recommended[0] || others[0] || variants[0];
+    if (activeVar) {
+      variantSelect.value = activeVar.id;
+      this.state.selectedVariant = activeVar.id;
+      const stepsInput = document.getElementById("steps-input");
+      if (stepsInput && activeVar.steps) {
+        stepsInput.value = activeVar.steps;
+      }
     }
   },
 
@@ -584,16 +602,21 @@ const App = {
 
     const res = this.parseResolution();
 
+    const variantSelect = document.getElementById("variant-select");
+    const selectedVariantId = variantSelect?.value || this.state.selectedVariant;
+    const currentVariant = this.state.modelState?.transformers?.find(v => v.id === selectedVariantId);
+    const backend = currentVariant ? currentVariant.backend : "lighting";
+
     // Collect params
     const params = {
       model_id: this.state.selectedModel,
-      variant_id: this.state.selectedVariant,
+      variant_id: selectedVariantId,
       prompt: prompt,
       seed: this.parseSeed(),
       width: res.width,
       height: res.height,
-      steps: parseInt(document.getElementById("steps-input")?.value || "4", 10),
-      backend: "lighting",
+      steps: parseInt(document.getElementById("steps-input")?.value || (currentVariant ? String(currentVariant.steps) : "4"), 10),
+      backend: backend,
     };
 
     if (this.state.img2imgRef) {
