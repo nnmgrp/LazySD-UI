@@ -39,8 +39,8 @@ BUNDLED_TEST_CONFIG = {
     "api_key": "qf_4a256a9dfbfd04fd6fcf6bfc48781557aa1fed478d7a3c62214e91d0fbebba95",
 }
 
-# Default engine version — kept in sync with plugin v0.0.06
-DEFAULT_ENGINE_VERSION = "0.0.12"
+# Default engine version — kept in sync with plugin v0.0.07 / ModelScope latest
+DEFAULT_ENGINE_VERSION = "0.0.17"
 
 # Mapping (platform, cuda_version) → (binary_filename, cli_filename)
 ENGINE_FILENAMES = {
@@ -145,34 +145,166 @@ def _compute_sha256(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
-def _fetch_verify_json(engine_version: str, timeout: int = 10) -> Optional[dict]:
-    """Fetch verify.json for a specific engine version from ModelScope."""
-    url = f"{MODELSCOPE_PLUGIN_FILE}?Revision=master&FilePath={engine_version}/verify.json"
+def _fetch_plugin_json(rel_path: str, timeout: int = 10) -> Optional[dict]:
+    """Fetch a JSON file from the ModelScope QuantFunc/Plugin repo."""
+    url = f"{MODELSCOPE_PLUGIN_FILE}?Revision=master&FilePath={rel_path}"
     try:
         response = requests.get(url, timeout=timeout)
         response.raise_for_status()
-        return response.json()
-    except (requests.RequestException, json.JSONDecodeError) as e:
-        print(f"[engine] Failed to fetch verify.json: {e}")
+        data = response.json()
+        return data if isinstance(data, dict) else None
+    except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
+        print(f"[engine] Failed to fetch {rel_path}: {e}")
         return None
 
 
-def _resolve_verify_json_field(verify_json: dict, key: str) -> Optional[str]:
-    """verify.json structure has nested fields — try several shapes."""
-    # Direct top-level key
-    if key in verify_json:
-        return verify_json[key]
-    # Nested under "files" or "artifacts"
-    for container_key in ("files", "artifacts", "binaries"):
-        if container_key in verify_json:
-            container = verify_json[container_key]
-            if isinstance(container, dict) and key in container:
-                return container[key]
-            if isinstance(container, list):
-                for entry in container:
-                    if isinstance(entry, dict) and entry.get("name") == key:
-                        return entry.get("sha256") or entry.get("hash")
-    return None
+def _fetch_verify_json(engine_version: str, timeout: int = 10) -> Optional[dict]:
+    """Fetch verify.json for a specific engine version from ModelScope."""
+    return _fetch_plugin_json(f"{engine_version}/verify.json", timeout=timeout)
+
+
+def _version_key(version: str) -> tuple:
+    """'0.0.17' -> (0, 0, 17). Non-numeric versions sort first."""
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except (ValueError, AttributeError):
+        return (-1,)
+
+
+def _manifest_platform_key() -> str:
+    """version.json / verify.json use 'win32' and 'linux' as platform keys."""
+    return "win32" if get_settings().engine_platform == "windows" else "linux"
+
+
+def fetch_engine_manifest(timeout: int = 10) -> Optional[dict]:
+    """Fetch version.json — the list of published engine versions per platform."""
+    return _fetch_plugin_json("version.json", timeout=timeout)
+
+
+def get_latest_engine_version(manifest: Optional[dict] = None) -> Optional[str]:
+    """Newest engine version published for the current platform (None if offline)."""
+    manifest = manifest if manifest is not None else fetch_engine_manifest()
+    if not manifest:
+        return None
+    entries = manifest.get(_manifest_platform_key())
+    if not isinstance(entries, dict):
+        return None
+    versions = [v for v in entries if _version_key(v) != (-1,)]
+    return max(versions, key=_version_key) if versions else None
+
+
+def _platform_hashes(verify_json: dict) -> dict:
+    """Return the {relative_path: sha256} map for the current platform.
+
+    verify.json shape: {"schema": 1, "win32": {"sm120a/quantfunc.dll": "<sha>"}, "linux": {...}}
+    """
+    hashes = verify_json.get(_manifest_platform_key())
+    return hashes if isinstance(hashes, dict) else {}
+
+
+def _select_kernel_set(sets_json: Optional[dict], gpu_sm: Optional[int]) -> Optional[str]:
+    """Pick the per-architecture build folder (e.g. 'sm120a') for a GPU SM.
+
+    Engine >= 0.0.13 ships one build per architecture, described by sets.json:
+        {"schema": 2, "sets": {"sm75": [75], "sm86": [86], "sm89": [89], "sm120a": [120]}}
+    Returns None for legacy flat layouts (<= 0.0.12) that have no sets.json.
+    """
+    if not sets_json or not isinstance(sets_json.get("sets"), dict):
+        return None
+    sets = {name: sms for name, sms in sets_json["sets"].items() if isinstance(sms, list) and sms}
+    if not sets:
+        return None
+    if gpu_sm is None:
+        raise RuntimeError(
+            "GPU compute capability is unknown, but this engine version ships "
+            "per-architecture builds. Re-detect the GPU and try again."
+        )
+    for name, sms in sets.items():
+        if gpu_sm in sms:
+            return name
+    # No exact match — fall back to the newest build not newer than the GPU
+    lower = [(max(sms), name) for name, sms in sets.items() if max(sms) <= gpu_sm]
+    if lower:
+        chosen = max(lower)[1]
+        print(f"[engine] WARNING: no exact engine build for SM {gpu_sm}; using '{chosen}'")
+        return chosen
+    raise RuntimeError(f"No engine build supports SM {gpu_sm}. Available builds: {sets}")
+
+
+@dataclass
+class EngineFile:
+    """One engine file to download: remote path (relative to <version>/<platform>/) → local path."""
+    remote: str
+    local: Path
+    sha256: str
+
+
+def _get_effective_gpu_sm(gpu_sm: Optional[int] = None) -> Optional[int]:
+    """Resolve GPU SM from argument, settings.gpu_sm, or hardware auto-detection."""
+    if gpu_sm is not None:
+        return gpu_sm
+    settings = get_settings()
+    if settings.gpu_sm:
+        return settings.gpu_sm
+    try:
+        from .gpu import detect_gpu
+        info = detect_gpu()
+        return info.sm if info else None
+    except Exception:
+        return None
+
+
+def _plan_engine_files(
+    version: str,
+    gpu_sm: Optional[int] = None,
+    manifest: Optional[dict] = None,
+) -> tuple[list[EngineFile], Optional[str]]:
+    """Resolve which files make up engine `version` for this platform/CUDA/GPU.
+
+    Returns (files, kernel_set). Raises RuntimeError if the remote manifests
+    can't be fetched or don't list a required file — we never install an
+    engine file whose SHA-256 we can't verify.
+    """
+    settings = get_settings()
+    binary_path, cli_path = get_engine_paths()
+    effective_sm = _get_effective_gpu_sm(gpu_sm)
+
+    verify_json = _fetch_verify_json(version)
+    if not verify_json:
+        raise RuntimeError(f"Could not fetch verify.json for engine v{version} (offline?)")
+    hashes = _platform_hashes(verify_json)
+    if not hashes:
+        raise RuntimeError(f"verify.json for v{version} has no '{_manifest_platform_key()}' section")
+
+    sets_json = None
+    if "sets.json" in hashes:
+        sets_json = _fetch_plugin_json(f"{version}/{settings.engine_platform}/sets.json")
+        if sets_json is None:
+            raise RuntimeError(f"Could not fetch sets.json for engine v{version}")
+    kernel_set = _select_kernel_set(sets_json, effective_sm)
+
+    if manifest is None:
+        manifest = fetch_engine_manifest() or {}
+    entry = (manifest.get(_manifest_platform_key()) or {}).get(version) or {}
+    cuda12 = settings.cuda_version == "12"
+
+    names = [binary_path.name, cli_path.name]
+    names += list(entry.get("addons-12" if cuda12 else "addons") or [])
+    if entry.get("kernel_so") and settings.engine_platform != "windows":
+        # Linux ships GPU kernels as a separate per-arch .so; Windows bakes them into the DLL
+        names.append("libquantfunc_kernels-12.so" if cuda12 else "libquantfunc_kernels.so")
+
+    files: list[EngineFile] = []
+    for name in names:
+        candidates = ([f"{kernel_set}/{name}"] if kernel_set else []) + [name]
+        remote = next((c for c in candidates if c in hashes), None)
+        if remote is None:
+            raise RuntimeError(
+                f"verify.json for v{version} does not list {name} "
+                f"(build: {kernel_set or 'flat'}) — refusing to install unverified files"
+            )
+        files.append(EngineFile(remote=remote, local=settings.engine_dir / name, sha256=hashes[remote]))
+    return files, kernel_set
 
 
 # ---------- Public API ----------
@@ -284,14 +416,17 @@ def ensure_config_json(force: bool = False, timeout: int = 15) -> tuple[Path, st
     return config_path, "bundled-fallback"
 
 
-def verify_engine() -> VerifyResult:
-    """Verify local engine binary SHA-256 against remote verify.json.
+def verify_engine(gpu_sm: Optional[int] = None) -> VerifyResult:
+    """Verify local engine binary and addons SHA-256 against remote verify.json.
 
     Network access required. If offline, returns status="offline".
+    Checks all planned files for current platform, CUDA, and GPU SM.
     """
+    settings = get_settings()
     binary_path, _ = get_engine_paths()
+    effective_sm = _get_effective_gpu_sm(gpu_sm)
 
-    # Case: missing
+    # Fast existence check first
     if not binary_path.exists():
         return VerifyResult(
             status="missing",
@@ -299,172 +434,132 @@ def verify_engine() -> VerifyResult:
             message=f"Engine binary not found at {binary_path}",
         )
 
-    # Compute local hash
-    local_sha = _compute_sha256(binary_path)
-
-    # Fetch remote manifest
-    settings = get_settings()
-    verify_json = _fetch_verify_json(settings.engine_version)
-    if verify_json is None:
+    try:
+        files, kernel_set = _plan_engine_files(settings.engine_version, effective_sm)
+    except Exception as e:
+        local_sha = _compute_sha256(binary_path) if binary_path.exists() else None
         return VerifyResult(
             status="offline",
             local_sha256=local_sha,
             local_path=binary_path,
-            message="Could not fetch verify.json (offline or network error)",
+            message=f"Could not fetch remote manifests for engine v{settings.engine_version} ({e})",
         )
 
-    # Extract expected SHA from manifest
-    binary_filename = binary_path.name
-    remote_sha = _resolve_verify_json_field(verify_json, binary_filename)
+    # Check that all planned files exist locally
+    for f in files:
+        if not f.local.exists():
+            return VerifyResult(
+                status="missing",
+                local_path=f.local,
+                remote_sha256=f.sha256,
+                remote_version=settings.engine_version,
+                message=f"Engine file missing: {f.local.name}",
+            )
 
-    if remote_sha is None:
-        # Manifest doesn't list our binary — try alternative key
-        # verify.json might use keys like "libquantfunc.so" without platform prefix
-        alt_keys = [
-            binary_filename,
-            f"libquantfunc.so" if not IS_WINDOWS else "quantfunc.dll",
-            f"libquantfunc-12.so" if not IS_WINDOWS else "quantfunc-12.dll",
-        ]
-        for k in alt_keys:
-            remote_sha = _resolve_verify_json_field(verify_json, k)
-            if remote_sha:
-                break
-
-    if remote_sha is None:
-        return VerifyResult(
-            status="offline",
-            local_sha256=local_sha,
-            local_path=binary_path,
-            message=f"verify.json doesn't list {binary_filename}",
-        )
-
-    # Compare
-    if local_sha == remote_sha:
-        return VerifyResult(
-            status="ok",
-            local_sha256=local_sha,
-            remote_sha256=remote_sha,
-            remote_version=settings.engine_version,
-            local_path=binary_path,
-            message="Engine binary is up to date",
-        )
+    # Check SHA-256 for all files
+    binary_file = next((f for f in files if f.local.name == binary_path.name), files[0])
+    for f in files:
+        local_sha = _compute_sha256(f.local)
+        if local_sha != f.sha256:
+            return VerifyResult(
+                status="outdated",
+                local_sha256=local_sha,
+                remote_sha256=f.sha256,
+                remote_version=settings.engine_version,
+                local_path=f.local,
+                message=f"SHA-256 mismatch for {f.local.name}: local {local_sha[:12]}... != remote {f.sha256[:12]}...",
+            )
 
     return VerifyResult(
-        status="outdated" if local_sha else "corrupted",
-        local_sha256=local_sha,
-        remote_sha256=remote_sha,
+        status="ok",
+        local_sha256=binary_file.sha256,
+        remote_sha256=binary_file.sha256,
         remote_version=settings.engine_version,
         local_path=binary_path,
-        message=f"Local SHA {local_sha[:12]}... != remote SHA {remote_sha[:12]}...",
+        message=f"Engine v{settings.engine_version} ({kernel_set or 'flat'}) is up to date",
     )
 
 
 def download_engine(
     progress_callback=None,
     replace_existing: bool = True,
+    gpu_sm: Optional[int] = None,
 ) -> Path:
-    """Download engine binary from ModelScope with verify-before-replace.
+    """Download engine binary and addons from ModelScope with verify-before-replace.
+
+    Downloads all files planned for the target engine version and GPU architecture
+    (main library, CLI runner, and architecture/CUDA addons like quantfunc_attention.dll).
+    Each file is downloaded to a sibling `.tmp` file, SHA-256 verified, and
+    atomically renamed into place.
 
     Args:
         progress_callback: Optional callable(downloaded_bytes, total_bytes, speed_bps)
         replace_existing: If True, replaces existing binary after successful verify.
                          If False, raises if binary already exists.
+        gpu_sm: Optional GPU compute capability (e.g. 120 for RTX 5060 Ti).
 
     Returns:
         Path to the installed engine binary.
     """
     binary_path, cli_path = get_engine_paths()
     settings = get_settings()
+    effective_sm = _get_effective_gpu_sm(gpu_sm)
 
     # Check existing
     if binary_path.exists() and not replace_existing:
         raise FileExistsError(f"Engine binary already exists: {binary_path}")
 
-    # Build download URLs
     version = settings.engine_version
-    binary_filename = binary_path.name
-    cli_filename = cli_path.name
-
-    binary_url = (
-        f"{MODELSCOPE_PLUGIN_FILE}?Revision=master"
-        f"&FilePath={version}/{settings.engine_platform}/{binary_filename}"
-    )
-    cli_url = (
-        f"{MODELSCOPE_PLUGIN_FILE}?Revision=master"
-        f"&FilePath={version}/{settings.engine_platform}/{cli_filename}"
-    )
-
-    # Fetch expected SHA from verify.json
-    verify_json = _fetch_verify_json(version)
-    expected_binary_sha = None
-    expected_cli_sha = None
-    if verify_json:
-        expected_binary_sha = _resolve_verify_json_field(verify_json, binary_filename)
-        expected_cli_sha = _resolve_verify_json_field(verify_json, cli_filename)
+    files, kernel_set = _plan_engine_files(version, effective_sm)
 
     # Ensure engine_dir exists
     settings.engine_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download to temp file first (verify-before-replace)
-    # Use a sibling .tmp file — not /tmp, because we may need cross-device rename
-    temp_binary = binary_path.with_suffix(binary_path.suffix + ".tmp")
-    temp_cli = cli_path.with_suffix(cli_path.suffix + ".tmp")
-
+    temp_files: list[tuple[EngineFile, Path]] = []
     try:
-        # Download binary
-        print(f"[engine] Downloading {binary_filename} from ModelScope...")
-        _download_file_with_progress(binary_url, temp_binary, progress_callback)
-
-        # Verify SHA-256
-        actual_sha = _compute_sha256(temp_binary)
-        if expected_binary_sha and actual_sha != expected_binary_sha:
-            raise SecurityError(
-                f"Engine binary SHA-256 mismatch: expected {expected_binary_sha}, got {actual_sha}"
+        for f in files:
+            temp_file = f.local.with_suffix(f.local.suffix + ".tmp")
+            temp_files.append((f, temp_file))
+            url = (
+                f"{MODELSCOPE_PLUGIN_FILE}?Revision=master"
+                f"&FilePath={version}/{settings.engine_platform}/{f.remote}"
             )
-        print(f"[engine] {binary_filename} SHA-256 verified ✓")
+            print(f"[engine] Downloading {f.local.name} (from {f.remote}) from ModelScope...")
+            _download_file_with_progress(url, temp_file, progress_callback)
 
-        # Download CLI
-        print(f"[engine] Downloading {cli_filename} from ModelScope...")
-        _download_file_with_progress(cli_url, temp_cli, progress_callback)
-
-        actual_cli_sha = _compute_sha256(temp_cli)
-        if expected_cli_sha and actual_cli_sha != expected_cli_sha:
-            raise SecurityError(
-                f"Engine CLI SHA-256 mismatch: expected {expected_cli_sha}, got {actual_cli_sha}"
-            )
-        print(f"[engine] {cli_filename} SHA-256 verified ✓")
+            actual_sha = _compute_sha256(temp_file)
+            if actual_sha != f.sha256:
+                raise SecurityError(
+                    f"Engine file {f.local.name} SHA-256 mismatch: expected {f.sha256}, got {actual_sha}"
+                )
+            print(f"[engine] {f.local.name} SHA-256 verified [OK]")
 
         # Atomic replace (rename)
-        if binary_path.exists():
-            binary_path.unlink()
-        temp_binary.rename(binary_path)
+        for f, temp_file in temp_files:
+            if f.local.exists():
+                f.local.unlink()
+            temp_file.rename(f.local)
 
-        if cli_path.exists():
-            cli_path.unlink()
-        temp_cli.rename(cli_path)
+            # On Linux: make CLI executable
+            if not IS_WINDOWS and f.local == cli_path:
+                os.chmod(f.local, 0o755)
 
-        # On Linux: make CLI executable
-        if not IS_WINDOWS:
-            os.chmod(cli_path, 0o755)
-
-        print(f"[engine] Installed: {binary_path}")
-        print(f"[engine] Installed: {cli_path}")
+            print(f"[engine] Installed: {f.local}")
 
         # Install bin/<os>/config.json (engine auth: server_url + api_key).
-        # Without it key-protected models fail at checkObfuscation.
         try:
             ensure_config_json()
-        except Exception as cfg_err:  # Non-fatal — user can restore via Settings
+        except Exception as cfg_err:
             print(f"[engine] WARNING: could not install config.json: {cfg_err}")
 
         return binary_path
 
-    except Exception as e:
+    except Exception:
         # Cleanup temp files on failure
-        for tmp in (temp_binary, temp_cli):
-            if tmp.exists():
+        for _, temp_file in temp_files:
+            if temp_file.exists():
                 try:
-                    tmp.unlink()
+                    temp_file.unlink()
                 except OSError:
                     pass
         raise

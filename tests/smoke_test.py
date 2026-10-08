@@ -15,6 +15,11 @@ from pathlib import Path
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 
 def test_imports():
@@ -42,7 +47,7 @@ def test_settings():
     try:
         from backend.settings import reload_settings
         s = reload_settings()
-        assert s.engine_version == "0.0.12", f"Expected 0.0.12, got {s.engine_version}"
+        assert s.engine_version == "0.0.17", f"Expected 0.0.17, got {s.engine_version}"
         assert s.lang in ("ru", "en", "auto")
         assert s.vram_mode in ("auto", "conservative", "balanced", "maximum")
         assert hasattr(s, "quantfunc_api_key"), "quantfunc_api_key field missing"
@@ -139,6 +144,20 @@ def test_registry():
         req4b = klein4b.resolve_required_files(gpu_sm=120, backend="lighting", steps=4)
         assert req4b["transformer_path"] == "transformer/klein-4b-50x-lighting.safetensors"
         print(f"  ✓ Klein 4B: {len(klein4b.transformers)} transformers, key_protected={klein4b.key_protected}")
+
+        assert "qwen_image_2_1" in registry.models, "qwen_image_2_1 missing from registry"
+        qwen21 = registry.get("qwen_image_2_1")
+        assert qwen21.family == "qwen"
+        assert qwen21.pipeline == "text_to_image"
+        assert len(qwen21.transformers) >= 2
+        req_qwen21 = qwen21.resolve_required_files(gpu_sm=120, backend="lighting", steps=4)
+        assert "qwen_image_21_base_quantfunc_int4_r128.safetensors" in req_qwen21["transformer_path"]
+        assert req_qwen21["base_model_path"] == "."
+        req_qwen21_sm86 = qwen21.resolve_required_files(gpu_sm=86, backend="lighting", steps=4)
+        assert req_qwen21_sm86["base_model_path"] == "."
+        req_qwen21_svdq = qwen21.resolve_required_files(gpu_sm=120, backend="svdq", steps=4)
+        assert "qwen_image_21_base_quantfunc_int4_r128.safetensors" in req_qwen21_svdq["transformer_path"]
+        print(f"  ✓ Qwen-Image-2.1: {len(qwen21.transformers)} transformers, resolves for SM 120, SM 86, and SVDQ")
 
         # RTX 5060 Ti (SM 120) — 50x-above tier
         tier_above = model.get_transformers_for_tier(gpu_sm=120)

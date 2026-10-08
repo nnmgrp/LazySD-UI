@@ -75,7 +75,7 @@ class Settings(BaseModel):
     engine_dir: Path = Field(default_factory=_default_engine_dir)
 
     # ---------- Engine version ----------
-    engine_version: str = "0.0.12"
+    engine_version: str = "0.0.17"
     engine_platform: str = PLATFORM_NAME  # windows / linux
     cuda_version: str = "13"              # "12" or "13" — affects which .dll/.so to use
 
