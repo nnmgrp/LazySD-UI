@@ -32,6 +32,8 @@
   "prompt.negative": "Негативный промпт",
 
   "controls.model": "Модель",
+  "controls.text_encoder": "Текстовый энкодер",
+  "controls.custom_te_placeholder": "Путь к .safetensors (напр. из ComfyUI)...",
   "controls.backend": "Бэкенд",
   "controls.steps": "Шаги",
   "controls.seed": "Сид",

@@ -130,6 +130,9 @@ class ModelSpec:
     # Target engine version (e.g. "0.0.12" for FP4 Klein models, "0.0.17" for Qwen-Image-2.1)
     engine_version: Optional[str] = None
 
+    # Available text encoder variants (e.g. w4a8, int8, bf16)
+    text_encoders: list[dict] = field(default_factory=list)
+
     @classmethod
     def from_dict(cls, data: dict) -> "ModelSpec":
         """Build ModelSpec from a JSON dict."""
@@ -165,9 +168,23 @@ class ModelSpec:
             engine=data.get("engine", "quantfunc"),
             engine_args=data.get("engine_args", {}),
             engine_version=data.get("engine_version"),
+            text_encoders=data.get("text_encoders", []),
         )
 
     # ---------- Helpers ----------
+    def get_text_encoder(self, te_id: Optional[str] = None) -> Optional[dict]:
+        """Return text encoder dict by id or default recommended."""
+        if not self.text_encoders:
+            return None
+        if te_id:
+            for te in self.text_encoders:
+                if te.get("id") == te_id:
+                    return te
+        for te in self.text_encoders:
+            if te.get("recommended"):
+                return te
+        return self.text_encoders[0]
+
     def get_base_model_path(self, tier: str) -> Optional[str]:
         """Get the base model subdir path for a GPU tier."""
         return self.base_models.get(tier)

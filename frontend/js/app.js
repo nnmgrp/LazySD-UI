@@ -355,6 +355,19 @@ const App = {
         `;
       }
 
+      // Text Encoders select (if model specifies text_encoders)
+      let teHtml = "";
+      if (model.text_encoders && model.text_encoders.length > 0) {
+        teHtml = `
+          <div class="card-variants-row" style="margin-top: 6px;">
+            <span class="card-variants-label">Encoder:</span>
+            <select class="card-variants-select" id="card-te-${escapeHtml(model.id)}" onclick="event.stopPropagation()">
+              ${model.text_encoders.map(te => `<option value="${escapeHtml(te.id)}" ${te.id === (this.state.selectedTextEncoder || 'w4a8') ? "selected" : ""}>${escapeHtml(te.name)} · ${te.installed ? '✓' : '⬇'}</option>`).join("")}
+            </select>
+          </div>
+        `;
+      }
+
       let actionBtnHtml = "";
       if (isSelected) {
         actionBtnHtml = `<button class="card-action-btn active" disabled>✓ ${t("models.active_model")}</button>`;
@@ -384,6 +397,7 @@ const App = {
             <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
           </div>
           ${variantsHtml}
+          ${teHtml}
         </div>
         <div class="card-footer">
           ${actionBtnHtml}
@@ -410,6 +424,12 @@ const App = {
     const cardVariantSelect = document.getElementById(`card-variant-${modelId}`);
     if (cardVariantSelect && cardVariantSelect.value) {
       this.state.selectedVariant = cardVariantSelect.value;
+    }
+
+    // Check if text encoder was selected in the card
+    const cardTeSelect = document.getElementById(`card-te-${modelId}`);
+    if (cardTeSelect && cardTeSelect.value) {
+      this.state.selectedTextEncoder = cardTeSelect.value;
     }
 
     const select = document.getElementById("model-select");
@@ -705,9 +725,62 @@ const App = {
       return;
     }
 
+    // Text Encoder select
+    const teGroup = document.getElementById("text-encoder-group");
+    const teSelect = document.getElementById("text-encoder-select");
+    const customTeInput = document.getElementById("custom-text-encoder-input");
+    let teMissing = false;
+
+    if (teGroup && teSelect) {
+      if (modelState.text_encoders && modelState.text_encoders.length > 0) {
+        teGroup.style.display = "flex";
+        teSelect.innerHTML = "";
+        
+        let activeTe = null;
+        for (const te of modelState.text_encoders) {
+          const opt = document.createElement("option");
+          opt.value = te.id;
+          opt.textContent = `${te.name} (${te.installed ? '✓' : '⬇'})`;
+          if (this.state.selectedTextEncoder === te.id) {
+            opt.selected = true;
+            activeTe = te;
+          } else if (!this.state.selectedTextEncoder && te.recommended) {
+            opt.selected = true;
+            this.state.selectedTextEncoder = te.id;
+            activeTe = te;
+          }
+          teSelect.appendChild(opt);
+        }
+
+        const customOpt = document.createElement("option");
+        customOpt.value = "custom";
+        customOpt.textContent = `Custom file / ComfyUI...`;
+        if (this.state.selectedTextEncoder === "custom") {
+          customOpt.selected = true;
+          if (customTeInput) customTeInput.style.display = "block";
+        } else {
+          if (customTeInput) customTeInput.style.display = "none";
+        }
+        teSelect.appendChild(customOpt);
+
+        if (!activeTe && modelState.text_encoders.length > 0) {
+          activeTe = modelState.text_encoders[0];
+          this.state.selectedTextEncoder = activeTe.id;
+        }
+
+        if (this.state.selectedTextEncoder !== "custom" && activeTe && !activeTe.installed) {
+          teMissing = true;
+        }
+      } else {
+        teGroup.style.display = "none";
+        if (customTeInput) customTeInput.style.display = "none";
+      }
+    }
+
     // Check if any files are missing — if so, show download button
     const hasMissing = variants.some(v => v.state === "missing" || v.state === "downloadable")
-                    || !modelState.base_model_installed;
+                    || !modelState.base_model_installed
+                    || teMissing;
     this.updateDownloadButton(hasMissing, modelState);
 
     // Group: recommended first
@@ -751,6 +824,29 @@ const App = {
     this.updateModelTrigger();
   },
 
+  onTextEncoderChange() {
+    const teSelect = document.getElementById("text-encoder-select");
+    const customTeInput = document.getElementById("custom-text-encoder-input");
+    if (!teSelect) return;
+    this.state.selectedTextEncoder = teSelect.value;
+    if (teSelect.value === "custom") {
+      if (customTeInput) {
+        customTeInput.style.display = "block";
+        customTeInput.focus();
+      }
+    } else {
+      if (customTeInput) customTeInput.style.display = "none";
+    }
+    if (this.state.modelState) {
+      const activeTe = this.state.modelState.text_encoders?.find(te => te.id === teSelect.value);
+      const variants = this.state.modelState.transformers || [];
+      const hasMissing = variants.some(v => v.state === "missing" || v.state === "downloadable")
+                      || !this.state.modelState.base_model_installed
+                      || (activeTe && !activeTe.installed && teSelect.value !== "custom");
+      this.updateDownloadButton(hasMissing, this.state.modelState);
+    }
+  },
+
   updateDownloadButton(showButton, modelState) {
     // Find or create a download button next to the variant select
     let dlBtn = document.getElementById("download-model-btn");
@@ -773,7 +869,9 @@ const App = {
     const totalSize = (modelState.transformers || [])
       .filter(v => v.recommended)
       .reduce((sum, v) => sum + (v.size_gb || 0), 0);
-    dlBtn.textContent = `⬇ Download (~${totalSize.toFixed(1)} GB)`;
+    const teMissing = modelState?.text_encoders?.find(te => te.id === this.state.selectedTextEncoder && !te.installed);
+    const teSize = teMissing ? (teMissing.size_gb || 0) : 0;
+    dlBtn.textContent = `⬇ Download (~${(totalSize + teSize).toFixed(1)} GB)`;
   },
 
   async downloadModel() {
@@ -782,9 +880,14 @@ const App = {
     if (dlBtn) { dlBtn.disabled = true; dlBtn.textContent = "Downloading..."; }
 
     try {
+      const teSelect = document.getElementById("text-encoder-select");
+      const teId = teSelect && teSelect.value && teSelect.value !== "custom" ? teSelect.value : (this.state.selectedTextEncoder || null);
       const result = await this.apiPost(
         `/api/models/${this.state.selectedModel}/download`,
-        { variant_id: this.state.selectedVariant }
+        {
+          variant_id: this.state.selectedVariant,
+          text_encoder_id: teId,
+        }
       );
       this.toast("info", "Downloading model files...");
       // Poll for download progress
@@ -888,6 +991,18 @@ const App = {
       params.init_image_strength = parseFloat(
         document.getElementById("img2img-strength")?.value || "0.7"
       );
+    }
+
+    const teSelect = document.getElementById("text-encoder-select");
+    if (teSelect && teSelect.value) {
+      if (teSelect.value === "custom") {
+        const customTeInput = document.getElementById("custom-text-encoder-input");
+        if (customTeInput && customTeInput.value.trim()) {
+          params.custom_text_encoder_path = customTeInput.value.trim();
+        }
+      } else {
+        params.text_encoder_id = teSelect.value;
+      }
     }
 
     // Disable button + show progress

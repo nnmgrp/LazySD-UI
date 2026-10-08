@@ -131,7 +131,7 @@ def init_state() -> None:
     if STATE.gpu_info:
         g = STATE.gpu_info
         print(f"[startup] GPU: {g.name}")
-        print(f"[startup]   SM: {g.sm} → tier={g.tier}, klein_tier={g.klein_tier}")
+        print(f"[startup]   SM: {g.sm} -> tier={g.tier}, klein_tier={g.klein_tier}")
         print(f"[startup]   VRAM: {g.vram_mb} MB ({g.vram_gb:.1f} GB)")
         print(f"[startup]   Driver: {g.driver_version}")
         # Persist to settings
@@ -286,6 +286,21 @@ def create_app() -> FastAPI:
             local_base = cache.repo_dir_for(model.sources.primary.repo_id) / base_path
             if not (local_base / "model_index.json").exists():
                 return False
+
+            # If model defines text_encoders, ensure at least one is present
+            if getattr(model, "text_encoders", None):
+                repo_dir = cache.repo_dir_for(model.sources.primary.repo_id)
+                has_te = False
+                for te in model.text_encoders:
+                    te_f = te.get("file")
+                    if (repo_dir / te_f).exists() or (repo_dir / "text_encoders" / te_f).exists():
+                        has_te = True
+                        break
+                if (repo_dir / "qwen3vl_8b_bf16.safetensors").exists():
+                    has_te = True
+                if not has_te:
+                    return False
+
             for t in model.transformers:
                 if t.recommended:
                     f = cache.repo_dir_for(model.sources.primary.repo_id) / t.path
@@ -307,6 +322,8 @@ def create_app() -> FastAPI:
         # Convert models to JSON-serializable list
         models_list = []
         for m in registry.list_all():
+            repo_id = m.sources.primary.repo_id if m.sources else ""
+            repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
             models_list.append({
                 "id": m.id,
                 "name": m.name,
@@ -323,6 +340,18 @@ def create_app() -> FastAPI:
                     "gpu_min_sm": m.requirements.gpu_min_sm,
                     "default_vram_mode": m.requirements.default_vram_mode,
                 },
+                "text_encoders": [
+                    {
+                        "id": te.get("id"),
+                        "name": te.get("name"),
+                        "file": te.get("file"),
+                        "size_gb": te.get("size_gb"),
+                        "precision": te.get("precision"),
+                        "recommended": te.get("recommended", False),
+                        "installed": bool(repo_dir and ((repo_dir / te.get("file")).exists() or (repo_dir / "text_encoders" / te.get("file")).exists() or (te.get("id") == "bf16" and (repo_dir / "qwen3vl_8b_bf16.safetensors").exists()))),
+                    }
+                    for te in getattr(m, "text_encoders", [])
+                ],
                 "transformers": [
                     {
                         "id": t.id,
@@ -392,6 +421,18 @@ def create_app() -> FastAPI:
                     "vram_recommended_gb": m.requirements.vram_recommended_gb,
                     "gpu_min_sm": m.requirements.gpu_min_sm,
                 },
+                "text_encoders": [
+                    {
+                        "id": te.get("id"),
+                        "name": te.get("name"),
+                        "file": te.get("file"),
+                        "size_gb": te.get("size_gb"),
+                        "precision": te.get("precision"),
+                        "recommended": te.get("recommended", False),
+                        "installed": bool(cache.repo_dir_for(m.sources.primary.repo_id) and ((cache.repo_dir_for(m.sources.primary.repo_id) / te.get("file")).exists() or (cache.repo_dir_for(m.sources.primary.repo_id) / "text_encoders" / te.get("file")).exists() or (te.get("id") == "bf16" and (cache.repo_dir_for(m.sources.primary.repo_id) / "qwen3vl_8b_bf16.safetensors").exists()))),
+                    }
+                    for te in getattr(m, "text_encoders", [])
+                ],
                 "transformers": [
                     {
                         "id": t.id,
@@ -436,6 +477,7 @@ def create_app() -> FastAPI:
         cache = CacheManager()
         source_spec = model.sources.primary
         repo_id = source_spec.repo_id
+        local_repo_dir = cache.repo_dir_for(repo_id)
 
         result = []
         for t in transformers_for_gpu:
@@ -467,10 +509,27 @@ def create_app() -> FastAPI:
             base_path = list(model.base_models.values())[0]
         base_installed = False
         if base_path:
-            local_base = cache.repo_dir_for(repo_id) / base_path
+            local_base = local_repo_dir / base_path
             base_installed = (local_base / "model_index.json").exists()
         elif getattr(model, "engine", "quantfunc") == "sd_cpp" or not model.base_models:
             base_installed = True
+
+        # Check text encoders state if model specifies them
+        te_result = []
+        for te in getattr(model, "text_encoders", []):
+            te_f = te.get("file")
+            installed = (local_repo_dir / te_f).exists() or (local_repo_dir / "text_encoders" / te_f).exists()
+            if not installed and (local_repo_dir / "qwen3vl_8b_bf16.safetensors").exists() and te.get("id") == "bf16":
+                installed = True
+            te_result.append({
+                "id": te.get("id"),
+                "name": te.get("name"),
+                "file": te_f,
+                "size_gb": te.get("size_gb"),
+                "precision": te.get("precision"),
+                "recommended": te.get("recommended", False),
+                "installed": installed,
+            })
 
         return {
             "model_id": model_id,
@@ -478,6 +537,7 @@ def create_app() -> FastAPI:
             "gpu_tier": gpu_tier,
             "gpu_sm": gpu_sm,
             "base_model_installed": base_installed,
+            "text_encoders": te_result,
             "transformers": result,
         }
 
@@ -590,6 +650,20 @@ def create_app() -> FastAPI:
                                 tasks.append(("precision", pc.path, pc.path))
                             break
 
+                # Text encoder (if model specifies text_encoders)
+                if getattr(model, "text_encoders", None):
+                    te_id = body.get("text_encoder_id")
+                    te_spec = model.get_text_encoder(te_id)
+                    if te_spec:
+                        te_f = te_spec.get("file")
+                        local_te = local_repo_dir / te_f
+                        local_te_sub = local_repo_dir / "text_encoders" / te_f
+                        if not local_te.exists() and not local_te_sub.exists():
+                            te_source = te_spec.get("source", {})
+                            te_repo = te_source.get("repo_id", repo_id)
+                            te_remote = te_source.get("file_path", f"text_encoders/{te_f}")
+                            tasks.append(("text_encoder", te_remote, te_remote, te_repo, te_f))
+
                 total_tasks = len(tasks)
                 if total_tasks == 0:
                     STATE.update_job(job_id, ProgressEvent(
@@ -599,7 +673,10 @@ def create_app() -> FastAPI:
                     ))
                     return
 
-                for i, (kind, file_path, pattern) in enumerate(tasks):
+                for i, item in enumerate(tasks):
+                    kind = item[0]
+                    file_path = item[1]
+                    pattern = item[2]
                     progress_base = i / total_tasks
                     progress_end = (i + 1) / total_tasks
                     STATE.update_job(job_id, ProgressEvent(
@@ -617,6 +694,21 @@ def create_app() -> FastAPI:
                             allow_patterns=allow_pat,
                             revision=revision,
                         )
+                    elif kind == "text_encoder":
+                        te_repo = item[3] if len(item) > 3 else repo_id
+                        te_fname = item[4] if len(item) > 4 else Path(file_path).name
+                        te_src = get_source("huggingface", token=_get_token_for_source("huggingface"))
+                        te_src.download_file(
+                            repo_id=te_repo,
+                            file_path=file_path,
+                            local_dir=local_repo_dir,
+                            revision="main",
+                        )
+                        dl_file = local_repo_dir / file_path
+                        base_file = local_repo_dir / te_fname
+                        if dl_file.exists() and not base_file.exists():
+                            import shutil
+                            shutil.copy2(dl_file, base_file)
                     else:
                         # Single file download
                         source.download_file(
@@ -766,6 +858,8 @@ def create_app() -> FastAPI:
             use_prequant=selected.prequant,
             init_image_path=Path(init_image_path) if init_image_path else None,
             init_image_strength=init_image_strength,
+            text_encoder_id=body.get("text_encoder_id"),
+            custom_text_encoder_path=body.get("custom_text_encoder_path"),
         )
 
         # Create job

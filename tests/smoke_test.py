@@ -203,6 +203,13 @@ def test_registry():
         assert flux_gguf.engine == "sd_cpp"
         assert flux_gguf.engine_args.get("diffusion_model") == "flux1-schnell-Q4_K_S.gguf"
         print(f"  ✓ Flux Schnell GGUF loaded: engine={flux_gguf.engine}, diffusion={flux_gguf.engine_args.get('diffusion_model')}")
+
+        # Qwen text encoders
+        qwen = registry.get("qwen_image_2_1")
+        assert len(qwen.text_encoders) == 3
+        w4a8 = qwen.get_text_encoder("w4a8")
+        assert w4a8["file"] == "qwen3vl_8b_w4a8.safetensors"
+        print(f"  ✓ Qwen-Image-2.1 text encoders loaded: {len(qwen.text_encoders)} variants (default: {w4a8['file']})")
         return True
     except Exception as e:
         print(f"  ✗ Registry test failed: {e}")

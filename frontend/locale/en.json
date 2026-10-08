@@ -32,6 +32,8 @@
   "prompt.negative": "Negative prompt",
 
   "controls.model": "Model",
+  "controls.text_encoder": "Text Encoder",
+  "controls.custom_te_placeholder": "Path to .safetensors (e.g. from ComfyUI)...",
   "controls.backend": "Backend",
   "controls.steps": "Steps",
   "controls.seed": "Seed",

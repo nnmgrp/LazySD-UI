@@ -25,6 +25,44 @@
     "50x-above": ".",
     "50x-below": "."
   },
+  "text_encoders": [
+    {
+      "id": "w4a8",
+      "name": "W4A8 (Quantized 4-bit, ~5.8 GB)",
+      "file": "qwen3vl_8b_w4a8.safetensors",
+      "precision": "int4",
+      "size_gb": 5.88,
+      "recommended": true,
+      "source": {
+        "repo_id": "Comfy-Org/Qwen-Image-2.1",
+        "file_path": "text_encoders/qwen3vl_8b_w4a8.safetensors"
+      }
+    },
+    {
+      "id": "int8",
+      "name": "INT8 ConvRot (~8.7 GB)",
+      "file": "qwen3vl_8b_int8_convrot.safetensors",
+      "precision": "int8",
+      "size_gb": 8.71,
+      "recommended": false,
+      "source": {
+        "repo_id": "Comfy-Org/Qwen-Image-2.1",
+        "file_path": "text_encoders/qwen3vl_8b_int8_convrot.safetensors"
+      }
+    },
+    {
+      "id": "bf16",
+      "name": "BF16 Full Precision (~16.3 GB)",
+      "file": "qwen3vl_8b_bf16.safetensors",
+      "precision": "bf16",
+      "size_gb": 16.33,
+      "recommended": false,
+      "source": {
+        "repo_id": "Comfy-Org/Qwen-Image-2.1",
+        "file_path": "text_encoders/qwen3vl_8b_bf16.safetensors"
+      }
+    }
+  ],
   "transformers": [
     {
       "id": "int4-r128",
