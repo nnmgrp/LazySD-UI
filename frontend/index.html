@@ -139,6 +139,18 @@
             <textarea id="prompt-input"
                       data-i18n-placeholder="prompt.placeholder"
                       placeholder="Describe the image to generate..."></textarea>
+            <div class="negative-prompt-drawer" id="negative-prompt-drawer">
+              <button type="button" class="negative-prompt-toggle" id="negative-prompt-toggle" onclick="App.toggleNegativePrompt()">
+                <span class="negative-prompt-arrow" id="negative-prompt-arrow">▶</span>
+                <span data-i18n="prompt.negative_label">Negative Prompt</span>
+                <span class="negative-prompt-dot" id="negative-prompt-dot" style="display: none;"></span>
+              </button>
+              <div class="negative-prompt-content" id="negative-prompt-content" style="display: none;">
+                <textarea id="negative-prompt-input"
+                          data-i18n-placeholder="prompt.negative_placeholder"
+                          placeholder="What to avoid (e.g. blurry, deformed, low quality)..."></textarea>
+              </div>
+            </div>
           </div>
           <div class="controls-row">
             <div class="control-group">
@@ -155,7 +167,7 @@
               <select id="model-select" style="display: none;"></select>
             </div>
             <div class="control-group" id="backend-group">
-              <label id="backend-label" data-i18n="controls.backend">Backend</label>
+              <label id="backend-label" data-i18n="controls.variant_backend">Quantization / Backend</label>
               <select id="variant-select">
                 <option value="lighting" data-i18n="backend.lighting">Lighting (4 steps)</option>
                 <option value="svdq" data-i18n="backend.svdq">SVDQ (4 steps)</option>
@@ -173,6 +185,26 @@
             <div class="control-group">
               <label data-i18n="controls.steps">Steps</label>
               <input type="number" id="steps-input" value="4" min="1" max="50">
+            </div>
+            <div class="control-group" id="cfg-group">
+              <div class="control-label-row">
+                <label data-i18n="controls.cfg">CFG</label>
+                <span class="control-rec-badge" id="cfg-rec-badge" title="Recommended for this model">(Rec: 3.0)</span>
+              </div>
+              <div class="slider-input-row">
+                <input type="range" id="cfg-slider" min="1.0" max="15.0" step="0.1" value="3.0">
+                <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1">
+              </div>
+            </div>
+            <div class="control-group" id="noise-group">
+              <div class="control-label-row">
+                <label data-i18n="controls.noise">Noise</label>
+                <span class="control-rec-badge" id="noise-rec-badge" title="Recommended for this model">(Rec: 0.0)</span>
+              </div>
+              <div class="slider-input-row">
+                <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0">
+                <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05">
+              </div>
             </div>
             <div class="control-group">
               <label data-i18n="controls.seed">Seed</label>
@@ -353,6 +385,23 @@
             <div class="setting-label" data-i18n="settings.auto_optimize">Auto optimize</div>
             <div class="setting-value">
               <input type="checkbox" id="setting-auto-optimize" checked>
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.vae">VAE (Variational Autoencoder)</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong data-i18n="settings.vae.qwen_title">Qwen-Image-2.1 VAE</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.vae.qwen_desc">Choose VAE decoder. Texture-Fix eliminates 2px high-frequency checkerboard / carpet patterns.</small>
+            </div>
+            <div class="setting-value">
+              <select id="setting-qwen-vae" onchange="App.saveQwenVae(this.value)">
+                <option value="texture_fix" data-i18n="settings.vae.texture_fix">Texture-Fix VAE (madebyollin) [Recommended]</option>
+                <option value="official" data-i18n="settings.vae.official">Official VAE (Comfy-Org / Wan 2.1)</option>
+              </select>
             </div>
             <div></div>
           </div>
@@ -654,6 +703,7 @@
         rotation_block_size: parseInt(document.getElementById("setting-rotation-block").value, 10),
         log_level: document.getElementById("setting-log-level").value,
         worker_restart_on_crash: document.getElementById("setting-worker-restart").checked,
+        qwen_vae_type: document.getElementById("setting-qwen-vae")?.value || "texture_fix",
       };
       const cond = parseFloat(document.getElementById("setting-fbcache-cond").value);
       const uncond = parseFloat(document.getElementById("setting-fbcache-uncond").value);
@@ -794,6 +844,11 @@
       // VRAM mode
       if (config.settings.vram_mode) {
         document.getElementById("setting-vram-mode").value = config.settings.vram_mode;
+      }
+
+      // Qwen VAE selection
+      if (config.settings.qwen_vae_type && document.getElementById("setting-qwen-vae")) {
+        document.getElementById("setting-qwen-vae").value = config.settings.qwen_vae_type;
       }
     }
 

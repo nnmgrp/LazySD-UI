@@ -78,6 +78,7 @@ class GenerateRequest:
     height: int = 1024
     steps: int = 4
     cfg: float = 1.0
+    noise: float = 0.0
     backend: str = "lighting"         # "lighting" | "svdq"
     use_prequant: bool = False
     init_image_path: Optional[Path] = None  # For img2img / image edit
@@ -372,25 +373,54 @@ class Worker:
         if model.id == "qwen_image_2_1" or getattr(model, "text_encoders", None):
             if model.id == "qwen_image_2_1":
                 self._ensure_qwen_image_2_1_configs(local_base)
-                vae_file = local_base / "qwen_image_2.1_vae_bf16.safetensors"
+
+                settings = get_settings()
+                vae_type = getattr(settings, "qwen_vae_type", "texture_fix")
+                if vae_type == "texture_fix":
+                    vae_filename = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+                    vae_repo = "madebyollin/texture-fix-vae-for-qwen-image-2.1"
+                    vae_remote = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+                else:
+                    vae_filename = "qwen_image_2.1_vae_bf16.safetensors"
+                    vae_repo = "Comfy-Org/Qwen-Image-2.1"
+                    vae_remote = "vae/qwen_image_2.1_vae_bf16.safetensors"
+
+                # Check if VAE already exists in local_base, vae/ subdir, or other model caches
+                vae_candidates = [
+                    local_base / vae_filename,
+                    local_base / "vae" / vae_filename,
+                    settings.models_dir / "Qwen-Image-2.1-4bit" / vae_filename,
+                    settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_filename,
+                    settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_filename,
+                    settings.models_dir / "vae" / vae_filename,
+                ]
+                vae_file = next((p for p in vae_candidates if p.exists()), local_base / vae_filename)
 
                 # Auto-download VAE (644 MB) if missing
                 if not vae_file.exists():
                     emit(ProgressEvent(
                         status=JobStatus.DOWNLOADING,
                         progress=0.1,
-                        message="Downloading Qwen-Image-2.1 VAE (qwen_image_2.1_vae_bf16.safetensors, 644 MB)...",
+                        message=f"Downloading Qwen-Image-2.1 VAE ({vae_filename}, 644 MB)...",
                     ))
                     from .sources import HuggingFaceSource
                     hf = HuggingFaceSource(token=self._get_token("huggingface"))
                     hf.download_file(
-                        repo_id="Comfy-Org/Qwen-Image-2.1",
-                        file_path="vae/qwen_image_2.1_vae_bf16.safetensors",
+                        repo_id=vae_repo,
+                        file_path=vae_remote,
                         local_dir=local_base,
                     )
-                    downloaded_vae = local_base / "vae" / "qwen_image_2.1_vae_bf16.safetensors"
-                    if downloaded_vae.exists() and not vae_file.exists():
-                        downloaded_vae.rename(vae_file)
+                    downloaded_vae = local_base / vae_remote
+                    if downloaded_vae.exists() and not (local_base / vae_filename).exists():
+                        downloaded_vae.rename(local_base / vae_filename)
+                        vae_file = local_base / vae_filename
+                    elif (local_base / vae_filename).exists():
+                        vae_file = local_base / vae_filename
+                    elif downloaded_vae.exists():
+                        vae_file = downloaded_vae
+
+                if vae_file.exists():
+                    required_paths["vae"] = vae_file
 
             # Determine text encoder to use
             te_file_path = None
@@ -406,53 +436,67 @@ class Worker:
                     raise RuntimeError(f"Custom text encoder file not found: {custom_p}")
             else:
                 te_id = getattr(request, "text_encoder_id", None) if request else None
-                te_spec = model.get_text_encoder(te_id)
-                if not te_spec and getattr(model, "text_encoders", None):
-                    te_spec = model.text_encoders[0]
+                # Check if te_id matches an existing file directly
+                if te_id:
+                    cand = next((p for p in [
+                        local_base / te_id,
+                        local_base / "text_encoders" / te_id,
+                        settings.models_dir / "text_encoders" / te_id,
+                        settings.models_dir / "Qwen-Image-2.1-4bit" / te_id,
+                        settings.models_dir / "Qwen-Image-2.1-GGUF" / te_id,
+                    ] if p.exists()), None)
+                    if cand:
+                        te_file_path = cand
+                        te_precision = "int4"
 
-                target_filename = te_spec.get("file", "qwen3vl_8b_bf16.safetensors") if te_spec else "qwen3vl_8b_bf16.safetensors"
-                te_precision = te_spec.get("precision", "int4") if te_spec else "int4"
+                if not te_file_path:
+                    te_spec = model.get_text_encoder(te_id)
+                    if not te_spec and getattr(model, "text_encoders", None):
+                        te_spec = model.text_encoders[0]
 
-                # Check if file already exists in local_base or standard paths
-                candidate_paths = [
-                    local_base / target_filename,
-                    local_base / "text_encoders" / target_filename,
-                    local_base / "text_encoder" / target_filename,
-                ]
+                    target_filename = te_spec.get("file", "qwen3vl_8b_bf16.safetensors") if te_spec else "qwen3vl_8b_bf16.safetensors"
+                    te_precision = te_spec.get("precision", "int4") if te_spec else "int4"
 
-                found_path = next((p for p in candidate_paths if p.exists()), None)
-                if found_path:
-                    te_file_path = found_path
-                else:
-                    # Auto-download the selected text encoder
-                    te_source = te_spec.get("source", {}) if te_spec else {}
-                    repo = te_source.get("repo_id", "Comfy-Org/Qwen-Image-2.1")
-                    remote_file = te_source.get("file_path", f"text_encoders/{target_filename}")
-                    size_gb = te_spec.get("size_gb", 16.33) if te_spec else 16.33
+                    # Check if file already exists in local_base or standard paths
+                    candidate_paths = [
+                        local_base / target_filename,
+                        local_base / "text_encoders" / target_filename,
+                        local_base / "text_encoder" / target_filename,
+                    ]
 
-                    emit(ProgressEvent(
-                        status=JobStatus.DOWNLOADING,
-                        progress=0.15,
-                        message=f"Downloading text encoder ({target_filename}, ~{size_gb:.1f} GB)...",
-                    ))
-                    from .sources import HuggingFaceSource
-                    hf = HuggingFaceSource(token=self._get_token("huggingface"))
-                    hf.download_file(
-                        repo_id=repo,
-                        file_path=remote_file,
-                        local_dir=local_base,
-                    )
-                    downloaded_te = local_base / "text_encoders" / target_filename
-                    final_te = local_base / target_filename
-                    if downloaded_te.exists() and not final_te.exists():
-                        downloaded_te.rename(final_te)
-                        te_file_path = final_te
-                    elif final_te.exists():
-                        te_file_path = final_te
-                    elif downloaded_te.exists():
-                        te_file_path = downloaded_te
+                    found_path = next((p for p in candidate_paths if p.exists()), None)
+                    if found_path:
+                        te_file_path = found_path
                     else:
-                        raise RuntimeError(f"Failed to download text encoder {target_filename} from {repo}")
+                        # Auto-download the selected text encoder
+                        te_source = te_spec.get("source", {}) if te_spec else {}
+                        repo = te_source.get("repo_id", "Comfy-Org/Qwen-Image-2.1")
+                        remote_file = te_source.get("file_path", f"text_encoders/{target_filename}")
+                        size_gb = te_spec.get("size_gb", 16.33) if te_spec else 16.33
+
+                        emit(ProgressEvent(
+                            status=JobStatus.DOWNLOADING,
+                            progress=0.15,
+                            message=f"Downloading text encoder ({target_filename}, ~{size_gb:.1f} GB)...",
+                        ))
+                        from .sources import HuggingFaceSource
+                        hf = HuggingFaceSource(token=self._get_token("huggingface"))
+                        hf.download_file(
+                            repo_id=repo,
+                            file_path=remote_file,
+                            local_dir=local_base,
+                        )
+                        downloaded_te = local_base / "text_encoders" / target_filename
+                        final_te = local_base / target_filename
+                        if downloaded_te.exists() and not final_te.exists():
+                            downloaded_te.rename(final_te)
+                            te_file_path = final_te
+                        elif final_te.exists():
+                            te_file_path = final_te
+                        elif downloaded_te.exists():
+                            te_file_path = downloaded_te
+                        else:
+                            raise RuntimeError(f"Failed to download text encoder {target_filename} from {repo}")
 
             if te_file_path:
                 required_paths["text_encoder"] = te_file_path
@@ -685,6 +729,8 @@ class Worker:
         local_paths["transformer"] = validate_path(str(local_paths["transformer"]), base_dir=settings.models_dir, must_exist=True)
         if local_paths.get("tokenizer"):
             local_paths["tokenizer"] = validate_path(str(local_paths["tokenizer"]), base_dir=settings.models_dir, must_exist=True)
+        if local_paths.get("vae"):
+            local_paths["vae"] = validate_path(str(local_paths["vae"]), base_dir=settings.models_dir, must_exist=True)
 
         # ----- Phase 4: Build subprocess args -----
         cli_path = engine_cli_path(version=engine_ver)
@@ -717,11 +763,22 @@ class Worker:
         if cfg is not None and cfg > 0.0:
             args.extend(["--guidance-scale", str(cfg)])
 
+        # Negative prompt
+        if getattr(request, "negative_prompt", None) and request.negative_prompt.strip():
+            args.extend(["--negative-prompt", request.negative_prompt.strip()])
+
+        # Noise / Eta
+        if getattr(request, "noise", 0.0) is not None and request.noise > 0.0:
+            args.extend(["--eta", str(request.noise)])
+
         if settings.auto_optimize:
             args.append("--auto-optimize")
 
         if vram_budget > 0:
             args.extend(["--vram-budget", str(vram_budget)])
+
+        if local_paths.get("vae"):
+            args.extend(["--vae", str(local_paths["vae"])])
 
         if local_paths.get("mod_weights"):
             args.extend(["--mod-weights", str(local_paths["mod_weights"])])

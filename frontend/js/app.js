@@ -259,6 +259,30 @@ const App = {
         badgeEl.textContent = current.engine_version ? `⚡ v${current.engine_version}` : "⚡";
       }
     }
+
+    // Dynamic CFG & Noise recommendations
+    let recCfg = 1.0;
+    if (current.id.startsWith("qwen_image_2_1") || current.family === "qwen") {
+      recCfg = 3.0;
+    } else if (current.family === "sdxl" || current.id.includes("sdxl")) {
+      recCfg = 7.0;
+    } else if (current.family === "flux" && current.id.includes("dev")) {
+      recCfg = 3.5;
+    } else {
+      recCfg = 1.0;
+    }
+
+    const cfgBadge = document.getElementById("cfg-rec-badge");
+    if (cfgBadge) {
+      const recLabel = t("controls.rec") || "Реком.";
+      cfgBadge.textContent = `(${recLabel}: ${recCfg.toFixed(1)})`;
+    }
+
+    const noiseBadge = document.getElementById("noise-rec-badge");
+    if (noiseBadge) {
+      const recLabel = t("controls.rec") || "Реком.";
+      noiseBadge.textContent = `(${recLabel}: 0.0)`;
+    }
   },
 
   // ---------- Model Hub Modal ----------
@@ -366,32 +390,6 @@ const App = {
       const vramMin = model.requirements?.vram_min_gb ? `${model.requirements.vram_min_gb} GB` : "8 GB";
       const defaultSteps = model.transformers?.[0]?.steps || 4;
 
-      // Variants select
-      let variantsHtml = "";
-      if (model.transformers && model.transformers.length > 1) {
-        variantsHtml = `
-          <div class="card-variants-row">
-            <span class="card-variants-label">Variant:</span>
-            <select class="card-variants-select" id="card-variant-${escapeHtml(model.id)}" onclick="event.stopPropagation()">
-              ${model.transformers.map(tr => `<option value="${escapeHtml(tr.id)}" ${tr.id === this.state.selectedVariant ? "selected" : ""}>${escapeHtml(tr.id)} (${tr.backend}, ${tr.steps}st)</option>`).join("")}
-            </select>
-          </div>
-        `;
-      }
-
-      // Text Encoders select (if model specifies text_encoders)
-      let teHtml = "";
-      if (model.text_encoders && model.text_encoders.length > 0) {
-        teHtml = `
-          <div class="card-variants-row" style="margin-top: 6px;">
-            <span class="card-variants-label">Encoder:</span>
-            <select class="card-variants-select" id="card-te-${escapeHtml(model.id)}" onclick="event.stopPropagation()">
-              ${model.text_encoders.map(te => `<option value="${escapeHtml(te.id)}" ${te.id === (this.state.selectedTextEncoder || 'bf16') ? "selected" : ""}>${escapeHtml(te.name)} · ${te.installed ? '✓' : '⬇'}</option>`).join("")}
-            </select>
-          </div>
-        `;
-      }
-
       let actionBtnHtml = "";
       let deleteBtnHtml = "";
       if (model.is_custom) {
@@ -405,6 +403,11 @@ const App = {
       } else {
         actionBtnHtml = `<button class="card-action-btn download" onclick="App.downloadModelVariant('${escapeHtml(model.id)}', null, this)">⬇ ${t("models.download_and_select")}</button>`;
       }
+
+      const varCount = model.transformers?.length || 1;
+      const teCount = model.text_encoders?.length || 0;
+      const varInfo = varCount > 1 ? `<span>⚡ ${varCount} ${t("models.variants_count") || "variants"}</span>` : "";
+      const teInfo = teCount > 0 ? `<span>📝 ${teCount} ${t("models.encoders_count") || "encoders"}</span>` : "";
 
       card.innerHTML = `
         <div class="card-top">
@@ -424,9 +427,9 @@ const App = {
             <span>📼 ${t("models.vram_min")}: ${vramMin}</span>
             <span>⏱ ${t("models.steps")}: ${defaultSteps}</span>
             <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
+            ${varInfo}
+            ${teInfo}
           </div>
-          ${variantsHtml}
-          ${teHtml}
         </div>
         <div class="card-footer" style="display: flex; gap: 8px; align-items: center;">
           ${actionBtnHtml}
@@ -438,7 +441,7 @@ const App = {
       if (!isSelected && isInstalled) {
         card.style.cursor = "pointer";
         card.addEventListener("click", (e) => {
-          if (e.target.tagName === "SELECT" || e.target.tagName === "BUTTON") return;
+          if (e.target.tagName === "BUTTON") return;
           this.selectModelFromModal(model.id);
         });
       }
@@ -449,18 +452,21 @@ const App = {
 
   async selectModelFromModal(modelId) {
     this.state.selectedModel = modelId;
-    
-    // Check if variant was selected in the card
-    const cardVariantSelect = document.getElementById(`card-variant-${modelId}`);
-    if (cardVariantSelect && cardVariantSelect.value) {
-      this.state.selectedVariant = cardVariantSelect.value;
+
+    const select = document.getElementById("model-select");
+    if (select) {
+      select.value = modelId;
     }
 
-    // Check if text encoder was selected in the card
-    const cardTeSelect = document.getElementById(`card-te-${modelId}`);
-    if (cardTeSelect && cardTeSelect.value) {
-      this.state.selectedTextEncoder = cardTeSelect.value;
+    if (this.state.currentTab !== "generate") {
+      this.switchTab("generate");
     }
+
+    await this.onModelChange();
+    this.updateModelTrigger();
+    this.closeModelPickerModal();
+    this.toast("info", `${t("models.active_model")}: ${modelId}`);
+  },
 
     const select = document.getElementById("model-select");
     if (select) {
@@ -636,6 +642,39 @@ const App = {
       stepsInput.addEventListener("input", () => this.updateModelTrigger());
     }
 
+    // CFG slider & input sync
+    const cfgSlider = document.getElementById("cfg-slider");
+    const cfgInput = document.getElementById("cfg-input");
+    if (cfgSlider && cfgInput) {
+      cfgSlider.addEventListener("input", () => {
+        cfgInput.value = cfgSlider.value;
+      });
+      cfgInput.addEventListener("input", () => {
+        cfgSlider.value = cfgInput.value;
+      });
+    }
+
+    // Noise slider & input sync
+    const noiseSlider = document.getElementById("noise-slider");
+    const noiseInput = document.getElementById("noise-input");
+    if (noiseSlider && noiseInput) {
+      noiseSlider.addEventListener("input", () => {
+        noiseInput.value = noiseSlider.value;
+      });
+      noiseInput.addEventListener("input", () => {
+        noiseSlider.value = noiseInput.value;
+      });
+    }
+
+    // Negative prompt input dot indicator
+    const negInput = document.getElementById("negative-prompt-input");
+    const negDot = document.getElementById("negative-prompt-dot");
+    if (negInput && negDot) {
+      negInput.addEventListener("input", () => {
+        negDot.style.display = negInput.value.trim().length > 0 ? "inline-block" : "none";
+      });
+    }
+
     // Generate button
     const genBtn = document.getElementById("generate-btn");
     if (genBtn) {
@@ -735,6 +774,33 @@ const App = {
     }
   },
 
+  toggleNegativePrompt() {
+    const drawer = document.getElementById("negative-prompt-drawer");
+    const content = document.getElementById("negative-prompt-content");
+    const arrow = document.getElementById("negative-prompt-arrow");
+    const input = document.getElementById("negative-prompt-input");
+    if (!content || !arrow) return;
+    const isHidden = content.style.display === "none";
+    content.style.display = isHidden ? "block" : "none";
+    arrow.textContent = isHidden ? "▼" : "▶";
+    if (drawer) {
+      if (isHidden) drawer.classList.add("open");
+      else drawer.classList.remove("open");
+    }
+    if (isHidden && input) {
+      input.focus();
+    }
+  },
+
+  async saveQwenVae(value) {
+    try {
+      await this.apiPatch("/api/settings", { qwen_vae_type: value });
+      this.toast("success", `${t("settings.vae.qwen_title") || "Qwen VAE"}: ${value} ✓`);
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
   async onModelChange() {
     const select = document.getElementById("model-select");
     if (!select || !select.value) return;
@@ -748,6 +814,25 @@ const App = {
     } catch (e) {
       console.error("[app] Failed to fetch model state:", e);
     }
+
+    // Dynamic CFG recommendation sync
+    const activeModel = this.state.models.find(m => m.id === select.value);
+    let recCfg = 1.0;
+    if (activeModel && (activeModel.id.startsWith("qwen_image_2_1") || activeModel.family === "qwen")) {
+      recCfg = 3.0;
+    } else if (activeModel && (activeModel.family === "sdxl" || activeModel.id.includes("sdxl"))) {
+      recCfg = 7.0;
+    } else if (activeModel && activeModel.family === "flux" && activeModel.id.includes("dev")) {
+      recCfg = 3.5;
+    }
+
+    const cfgInput = document.getElementById("cfg-input");
+    const cfgSlider = document.getElementById("cfg-slider");
+    if (cfgInput && cfgSlider) {
+      cfgInput.value = recCfg.toFixed(1);
+      cfgSlider.value = recCfg.toFixed(1);
+    }
+
     this.updateModelTrigger();
   },
 
@@ -1058,14 +1143,21 @@ const App = {
     const backend = currentVariant ? currentVariant.backend : "lighting";
 
     // Collect params
+    const cfgVal = parseFloat(document.getElementById("cfg-input")?.value);
+    const noiseVal = parseFloat(document.getElementById("noise-input")?.value);
+    const negPrompt = document.getElementById("negative-prompt-input")?.value?.trim() || "";
+
     const params = {
       model_id: this.state.selectedModel,
       variant_id: selectedVariantId,
       prompt: prompt,
+      negative_prompt: negPrompt,
       seed: this.parseSeed(),
       width: res.width,
       height: res.height,
       steps: parseInt(document.getElementById("steps-input")?.value || (currentVariant ? String(currentVariant.steps) : "4"), 10),
+      cfg: !isNaN(cfgVal) ? cfgVal : 1.0,
+      noise: !isNaN(noiseVal) ? noiseVal : 0.0,
       backend: backend,
     };
 
@@ -1422,6 +1514,38 @@ const App = {
           resSelect.value = square;
         }
       }
+    }
+
+    // Set negative prompt
+    const negPromptInput = document.getElementById("negative-prompt-input");
+    const negDot = document.getElementById("negative-prompt-dot");
+    if (negPromptInput) {
+      negPromptInput.value = item.negative_prompt || "";
+      if (negDot) {
+        negDot.style.display = (item.negative_prompt && item.negative_prompt.trim().length > 0) ? "inline-block" : "none";
+      }
+    }
+
+    // Set steps
+    if (item.steps) {
+      const stepsInput = document.getElementById("steps-input");
+      if (stepsInput) stepsInput.value = item.steps;
+    }
+
+    // Set CFG
+    if (item.cfg) {
+      const cfgInput = document.getElementById("cfg-input");
+      const cfgSlider = document.getElementById("cfg-slider");
+      if (cfgInput) cfgInput.value = item.cfg;
+      if (cfgSlider) cfgSlider.value = item.cfg;
+    }
+
+    // Set Noise
+    if (item.noise !== undefined && item.noise !== null) {
+      const noiseInput = document.getElementById("noise-input");
+      const noiseSlider = document.getElementById("noise-slider");
+      if (noiseInput) noiseInput.value = item.noise;
+      if (noiseSlider) noiseSlider.value = item.noise;
     }
 
     // Set seed

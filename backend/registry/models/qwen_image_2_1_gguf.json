@@ -37,32 +37,6 @@
         "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
         "file_path": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf"
       }
-    },
-    {
-      "id": "q4_k_m",
-      "name": "Qwen3-VL-8B Q4_K_M (~4.7 GB)",
-      "file": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
-      "precision": "q4_k_m",
-      "size_gb": 4.68,
-      "size_bytes": 5027785568,
-      "recommended": false,
-      "source": {
-        "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
-        "file_path": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf"
-      }
-    },
-    {
-      "id": "q4_k_s",
-      "name": "Qwen3-VL-8B Q4_K_S (~4.5 GB)",
-      "file": "Qwen3-VL-8B-Instruct-Q4_K_S.gguf",
-      "precision": "q4_k_s",
-      "size_gb": 4.47,
-      "size_bytes": 4802014048,
-      "recommended": false,
-      "source": {
-        "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
-        "file_path": "Qwen3-VL-8B-Instruct-Q4_K_S.gguf"
-      }
     }
   ],
   "transformers": [
@@ -99,7 +73,7 @@
     "default": {
       "sampler": "euler",
       "steps": 28,
-      "cfg": 6.0
+      "cfg": 3.0
     }
   }
 }

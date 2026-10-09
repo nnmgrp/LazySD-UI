@@ -58,6 +58,8 @@ def test_settings():
         assert s.lang in ("ru", "en", "auto")
         assert s.vram_mode in ("auto", "conservative", "balanced", "maximum")
         assert hasattr(s, "quantfunc_api_key"), "quantfunc_api_key field missing"
+        assert hasattr(s, "qwen_vae_type"), "qwen_vae_type field missing"
+        assert s.qwen_vae_type in ("texture_fix", "official")
 
         # Clearing behavior: empty string must be stored ("clear the key")
         s.update(quantfunc_api_key="")
@@ -70,7 +72,7 @@ def test_settings():
         assert s.vram_mode == current_mode, "None should be ignored for non-clearable fields"
         # Restore
         s.update(quantfunc_api_key="")
-        print(f"  ✓ Settings OK: lang={s.lang}, vram_mode={s.vram_mode}, engine=v{s.engine_version}")
+        print(f"  ✓ Settings OK: lang={s.lang}, vram_mode={s.vram_mode}, engine=v{s.engine_version}, qwen_vae={s.qwen_vae_type}")
         print(f"  ✓ quantfunc_api_key field + clear-via-empty-string OK")
         print(f"  ✓ Models dir: {s.models_dir}")
         print(f"  ✓ Output dir: {s.output_dir}")
@@ -224,10 +226,11 @@ def test_registry():
         assert qwen_gguf.engine == "sd_cpp"
         assert qwen_gguf.engine_args.get("llm") == "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf"
         assert qwen_gguf.engine_args.get("vae") == "qwen_image_2.1_vae_bf16.safetensors"
-        assert len(qwen_gguf.text_encoders) == 3
+        assert len(qwen_gguf.text_encoders) == 1
+        assert qwen_gguf.scheduler_presets["default"]["cfg"] == 3.0
         ud = qwen_gguf.get_text_encoder("ud_q4_k_xl")
         assert ud is not None and ud["recommended"] is True
-        print(f"  ✓ Qwen-Image-2.1 GGUF (SD.CPP) loaded: diffusion={qwen_gguf.engine_args.get('diffusion_model')}, llm={qwen_gguf.engine_args.get('llm')}")
+        print(f"  ✓ Qwen-Image-2.1 GGUF (SD.CPP) loaded: diffusion={qwen_gguf.engine_args.get('diffusion_model')}, llm={qwen_gguf.engine_args.get('llm')}, cfg={qwen_gguf.scheduler_presets['default']['cfg']}")
         return True
     except Exception as e:
         print(f"  ✗ Registry test failed: {e}")

@@ -242,16 +242,23 @@ class SDCppWorker:
                     cmd.extend(["--llm", str(custom_te)])
                 else:
                     raise RuntimeError(f"Custom text encoder file not found: {custom_te}")
-            elif getattr(request, "text_encoder_id", None) and getattr(model, "text_encoders", None):
-                te_spec = model.get_text_encoder(request.text_encoder_id)
-                if te_spec and te_spec.get("file"):
-                    te_path = resolve_model_file(te_spec["file"])
-                    if not te_path.exists():
-                        raise RuntimeError(
-                            f"Selected text encoder not found: {te_spec['file']}. "
-                            "Please download it from the Models tab."
-                        )
-                    cmd.extend(["--llm", str(te_path)])
+            elif getattr(request, "text_encoder_id", None):
+                te_id = request.text_encoder_id
+                direct_cand = resolve_model_file(te_id)
+                if direct_cand.exists():
+                    cmd.extend(["--llm", str(direct_cand)])
+                elif getattr(model, "text_encoders", None):
+                    te_spec = model.get_text_encoder(te_id)
+                    if te_spec and te_spec.get("file"):
+                        te_path = resolve_model_file(te_spec["file"])
+                        if not te_path.exists():
+                            raise RuntimeError(
+                                f"Selected text encoder not found: {te_spec['file']}. "
+                                "Please download it from the Models tab."
+                            )
+                        cmd.extend(["--llm", str(te_path)])
+                    elif llm_rel:
+                        cmd.extend(["--llm", str(resolve_model_file(llm_rel))])
                 elif llm_rel:
                     cmd.extend(["--llm", str(resolve_model_file(llm_rel))])
             elif llm_rel:
@@ -273,19 +280,45 @@ class SDCppWorker:
 
             # VAE
             vae_rel = model.engine_args.get("vae")
+            if model.family == "qwen" or model.id.startswith("qwen"):
+                vae_type = getattr(settings, "qwen_vae_type", "texture_fix")
+                if vae_type == "texture_fix":
+                    vae_rel = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+                else:
+                    vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
+
             if vae_rel:
                 candidate_vae = next((
                     p for p in [
                         resolve_model_file(vae_rel),
                         settings.models_dir / "Qwen-Image-2.1-4bit" / vae_rel,
                         settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
+                        settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_rel,
+                        settings.models_dir / "vae" / vae_rel,
                     ] if p.exists()
                 ), resolve_model_file(vae_rel))
+
                 if not candidate_vae.exists():
-                    raise RuntimeError(
-                        f"VAE file not found: {vae_rel}. "
-                        "Please download it from the Models tab."
-                    )
+                    # Auto-download Texture-Fix VAE if requested and missing
+                    if (model.family == "qwen" or model.id.startswith("qwen")) and getattr(settings, "qwen_vae_type", "texture_fix") == "texture_fix":
+                        emit(ProgressEvent(
+                            status=JobStatus.DOWNLOADING,
+                            progress=0.1,
+                            message=f"Downloading Texture-Fix VAE ({vae_rel}, 644 MB)...",
+                        ))
+                        from .sources import HuggingFaceSource
+                        hf = HuggingFaceSource(token=settings.huggingface_token)
+                        hf.download_file(
+                            repo_id="madebyollin/texture-fix-vae-for-qwen-image-2.1",
+                            file_path="texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+                            local_dir=repo_dir,
+                        )
+                        candidate_vae = repo_dir / vae_rel
+                    else:
+                        raise RuntimeError(
+                            f"VAE file not found: {vae_rel}. "
+                            "Please download it from the Models tab."
+                        )
                 cmd.extend(["--vae", str(candidate_vae)])
 
             # VAE latent format override
@@ -324,16 +357,23 @@ class SDCppWorker:
         cmd.append("--diffusion-fa")
 
         # Guidance / CFG scale
-        guidance = getattr(request, "guidance_scale", None)
+        req_cfg = getattr(request, "cfg", None)
+        if req_cfg is None:
+            req_cfg = getattr(request, "guidance_scale", None)
+
         if model.engine_args.get("guidance_type") == "distilled" or model.family in ("flux", "sd3"):
-            cfg_val = guidance if guidance is not None else 3.5
+            cfg_val = req_cfg if req_cfg is not None else 3.5
             cmd.extend(["--guidance", str(cfg_val)])
         else:
-            default_cfg = 6.0
+            default_cfg = 3.0 if model.family == "qwen" else 6.0
             if getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
-                default_cfg = model.scheduler_presets["default"].get("cfg", 6.0)
-            cfg_val = guidance if guidance is not None else default_cfg
+                default_cfg = model.scheduler_presets["default"].get("cfg", default_cfg)
+            cfg_val = req_cfg if req_cfg is not None else default_cfg
             cmd.extend(["--cfg-scale", str(cfg_val)])
+
+        # Noise / Eta
+        if getattr(request, "noise", 0.0) is not None and request.noise > 0.0:
+            cmd.extend(["--eta", str(request.noise)])
 
         # Sampling method
         sampler = getattr(request, "sampler", None)

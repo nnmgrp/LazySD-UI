@@ -465,6 +465,7 @@ def create_app() -> FastAPI:
                 "engine_version": settings.engine_version,
                 "engine_platform": settings.engine_platform,
                 "cuda_version": settings.cuda_version,
+                "qwen_vae_type": getattr(settings, "qwen_vae_type", "texture_fix"),
             },
             "gpu": {
                 "name": STATE.gpu_info.name if STATE.gpu_info else None,
@@ -649,8 +650,10 @@ def create_app() -> FastAPI:
 
         # Check text encoders state if model specifies them
         te_result = []
+        known_te_files = set()
         for te in getattr(model, "text_encoders", []):
             te_f = te.get("file")
+            known_te_files.add(te_f)
             installed = (local_repo_dir / te_f).exists() or (local_repo_dir / "text_encoders" / te_f).exists()
             if not installed and (local_repo_dir / "qwen3vl_8b_bf16.safetensors").exists() and te.get("id") == "bf16":
                 installed = True
@@ -663,6 +666,37 @@ def create_app() -> FastAPI:
                 "recommended": te.get("recommended", False),
                 "installed": installed,
             })
+
+        # Dynamically discover any other custom/local encoders in the directory
+        if getattr(model, "text_encoders", None) or model.family == "qwen" or getattr(model, "engine", "") == "sd_cpp":
+            known_files = set(known_te_files)
+            known_files.add("model_index.json")
+            for tr in getattr(model, "transformers", []):
+                known_files.add(tr.path)
+                known_files.add(Path(tr.path).name)
+
+            scan_dirs = [local_repo_dir, local_repo_dir / "text_encoders"]
+            seen_extra = set()
+            for sdir in scan_dirs:
+                if sdir and sdir.exists():
+                    for pattern in ("*.gguf", "*.safetensors"):
+                        for f in sdir.glob(pattern):
+                            fname = f.name
+                            if fname not in known_files and fname not in seen_extra:
+                                # Skip known non-encoders (VAE or transformer files)
+                                if "vae" in fname.lower() or ("base" in fname.lower() and "quantfunc" in fname.lower()):
+                                    continue
+                                seen_extra.add(fname)
+                                sz_gb = round(f.stat().st_size / (1024**3), 2)
+                                te_result.append({
+                                    "id": fname,
+                                    "name": f"{fname} (~{sz_gb} GB, Local)",
+                                    "file": fname,
+                                    "size_gb": sz_gb,
+                                    "precision": "custom",
+                                    "recommended": False,
+                                    "installed": True,
+                                })
 
         return {
             "model_id": model_id,
@@ -1056,15 +1090,26 @@ def create_app() -> FastAPI:
                     cfg_val = float(p["cfg"])
                     break
 
+        # Determine negative prompt & noise
+        negative_prompt = body.get("negative_prompt", "") or ""
+        noise_val = 0.0
+        if "noise" in body and body["noise"] not in (None, ""):
+            try:
+                noise_val = float(body["noise"])
+            except (ValueError, TypeError):
+                pass
+
         # Build GenerateRequest
         request = GenerateRequest(
             model_id=model_id,
             prompt=prompt,
+            negative_prompt=negative_prompt,
             seed=seed,
             width=width,
             height=height,
             steps=effective_steps,
             cfg=cfg_val,
+            noise=noise_val,
             backend=selected.backend,
             use_prequant=selected.prequant,
             init_image_path=Path(init_image_path) if init_image_path else None,
@@ -1141,6 +1186,7 @@ def create_app() -> FastAPI:
             "rotation_block_size", "log_level",
             "worker_restart_on_crash",
             "cuda_bin_path",
+            "qwen_vae_type",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if updates:

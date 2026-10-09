@@ -124,6 +124,9 @@ class Settings(BaseModel):
     #   "G:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1\\bin\\x64"
     cuda_bin_path: Optional[str] = None
 
+    # ---------- VAE Selection ----------
+    qwen_vae_type: str = "texture_fix"    # "texture_fix" | "official"
+
     # ---------- State ----------
     first_run_completed: bool = False
 
@@ -147,6 +150,13 @@ class Settings(BaseModel):
     def _validate_lang(cls, v: str) -> str:
         if v not in ("ru", "en", "auto"):
             raise ValueError(f"lang must be 'ru', 'en', or 'auto', got {v!r}")
+        return v
+
+    @field_validator("qwen_vae_type")
+    @classmethod
+    def _validate_qwen_vae_type(cls, v: str) -> str:
+        if v not in ("texture_fix", "official"):
+            raise ValueError(f"qwen_vae_type must be 'texture_fix' or 'official', got {v!r}")
         return v
 
     # ---------- Path helpers ----------

@@ -439,12 +439,12 @@ textarea {
 
 .prompt-row {
   display: flex;
-  gap: 12px;
-  align-items: stretch;
+  flex-direction: column;
+  gap: 8px;
 }
 
 #prompt-input {
-  flex: 1;
+  width: 100%;
   min-height: 80px;
   max-height: 200px;
   padding: 12px;
@@ -455,30 +455,168 @@ textarea {
   line-height: 1.5;
   resize: vertical;
   font-family: inherit;
+  border-radius: var(--radius);
 }
 #prompt-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+/* Negative prompt drawer */
+.negative-prompt-drawer {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: all var(--t-fast);
+}
+
+.negative-prompt-drawer.open {
+  border-color: rgba(244, 63, 94, 0.4);
+}
+
+.negative-prompt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  border: none;
+  transition: all var(--t-fast);
+}
+
+.negative-prompt-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.negative-prompt-arrow {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: inline-block;
+  width: 12px;
+}
+
+.negative-prompt-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f43f5e;
+  box-shadow: 0 0 6px rgba(244, 63, 94, 0.6);
+  display: inline-block;
+  margin-left: 4px;
+}
+
+.negative-prompt-content {
+  padding: 0 12px 10px 12px;
+}
+
+#negative-prompt-input {
+  width: 100%;
+  min-height: 48px;
+  max-height: 120px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
+  font-family: inherit;
+}
+
+#negative-prompt-input:focus {
+  border-color: #f43f5e;
+  box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.2);
+}
+
 .controls-row {
-  display: grid;
-  grid-template-columns: 2fr 2fr 1fr 1.5fr 1.5fr auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .control-group {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1 1 120px;
+  min-width: 110px;
 }
+
+.control-group:first-child {
+  flex: 2 1 180px;
+  min-width: 160px;
+}
+
+#backend-group {
+  flex: 2 1 170px;
+  min-width: 150px;
+}
+
+#text-encoder-group {
+  flex: 2 1 170px;
+  min-width: 150px;
+}
+
 .control-group label {
   font-size: 11px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 600;
+}
+
+.control-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.control-rec-badge {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: nowrap;
+}
+
+.slider-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+}
+
+.slider-input-row input[type="range"] {
+  flex: 1;
+  min-width: 50px;
+  height: 6px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  background: var(--bg-card);
+  border: none;
+}
+
+.slider-input-row input[type="number"] {
+  width: 56px;
+  height: 36px;
+  padding: 4px 6px;
+  font-size: 12px;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .control-group select,
