@@ -33,6 +33,13 @@ def test_imports():
         from backend.registry import get_registry, ModelSpec, TransformerVariant
         from backend.worker import Worker, GenerateRequest, JobStatus, ProgressEvent
         from backend.sources import ModelSource, HuggingFaceSource, ModelScopeSource
+
+        import huggingface_hub.constants as hf_constants
+        assert hf_constants.HF_HUB_DISABLE_XET is True, "HF_HUB_DISABLE_XET must be True to prevent Rust OOM crashes"
+        from huggingface_hub.utils._runtime import is_xet_available
+        assert is_xet_available() is False, "is_xet_available() must be False"
+        print("  ✓ HF_HUB_DISABLE_XET active (Rust xet disabled for stability)")
+
         print("  ✓ All backend modules imported successfully")
         return True
     except Exception as e:

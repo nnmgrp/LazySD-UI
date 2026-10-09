@@ -19,6 +19,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+try:
+    import huggingface_hub.constants as _hfc
+    _hfc.HF_HUB_DISABLE_XET = True
+    _hfc.HF_HUB_ENABLE_HF_TRANSFER = False
+except Exception:
+    pass
+
 import sys
 import threading
 import time
@@ -759,6 +768,7 @@ def create_app() -> FastAPI:
                 revision = "master" if source_spec.type == "modelscope" else "main"
                 cache = CacheManager()
                 local_repo_dir = cache.repo_dir_for(repo_id)
+                local_repo_dir.mkdir(parents=True, exist_ok=True)
 
                 tasks = []
                 if include_base and getattr(model, "engine", "quantfunc") != "sd_cpp" and model.base_models:
@@ -833,6 +843,7 @@ def create_app() -> FastAPI:
                     if not local_vae.exists():
                         if existing_vae:
                             import shutil
+                            local_vae.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(existing_vae, local_vae)
                             print(f"[download] Reused existing VAE from {existing_vae} -> {local_vae}")
                         else:
@@ -884,6 +895,7 @@ def create_app() -> FastAPI:
                         base_file = local_repo_dir / te_fname
                         if dl_file.exists() and not base_file.exists():
                             import shutil
+                            base_file.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(dl_file, base_file)
                     else:
                         # Single file download

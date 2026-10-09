@@ -3,6 +3,8 @@ REM QuantFunc WebUI Windows launcher
 REM Double-click this file or run from cmd.
 
 setlocal
+set HF_HUB_DISABLE_XET=1
+set HF_HUB_ENABLE_HF_TRANSFER=0
 cd /d "%~dp0"
 
 echo === QuantFunc WebUI ===
