@@ -315,6 +315,23 @@ def create_app() -> FastAPI:
 
     def _model_is_installed(model, cache: CacheManager, gpu_tier: str) -> bool:
         try:
+            if getattr(model, "is_custom", False):
+                from backend.custom_models import get_custom_models_dir
+                custom_dir = get_custom_models_dir()
+                ckpt_rel = model.engine_args.get("checkpoint") if getattr(model, "engine_args", None) else None
+                if ckpt_rel:
+                    p = Path(ckpt_rel)
+                    return p.exists() or (custom_dir / ckpt_rel).exists()
+                diff_rel = model.engine_args.get("diffusion_model") if getattr(model, "engine_args", None) else None
+                if diff_rel:
+                    p = Path(diff_rel)
+                    return p.exists() or (custom_dir / diff_rel).exists()
+                for t in model.transformers:
+                    p = Path(t.path)
+                    if p.exists() or (custom_dir / t.path).exists():
+                        return True
+                return False
+
             if getattr(model, "engine", "quantfunc") == "sd_cpp":
                 repo_id = model.sources.primary.repo_id if model.sources else ""
                 repo_dir = cache.repo_dir_for(repo_id) if repo_id else get_settings().models_dir
@@ -322,12 +339,20 @@ def create_app() -> FastAPI:
                 if ckpt_rel:
                     return (repo_dir / ckpt_rel).exists()
                 diff_rel = model.engine_args.get("diffusion_model")
-                if diff_rel:
-                    return (repo_dir / diff_rel).exists()
-                for t in model.transformers:
-                    if t.recommended and (repo_dir / t.path).exists():
-                        return True
-                return False
+                diff_ok = False
+                if diff_rel and (repo_dir / diff_rel).exists():
+                    diff_ok = True
+                else:
+                    for t in model.transformers:
+                        if t.recommended and (repo_dir / t.path).exists():
+                            diff_ok = True
+                            break
+                if not diff_ok:
+                    return False
+                llm_rel = model.engine_args.get("llm")
+                if llm_rel and not ((repo_dir / llm_rel).exists() or (repo_dir / "text_encoders" / llm_rel).exists()):
+                    return False
+                return True
 
             base_path = model.get_base_model_path(gpu_tier) if gpu_tier != "unknown" else None
             if not base_path and model.base_models:
@@ -382,6 +407,7 @@ def create_app() -> FastAPI:
                 "pipeline": m.pipeline,
                 "engine": getattr(m, "engine", "quantfunc"),
                 "engine_version": m.engine_version,
+                "is_custom": getattr(m, "is_custom", False),
                 "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
@@ -457,14 +483,18 @@ def create_app() -> FastAPI:
         registry = get_registry()
         cache = CacheManager()
         gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "unknown"
-        return [
-            {
+        models_out = []
+        for m in registry.list_all():
+            repo_id = m.sources.primary.repo_id if m.sources else ""
+            repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
+            models_out.append({
                 "id": m.id,
                 "name": m.name,
                 "family": m.family,
                 "pipeline": m.pipeline,
                 "engine": getattr(m, "engine", "quantfunc"),
                 "engine_version": m.engine_version,
+                "is_custom": getattr(m, "is_custom", False),
                 "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
@@ -481,7 +511,7 @@ def create_app() -> FastAPI:
                         "size_gb": te.get("size_gb"),
                         "precision": te.get("precision"),
                         "recommended": te.get("recommended", False),
-                        "installed": bool(cache.repo_dir_for(m.sources.primary.repo_id) and ((cache.repo_dir_for(m.sources.primary.repo_id) / te.get("file")).exists() or (cache.repo_dir_for(m.sources.primary.repo_id) / "text_encoders" / te.get("file")).exists() or (te.get("id") == "bf16" and (cache.repo_dir_for(m.sources.primary.repo_id) / "qwen3vl_8b_bf16.safetensors").exists()))),
+                        "installed": bool(repo_dir and ((repo_dir / te.get("file")).exists() or (repo_dir / "text_encoders" / te.get("file")).exists() or (te.get("id") == "bf16" and (repo_dir / "qwen3vl_8b_bf16.safetensors").exists()))),
                     }
                     for te in getattr(m, "text_encoders", [])
                 ],
@@ -496,9 +526,8 @@ def create_app() -> FastAPI:
                     }
                     for t in m.transformers
                 ],
-            }
-            for m in registry.list_all()
-        ]
+            })
+        return models_out
 
     @app.get("/api/models/{model_id}/state")
     async def api_model_state(model_id: str):
@@ -524,6 +553,49 @@ def create_app() -> FastAPI:
             gpu_sm = 0
             gpu_tier = "unknown"
             transformers_for_gpu = model.transformers
+
+        if getattr(model, "is_custom", False):
+            from backend.custom_models import get_custom_models_dir
+            custom_dir = get_custom_models_dir()
+            result = []
+            for t in model.transformers:
+                p = Path(t.path)
+                f_exists = p.exists() or (custom_dir / t.path).exists()
+                result.append({
+                    "id": t.id,
+                    "backend": t.backend,
+                    "steps": t.steps,
+                    "prequant": t.prequant,
+                    "size_gb": t.size_gb,
+                    "tier": t.tier,
+                    "klein_tier": t.klein_tier,
+                    "recommended": t.recommended,
+                    "recommended_for_gpu": t.recommended_for_gpu,
+                    "state": "cached" if f_exists else "missing",
+                    "state_label": "Local ✓" if f_exists else "Missing",
+                })
+            te_result = []
+            for te in getattr(model, "text_encoders", []):
+                p = Path(te.get("file", ""))
+                te_exists = p.exists() or (custom_dir / te.get("file", "")).exists()
+                te_result.append({
+                    "id": te.get("id"),
+                    "name": te.get("name"),
+                    "file": te.get("file"),
+                    "size_gb": te.get("size_gb"),
+                    "precision": te.get("precision"),
+                    "recommended": te.get("recommended", False),
+                    "installed": te_exists,
+                })
+            return {
+                "model_id": model_id,
+                "model_name": model.name,
+                "gpu_tier": gpu_tier,
+                "gpu_sm": gpu_sm,
+                "base_model_installed": True,
+                "text_encoders": te_result,
+                "transformers": result,
+            }
 
         # Check cache state for each
         cache = CacheManager()
@@ -592,6 +664,38 @@ def create_app() -> FastAPI:
             "text_encoders": te_result,
             "transformers": result,
         }
+
+    # ---------- API: Custom Models ----------
+    @app.get("/api/custom-models/files")
+    async def api_custom_models_files():
+        """List local files available in models/custom/ directory."""
+        from backend.custom_models import list_custom_files, get_custom_models_dir
+        return {
+            "custom_dir": str(get_custom_models_dir()),
+            "files": list_custom_files(),
+        }
+
+    @app.post("/api/custom-models")
+    async def api_register_custom_model(body: dict):
+        """Register a new custom model profile."""
+        from backend.custom_models import register_custom_model
+        try:
+            res = register_custom_model(body)
+            return {"ok": True, "model": res}
+        except Exception as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/custom-models/{model_id}")
+    async def api_delete_custom_model(model_id: str):
+        """Delete an imported custom model profile."""
+        from backend.custom_models import delete_custom_model
+        try:
+            ok = delete_custom_model(model_id)
+            if not ok:
+                raise HTTPException(404, "Custom model manifest not found")
+            return {"ok": True}
+        except Exception as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/models/{model_id}/download")
     async def api_model_download(model_id: str, body: Optional[dict] = None):
@@ -716,6 +820,26 @@ def create_app() -> FastAPI:
                             te_remote = te_source.get("file_path", f"text_encoders/{te_f}")
                             tasks.append(("text_encoder", te_remote, te_remote, te_repo, te_f))
 
+                # VAE (if model specifies engine_args.vae)
+                vae_rel = getattr(model, "engine_args", {}).get("vae") if getattr(model, "engine_args", None) else None
+                if vae_rel:
+                    local_vae = local_repo_dir / vae_rel
+                    existing_vae = next((
+                        p for p in [
+                            settings.models_dir / "Qwen-Image-2.1-4bit" / vae_rel,
+                            settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
+                        ] if p.exists()
+                    ), None)
+                    if not local_vae.exists():
+                        if existing_vae:
+                            import shutil
+                            shutil.copy2(existing_vae, local_vae)
+                            print(f"[download] Reused existing VAE from {existing_vae} -> {local_vae}")
+                        else:
+                            vae_repo = getattr(model, "engine_args", {}).get("vae_repo", "Comfy-Org/Qwen-Image-2.1")
+                            vae_remote = getattr(model, "engine_args", {}).get("vae_remote", f"vae/{vae_rel}")
+                            tasks.append(("vae", vae_remote, vae_remote, vae_repo, vae_rel))
+
                 total_tasks = len(tasks)
                 if total_tasks == 0:
                     STATE.update_job(job_id, ProgressEvent(
@@ -746,7 +870,7 @@ def create_app() -> FastAPI:
                             allow_patterns=allow_pat,
                             revision=revision,
                         )
-                    elif kind == "text_encoder":
+                    elif kind in ("text_encoder", "vae"):
                         te_repo = item[3] if len(item) > 3 else repo_id
                         te_fname = item[4] if len(item) > 4 else Path(file_path).name
                         te_src = get_source("huggingface", token=_get_token_for_source("huggingface"))

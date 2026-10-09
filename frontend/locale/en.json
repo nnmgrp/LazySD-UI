@@ -215,5 +215,28 @@
   "models.no_results": "No matching models found",
   "models.change_model": "Change model...",
   "models.status_ready": "Ready",
-  "models.status_download": "Needs download"
+  "models.status_download": "Needs download",
+  "models.filter_custom": "Custom",
+  "models.add_custom": "Import Model",
+
+  "controls.quantization": "Quantization",
+  "controls.custom_path": "Custom path",
+  "controls.hint_quantfunc_te": "QuantFunc auto-quantizes BF16 to INT4 in RAM",
+  "controls.hint_sdcpp_te": "Unsloth GGUF multimodal encoder (--llm)",
+
+  "custom_model.title": "Import Custom Model",
+  "custom_model.subtitle": "Load local GGUF or Safetensors files with SD.CPP or QuantFunc",
+  "custom_model.name": "Model Name",
+  "custom_model.engine": "Target Runtime Engine",
+  "custom_model.family": "Architecture Family",
+  "custom_model.model_file": "Model Weights File (.gguf / .safetensors)",
+  "custom_model.te_file": "Text Encoder / LLM File (Optional)",
+  "custom_model.vae_file": "VAE File (Optional)",
+  "custom_model.default_steps": "Default Steps",
+  "custom_model.default_cfg": "Default CFG / Guidance",
+  "custom_model.folder_hint": "Drop files into folder to auto-detect:",
+  "custom_model.save": "Save & Activate",
+  "custom_model.delete": "Delete",
+  "custom_model.error_name": "Please enter a model name",
+  "custom_model.error_file": "Please select or specify a model file"
 }

@@ -206,10 +206,19 @@ def test_registry():
 
         # Qwen text encoders
         qwen = registry.get("qwen_image_2_1")
-        assert len(qwen.text_encoders) == 3
-        w4a8 = qwen.get_text_encoder("w4a8")
-        assert w4a8["file"] == "qwen3vl_8b_w4a8.safetensors"
-        print(f"  ✓ Qwen-Image-2.1 text encoders loaded: {len(qwen.text_encoders)} variants (default: {w4a8['file']})")
+        assert len(qwen.text_encoders) == 1
+        bf16 = qwen.get_text_encoder("bf16")
+        assert bf16["file"] == "qwen3vl_8b_bf16.safetensors"
+        assert bf16["precision"] == "int4"
+        print(f"  ✓ Qwen-Image-2.1 (QuantFunc) text encoder: {bf16['file']} (dynamic {bf16['precision']})")
+
+        # Qwen-Image-2.1 GGUF (SD.CPP)
+        qwen_gguf = registry.get("qwen_image_2_1_gguf")
+        assert qwen_gguf.engine == "sd_cpp"
+        assert qwen_gguf.engine_args.get("llm") == "Qwen3-VL-8B-Instruct-Q4_K_M.gguf"
+        assert qwen_gguf.engine_args.get("vae") == "qwen_image_2.1_vae_bf16.safetensors"
+        assert len(qwen_gguf.text_encoders) == 2
+        print(f"  ✓ Qwen-Image-2.1 GGUF (SD.CPP) loaded: diffusion={qwen_gguf.engine_args.get('diffusion_model')}, llm={qwen_gguf.engine_args.get('llm')}")
         return True
     except Exception as e:
         print(f"  ✗ Registry test failed: {e}")
@@ -367,6 +376,11 @@ def test_engine_status():
         assert "quantfunc_0_12" in data["engines"]
         assert "sd_cpp" in data["engines"]
         print("  ✓ /api/engine/status returns all 3 engines with installed=True")
+
+        res_custom = client.get("/api/custom-models/files")
+        assert res_custom.status_code == 200
+        assert "files" in res_custom.json()
+        print("  ✓ /api/custom-models/files OK")
         return True
     except Exception as e:
         print(f"  ✗ Engine status test failed: {e}")

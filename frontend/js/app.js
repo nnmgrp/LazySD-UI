@@ -319,6 +319,8 @@ const App = {
       // Category filter
       if (filter === "installed") {
         return m.installed === true;
+      } else if (filter === "custom") {
+        return m.is_custom === true;
       } else if (filter === "klein") {
         return m.family === "klein" || m.id.includes("klein");
       } else if (filter === "qwen") {
@@ -345,7 +347,9 @@ const App = {
       card.className = `model-picker-card ${isSelected ? "active" : ""}`;
 
       let engineBadge = "";
-      if (model.engine === "sd_cpp") {
+      if (model.is_custom) {
+        engineBadge = `<span class="badge-custom">🎨 Custom</span>`;
+      } else if (model.engine === "sd_cpp") {
         engineBadge = `<span class="badge-engine sd-cpp" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">⚡ Engine: SD.CPP</span>`;
       } else if (model.engine_version) {
         engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ Engine v${escapeHtml(model.engine_version)}</span>`;
@@ -382,13 +386,18 @@ const App = {
           <div class="card-variants-row" style="margin-top: 6px;">
             <span class="card-variants-label">Encoder:</span>
             <select class="card-variants-select" id="card-te-${escapeHtml(model.id)}" onclick="event.stopPropagation()">
-              ${model.text_encoders.map(te => `<option value="${escapeHtml(te.id)}" ${te.id === (this.state.selectedTextEncoder || 'w4a8') ? "selected" : ""}>${escapeHtml(te.name)} · ${te.installed ? '✓' : '⬇'}</option>`).join("")}
+              ${model.text_encoders.map(te => `<option value="${escapeHtml(te.id)}" ${te.id === (this.state.selectedTextEncoder || 'bf16') ? "selected" : ""}>${escapeHtml(te.name)} · ${te.installed ? '✓' : '⬇'}</option>`).join("")}
             </select>
           </div>
         `;
       }
 
       let actionBtnHtml = "";
+      let deleteBtnHtml = "";
+      if (model.is_custom) {
+        deleteBtnHtml = `<button class="delete-custom-btn" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)" title="${t('custom_model.delete') || 'Delete'}">🗑 ${t('custom_model.delete') || 'Delete'}</button>`;
+      }
+
       if (isSelected) {
         actionBtnHtml = `<button class="card-action-btn active" disabled>✓ ${t("models.active_model")}</button>`;
       } else if (isInstalled) {
@@ -419,8 +428,9 @@ const App = {
           ${variantsHtml}
           ${teHtml}
         </div>
-        <div class="card-footer">
+        <div class="card-footer" style="display: flex; gap: 8px; align-items: center;">
           ${actionBtnHtml}
+          ${deleteBtnHtml}
         </div>
       `;
 
@@ -745,10 +755,20 @@ const App = {
       return;
     }
 
-    // Text Encoder select
+    // Text Encoder select & Guardrails
     const teGroup = document.getElementById("text-encoder-group");
     const teSelect = document.getElementById("text-encoder-select");
+    const teHint = document.getElementById("text-encoder-hint");
     const customTeInput = document.getElementById("custom-text-encoder-input");
+    const backendLabel = document.getElementById("backend-label");
+    const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
+    const isSDCpp = activeModelObj && activeModelObj.engine === "sd_cpp";
+    const isQuantFuncQwen = activeModelObj && activeModelObj.engine === "quantfunc" && activeModelObj.id === "qwen_image_2_1";
+
+    if (backendLabel) {
+      backendLabel.textContent = isSDCpp ? (t("controls.quantization") || "Quantization") : (t("controls.backend") || "Backend");
+    }
+
     let teMissing = false;
 
     if (teGroup && teSelect) {
@@ -756,6 +776,26 @@ const App = {
         teGroup.style.display = "flex";
         teSelect.innerHTML = "";
         
+        if (isQuantFuncQwen) {
+          teSelect.disabled = true;
+          teGroup.classList.add("locked");
+          if (teHint) {
+            teHint.style.display = "flex";
+            teHint.textContent = "⚡ " + (t("controls.hint_quantfunc_te") || "QuantFunc auto-quantizes BF16 to INT4 in RAM");
+          }
+        } else {
+          teSelect.disabled = false;
+          teGroup.classList.remove("locked");
+          if (teHint) {
+            if (isSDCpp) {
+              teHint.style.display = "flex";
+              teHint.textContent = "⚡ " + (t("controls.hint_sdcpp_te") || "Unsloth GGUF multimodal encoder (--llm)");
+            } else {
+              teHint.style.display = "none";
+            }
+          }
+        }
+
         let activeTe = null;
         for (const te of modelState.text_encoders) {
           const opt = document.createElement("option");
@@ -772,16 +812,18 @@ const App = {
           teSelect.appendChild(opt);
         }
 
-        const customOpt = document.createElement("option");
-        customOpt.value = "custom";
-        customOpt.textContent = `Custom file / ComfyUI...`;
-        if (this.state.selectedTextEncoder === "custom") {
-          customOpt.selected = true;
-          if (customTeInput) customTeInput.style.display = "block";
-        } else {
-          if (customTeInput) customTeInput.style.display = "none";
+        if (!isQuantFuncQwen) {
+          const customOpt = document.createElement("option");
+          customOpt.value = "custom";
+          customOpt.textContent = `Custom file / ComfyUI...`;
+          if (this.state.selectedTextEncoder === "custom") {
+            customOpt.selected = true;
+            if (customTeInput) customTeInput.style.display = "block";
+          } else {
+            if (customTeInput) customTeInput.style.display = "none";
+          }
+          teSelect.appendChild(customOpt);
         }
-        teSelect.appendChild(customOpt);
 
         if (!activeTe && modelState.text_encoders.length > 0) {
           activeTe = modelState.text_encoders[0];
@@ -793,6 +835,8 @@ const App = {
         }
       } else {
         teGroup.style.display = "none";
+        teGroup.classList.remove("locked");
+        if (teHint) teHint.style.display = "none";
         if (customTeInput) customTeInput.style.display = "none";
       }
     }
@@ -865,6 +909,15 @@ const App = {
                       || (activeTe && !activeTe.installed && teSelect.value !== "custom");
       this.updateDownloadButton(hasMissing, this.state.modelState);
     }
+  },
+
+  toggleCustomTeInput(e) {
+    if (e) e.preventDefault();
+    const customTeInput = document.getElementById("custom-text-encoder-input");
+    if (!customTeInput) return;
+    const isHidden = customTeInput.style.display === "none";
+    customTeInput.style.display = isHidden ? "block" : "none";
+    if (isHidden) customTeInput.focus();
   },
 
   updateDownloadButton(showButton, modelState) {
@@ -1490,6 +1543,210 @@ const App = {
       filename: cleanFilename,
     });
     this.toast("success", t("img2img.send_to") + " ✓");
+  },
+
+  // ---------- Custom Model Modal ----------
+  async openCustomModelModal() {
+    const modal = document.getElementById("custom-model-modal");
+    if (!modal) return;
+
+    try {
+      const res = await fetch("/api/custom-models/files");
+      if (res.ok) {
+        const data = await res.json();
+        this._customFilesData = data;
+        const dirPathEl = document.getElementById("custom-models-dir-path");
+        if (dirPathEl) dirPathEl.textContent = data.custom_dir || "models/custom";
+
+        this.populateCustomFileSelects(data.files || []);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch custom files:", err);
+    }
+
+    modal.style.display = "flex";
+  },
+
+  closeCustomModelModal() {
+    const modal = document.getElementById("custom-model-modal");
+    if (modal) modal.style.display = "none";
+  },
+
+  populateCustomFileSelects(files) {
+    const modelSel = document.getElementById("custom-model-file-select");
+    const teSel = document.getElementById("custom-te-file-select");
+    const vaeSel = document.getElementById("custom-vae-file-select");
+
+    if (modelSel) {
+      modelSel.innerHTML = `<option value="">— Select file from models/custom/ —</option><option value="__custom__">Custom path on PC...</option>`;
+      for (const f of files) {
+        const opt = document.createElement("option");
+        opt.value = f.rel_path;
+        opt.textContent = `${f.name} (${f.size_gb} GB, ${f.ext.toUpperCase()})`;
+        modelSel.appendChild(opt);
+      }
+    }
+
+    if (teSel) {
+      teSel.innerHTML = `<option value="">— None / Bundled in model —</option><option value="__custom__">Custom path on PC...</option>`;
+      for (const f of files) {
+        const opt = document.createElement("option");
+        opt.value = f.rel_path;
+        opt.textContent = `${f.name} (${f.size_gb} GB)`;
+        teSel.appendChild(opt);
+      }
+    }
+
+    if (vaeSel) {
+      vaeSel.innerHTML = `<option value="">— None / Bundled in model —</option><option value="__custom__">Custom path on PC...</option>`;
+      for (const f of files) {
+        const opt = document.createElement("option");
+        opt.value = f.rel_path;
+        opt.textContent = `${f.name} (${f.size_gb} GB)`;
+        vaeSel.appendChild(opt);
+      }
+    }
+  },
+
+  onCustomFileSelectChange(type) {
+    const sel = document.getElementById(`custom-${type === 'model' ? 'model-file' : type}-file-select`);
+    const input = document.getElementById(`custom-${type === 'model' ? 'model-file' : type}-file-input`);
+    if (!sel || !input) return;
+
+    if (sel.value === "__custom__") {
+      input.style.display = "block";
+      input.focus();
+    } else {
+      input.style.display = "none";
+    }
+
+    // Auto-fill model name if empty and a file was selected
+    if (type === "model" && sel.value && sel.value !== "__custom__") {
+      const nameInput = document.getElementById("custom-model-name");
+      if (nameInput && !nameInput.value.trim()) {
+        const stem = sel.value.split(/[\\/]/).pop().replace(/\.[^/.]+$/, "");
+        nameInput.value = stem.replace(/[-_]/g, " ");
+      }
+    }
+  },
+
+  onCustomEngineChange() {
+    // Engine switcher hook
+  },
+
+  onCustomFamilyChange() {
+    const familySel = document.getElementById("custom-model-family");
+    const stepsInput = document.getElementById("custom-model-steps");
+    const cfgInput = document.getElementById("custom-model-cfg");
+    if (!familySel || !stepsInput || !cfgInput) return;
+
+    const fam = familySel.value;
+    if (fam === "sdxl") {
+      stepsInput.value = "1";
+      cfgInput.value = "1.0";
+    } else if (fam === "flux") {
+      stepsInput.value = "4";
+      cfgInput.value = "3.5";
+    } else if (fam === "qwen") {
+      stepsInput.value = "20";
+      cfgInput.value = "3.5";
+    } else {
+      stepsInput.value = "20";
+      cfgInput.value = "7.0";
+    }
+  },
+
+  async saveCustomModel() {
+    const nameInput = document.getElementById("custom-model-name");
+    const engineSel = document.getElementById("custom-model-engine");
+    const familySel = document.getElementById("custom-model-family");
+    const modelSel = document.getElementById("custom-model-file-select");
+    const modelInput = document.getElementById("custom-model-file-input");
+    const teSel = document.getElementById("custom-te-file-select");
+    const teInput = document.getElementById("custom-te-file-input");
+    const vaeSel = document.getElementById("custom-vae-file-select");
+    const vaeInput = document.getElementById("custom-vae-file-input");
+    const stepsInput = document.getElementById("custom-model-steps");
+    const cfgInput = document.getElementById("custom-model-cfg");
+
+    const name = nameInput ? nameInput.value.trim() : "";
+    if (!name) {
+      this.toast("error", t("custom_model.error_name") || "Please enter a model name");
+      return;
+    }
+
+    let modelFile = modelSel ? modelSel.value : "";
+    if (modelFile === "__custom__") {
+      modelFile = modelInput ? modelInput.value.trim() : "";
+    }
+    if (!modelFile) {
+      this.toast("error", t("custom_model.error_file") || "Please select or specify a model file");
+      return;
+    }
+
+    let teFile = teSel ? teSel.value : "";
+    if (teFile === "__custom__") teFile = teInput ? teInput.value.trim() : "";
+
+    let vaeFile = vaeSel ? vaeSel.value : "";
+    if (vaeFile === "__custom__") vaeFile = vaeInput ? vaeInput.value.trim() : "";
+
+    const payload = {
+      name: name,
+      engine: engineSel ? engineSel.value : "sd_cpp",
+      family: familySel ? familySel.value : "flux",
+      model_file: modelFile,
+      steps: parseInt(stepsInput?.value || "20", 10),
+      cfg: parseFloat(cfgInput?.value || "3.5"),
+      checkpoint_type: familySel?.value === "sdxl" ? "checkpoint" : "diffusion_model",
+    };
+    if (teFile) {
+      if (familySel?.value === "qwen") payload.llm_file = teFile;
+      else payload.t5_file = teFile;
+    }
+    if (vaeFile) payload.vae_file = vaeFile;
+
+    try {
+      const res = await fetch("/api/custom-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to register custom model");
+      }
+
+      this.toast("success", `✓ ${name} registered!`);
+      this.closeCustomModelModal();
+
+      // Refresh models
+      await this.init();
+      if (data.model && data.model.id) {
+        await this.selectModelFromModal(data.model.id);
+      }
+    } catch (err) {
+      this.toast("error", err.message);
+    }
+  },
+
+  async deleteCustomModel(modelId, event) {
+    if (event) event.stopPropagation();
+    if (!confirm(`Delete custom model ${modelId}?`)) return;
+
+    try {
+      const res = await fetch(`/api/custom-models/${encodeURIComponent(modelId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to delete");
+      }
+      this.toast("info", `Model ${modelId} removed`);
+      await this.init();
+      this.renderModelPickerModal();
+    } catch (err) {
+      this.toast("error", err.message);
+    }
   },
 };
 

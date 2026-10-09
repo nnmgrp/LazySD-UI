@@ -389,7 +389,7 @@ class Worker:
                 if not te_spec and getattr(model, "text_encoders", None):
                     te_spec = model.text_encoders[0]
 
-                target_filename = te_spec.get("file", "qwen3vl_8b_w4a8.safetensors") if te_spec else "qwen3vl_8b_w4a8.safetensors"
+                target_filename = te_spec.get("file", "qwen3vl_8b_bf16.safetensors") if te_spec else "qwen3vl_8b_bf16.safetensors"
                 te_precision = te_spec.get("precision", "int4") if te_spec else "int4"
 
                 # Check if file already exists in local_base or standard paths
@@ -398,9 +398,6 @@ class Worker:
                     local_base / "text_encoders" / target_filename,
                     local_base / "text_encoder" / target_filename,
                 ]
-                # If checking w4a8 or int8, also check if full bf16 was already provided by user
-                if target_filename != "qwen3vl_8b_bf16.safetensors":
-                    candidate_paths.append(local_base / "qwen3vl_8b_bf16.safetensors")
 
                 found_path = next((p for p in candidate_paths if p.exists()), None)
                 if found_path:
@@ -410,7 +407,7 @@ class Worker:
                     te_source = te_spec.get("source", {}) if te_spec else {}
                     repo = te_source.get("repo_id", "Comfy-Org/Qwen-Image-2.1")
                     remote_file = te_source.get("file_path", f"text_encoders/{target_filename}")
-                    size_gb = te_spec.get("size_gb", 5.88) if te_spec else 5.88
+                    size_gb = te_spec.get("size_gb", 16.33) if te_spec else 16.33
 
                     emit(ProgressEvent(
                         status=JobStatus.DOWNLOADING,

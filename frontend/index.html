@@ -154,16 +154,20 @@
               </div>
               <select id="model-select" style="display: none;"></select>
             </div>
-            <div class="control-group">
-              <label data-i18n="controls.backend">Backend</label>
+            <div class="control-group" id="backend-group">
+              <label id="backend-label" data-i18n="controls.backend">Backend</label>
               <select id="variant-select">
                 <option value="lighting" data-i18n="backend.lighting">Lighting (4 steps)</option>
                 <option value="svdq" data-i18n="backend.svdq">SVDQ (4 steps)</option>
               </select>
             </div>
             <div class="control-group" id="text-encoder-group" style="display: none;">
-              <label data-i18n="controls.text_encoder">Text Encoder</label>
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <label data-i18n="controls.text_encoder">Text Encoder</label>
+                <a href="javascript:void(0)" id="toggle-custom-te-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomTeInput(event)" data-i18n="controls.custom_path">Custom path</a>
+              </div>
               <select id="text-encoder-select" onchange="App.onTextEncoderChange()"></select>
+              <div id="text-encoder-hint" class="control-hint" style="display: none; font-size: 11px; color: var(--text-dim); margin-top: 3px;"></div>
               <input type="text" id="custom-text-encoder-input" placeholder="e.g. D:/ComfyUI/models/text_encoders/qwen3vl_8b_bf16.safetensors" data-i18n-placeholder="controls.custom_te_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
             </div>
             <div class="control-group">
@@ -847,8 +851,13 @@
           </div>
         </div>
         <div class="model-picker-toolbar">
-          <div class="model-picker-search-wrap">
-            <input type="text" id="model-picker-search" class="model-picker-search-input" placeholder="Search models by name or family..." data-i18n-placeholder="models.search_placeholder" oninput="App.onModelPickerSearch(this.value)">
+          <div style="display: flex; gap: 8px; align-items: center; width: 100%;">
+            <div class="model-picker-search-wrap" style="flex: 1;">
+              <input type="text" id="model-picker-search" class="model-picker-search-input" placeholder="Search models by name or family..." data-i18n-placeholder="models.search_placeholder" oninput="App.onModelPickerSearch(this.value)">
+            </div>
+            <button type="button" class="generate-btn" style="height: 36px; padding: 0 16px; font-size: 12px; background: #6366f1;" onclick="App.openCustomModelModal()">
+              <span>+</span> <span data-i18n="models.add_custom">Import Model</span>
+            </button>
           </div>
           <div class="model-picker-filters" id="model-picker-filters">
             <button class="filter-chip active" data-filter="all" onclick="App.setModelPickerFilter('all', this)" data-i18n="models.filter_all">All</button>
@@ -857,12 +866,104 @@
             <button class="filter-chip" data-filter="qwen" onclick="App.setModelPickerFilter('qwen', this)">Qwen</button>
             <button class="filter-chip" data-filter="z-image" onclick="App.setModelPickerFilter('z-image', this)">Z-Image</button>
             <button class="filter-chip" data-filter="sd_cpp" onclick="App.setModelPickerFilter('sd_cpp', this)">SD.CPP (GGUF)</button>
+            <button class="filter-chip" data-filter="custom" onclick="App.setModelPickerFilter('custom', this)" data-i18n="models.filter_custom">🎨 Custom</button>
           </div>
         </div>
       </div>
       <div class="model-picker-body">
         <div class="model-picker-grid" id="model-picker-grid">
           <!-- Dynamically populated by App.renderModelPickerModal() -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Import Custom Model -->
+  <div id="custom-model-modal" class="modal-overlay" style="display: none; z-index: 10001;">
+    <div class="modal-content" style="max-width: 600px; padding: 24px;">
+      <button class="modal-close" onclick="App.closeCustomModelModal()">✕</button>
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+        <span style="font-size: 24px;">🎨</span>
+        <div>
+          <h2 style="margin: 0; font-size: 18px;" data-i18n="custom_model.title">Import Custom Model</h2>
+          <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-dim);" data-i18n="custom_model.subtitle">Load local GGUF or Safetensors files with SD.CPP or QuantFunc</p>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div class="control-group">
+          <label data-i18n="custom_model.name">Model Name</label>
+          <input type="text" id="custom-model-name" placeholder="e.g. My Flux Dev Q4 or SDXL Turbo" class="form-input">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="control-group">
+            <label data-i18n="custom_model.engine">Target Runtime Engine</label>
+            <select id="custom-model-engine" onchange="App.onCustomEngineChange()">
+              <option value="sd_cpp">stable-diffusion.cpp (SD.CPP / GGUF)</option>
+              <option value="quantfunc">QuantFunc v0.0.17 (Safetensors)</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label data-i18n="custom_model.family">Architecture Family</label>
+            <select id="custom-model-family" onchange="App.onCustomFamilyChange()">
+              <option value="flux">Flux.1 (DiT GGUF / Schnell / Dev)</option>
+              <option value="qwen">Qwen-Image-2.1 (DiT GGUF)</option>
+              <option value="sdxl">SDXL / Turbo (GGUF Checkpoint)</option>
+              <option value="sd15">SD 1.5 / Checkpoint</option>
+              <option value="custom">Other / Custom</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label data-i18n="custom_model.model_file">Model Weights File (.gguf / .safetensors)</label>
+          <select id="custom-model-file-select" onchange="App.onCustomFileSelectChange('model')">
+            <option value="">— Select file from models/custom/ —</option>
+            <option value="__custom__">Custom path on PC...</option>
+          </select>
+          <input type="text" id="custom-model-file-input" placeholder="e.g. D:/AI/models/flux1-dev-q4_k_m.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
+        </div>
+
+        <div class="control-group" id="custom-te-group">
+          <label data-i18n="custom_model.te_file">Text Encoder / LLM File (Optional for Modular DiT)</label>
+          <select id="custom-te-file-select" onchange="App.onCustomFileSelectChange('te')">
+            <option value="">— None / Bundled in model —</option>
+            <option value="__custom__">Custom path on PC...</option>
+          </select>
+          <input type="text" id="custom-te-file-input" placeholder="e.g. D:/AI/models/t5xxl-q4_k.gguf or Qwen3-VL-8B-Q4_K_M.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
+        </div>
+
+        <div class="control-group" id="custom-vae-group">
+          <label data-i18n="custom_model.vae_file">VAE File (Optional)</label>
+          <select id="custom-vae-file-select" onchange="App.onCustomFileSelectChange('vae')">
+            <option value="">— None / Bundled in model —</option>
+            <option value="__custom__">Custom path on PC...</option>
+          </select>
+          <input type="text" id="custom-vae-file-input" placeholder="e.g. D:/AI/models/ae.safetensors" style="display: none; margin-top: 4px; font-size: 12px;">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="control-group">
+            <label data-i18n="custom_model.default_steps">Default Steps</label>
+            <input type="number" id="custom-model-steps" value="20" min="1" max="100">
+          </div>
+          <div class="control-group">
+            <label data-i18n="custom_model.default_cfg">Default CFG / Guidance</label>
+            <input type="number" id="custom-model-cfg" value="3.5" min="0" max="20" step="0.5">
+          </div>
+        </div>
+
+        <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.1); border-radius: 6px; padding: 10px; font-size: 11px; color: var(--text-dim);">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span>📁 <span data-i18n="custom_model.folder_hint">Drop files into folder to auto-detect:</span></span>
+            <code id="custom-models-dir-path" style="font-size: 10px; color: var(--accent);">models/custom</code>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+          <button type="button" class="icon-btn" onclick="App.closeCustomModelModal()" data-i18n="common.cancel">Cancel</button>
+          <button type="button" class="generate-btn" onclick="App.saveCustomModel()" style="background: var(--accent);" data-i18n="custom_model.save">Save & Activate</button>
         </div>
       </div>
     </div>

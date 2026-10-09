@@ -184,31 +184,85 @@ class SDCppWorker:
 
         cmd = [str(cli_path), "-M", "img_gen"]
 
+        def resolve_model_file(rel_or_abs: str) -> Path:
+            p = Path(rel_or_abs)
+            if p.is_absolute() and p.exists():
+                return p
+            if (repo_dir / rel_or_abs).exists():
+                return repo_dir / rel_or_abs
+            try:
+                from .custom_models import get_custom_models_dir
+                custom_candidate = get_custom_models_dir() / rel_or_abs
+                if custom_candidate.exists():
+                    return custom_candidate
+            except Exception:
+                pass
+            if (repo_dir / "text_encoders" / rel_or_abs).exists():
+                return repo_dir / "text_encoders" / rel_or_abs
+            if (repo_dir / "vae" / rel_or_abs).exists():
+                return repo_dir / "vae" / rel_or_abs
+            return p if p.is_absolute() else repo_dir / rel_or_abs
+
         # Checkpoint vs standalone diffusion-model
         ckpt_rel = model.engine_args.get("checkpoint")
         if ckpt_rel:
-            ckpt_path = repo_dir / ckpt_rel
+            ckpt_path = resolve_model_file(ckpt_rel)
             cmd.extend(["-m", str(ckpt_path)])
         else:
             # Standalone diffusion model (e.g. DiT GGUF)
             diff_rel = model.engine_args.get("diffusion_model")
+            if getattr(request, "variant_id", None):
+                for t in getattr(model, "transformers", []):
+                    if t.id == request.variant_id:
+                        diff_rel = t.path
+                        break
             if diff_rel:
-                diff_path = repo_dir / diff_rel
+                diff_path = resolve_model_file(diff_rel)
                 cmd.extend(["--diffusion-model", str(diff_path)])
 
             # Text encoders (GGUF / safetensors)
             t5_rel = model.engine_args.get("t5xxl")
             if t5_rel:
-                cmd.extend(["--t5xxl", str(repo_dir / t5_rel)])
+                cmd.extend(["--t5xxl", str(resolve_model_file(t5_rel))])
 
             clip_rel = model.engine_args.get("clip_l")
             if clip_rel:
-                cmd.extend(["--clip_l", str(repo_dir / clip_rel)])
+                cmd.extend(["--clip_l", str(resolve_model_file(clip_rel))])
+
+            # LLM text encoder (for multimodal / Qwen-Image / Flux 2)
+            llm_rel = model.engine_args.get("llm")
+            if getattr(request, "custom_text_encoder_path", None):
+                custom_te = Path(request.custom_text_encoder_path)
+                if custom_te.exists():
+                    cmd.extend(["--llm", str(custom_te)])
+            elif getattr(request, "text_encoder_id", None) and getattr(model, "text_encoders", None):
+                te_spec = model.get_text_encoder(request.text_encoder_id)
+                if te_spec and te_spec.get("file"):
+                    cmd.extend(["--llm", str(resolve_model_file(te_spec["file"]))])
+                elif llm_rel:
+                    cmd.extend(["--llm", str(resolve_model_file(llm_rel))])
+            elif llm_rel:
+                cmd.extend(["--llm", str(resolve_model_file(llm_rel))])
 
             # VAE
             vae_rel = model.engine_args.get("vae")
             if vae_rel:
-                cmd.extend(["--vae", str(repo_dir / vae_rel)])
+                candidate_vae = next((
+                    p for p in [
+                        resolve_model_file(vae_rel),
+                        settings.models_dir / "Qwen-Image-2.1-4bit" / vae_rel,
+                        settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
+                    ] if p.exists()
+                ), resolve_model_file(vae_rel))
+                cmd.extend(["--vae", str(candidate_vae)])
+
+            # VAE latent format override
+            if model.engine_args.get("vae_format"):
+                cmd.extend(["--vae-format", model.engine_args["vae_format"]])
+
+            # Flow shift
+            if model.engine_args.get("flow_shift"):
+                cmd.extend(["--flow-shift", str(model.engine_args["flow_shift"])])
 
         # Img2Img reference image
         if getattr(request, "init_image_path", None):

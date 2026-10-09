@@ -215,5 +215,28 @@
   "models.no_results": "Подходящие модели не найдены",
   "models.change_model": "Сменить модель...",
   "models.status_ready": "Готова",
-  "models.status_download": "Требуется загрузка"
+  "models.status_download": "Требуется загрузка",
+  "models.filter_custom": "Свои",
+  "models.add_custom": "Импорт модели",
+
+  "controls.quantization": "Квантование",
+  "controls.custom_path": "Свой путь",
+  "controls.hint_quantfunc_te": "QuantFunc динамически сжимает BF16 в INT4 в RAM",
+  "controls.hint_sdcpp_te": "Мультимодальный Unsloth GGUF энкодер (--llm)",
+
+  "custom_model.title": "Импорт своей модели",
+  "custom_model.subtitle": "Подключение локальных файлов GGUF или Safetensors через SD.CPP или QuantFunc",
+  "custom_model.name": "Название модели",
+  "custom_model.engine": "Движок инференса",
+  "custom_model.family": "Семейство архитектуры",
+  "custom_model.model_file": "Файл весов модели (.gguf / .safetensors)",
+  "custom_model.te_file": "Текстовый энкодер / LLM (Опционально)",
+  "custom_model.vae_file": "Файл VAE (Опционально)",
+  "custom_model.default_steps": "Шаги по умолчанию",
+  "custom_model.default_cfg": "CFG / Guidance по умолчанию",
+  "custom_model.folder_hint": "Положите файлы в папку для авто-обнаружения:",
+  "custom_model.save": "Сохранить и активировать",
+  "custom_model.delete": "Удалить",
+  "custom_model.error_name": "Введите название модели",
+  "custom_model.error_file": "Выберите или укажите файл модели"
 }

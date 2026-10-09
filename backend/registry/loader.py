@@ -133,6 +133,9 @@ class ModelSpec:
     # Available text encoder variants (e.g. w4a8, int8, bf16)
     text_encoders: list[dict] = field(default_factory=list)
 
+    # Custom user-imported model flag
+    is_custom: bool = False
+
     @classmethod
     def from_dict(cls, data: dict) -> "ModelSpec":
         """Build ModelSpec from a JSON dict."""
@@ -169,6 +172,7 @@ class ModelSpec:
             engine_args=data.get("engine_args", {}),
             engine_version=data.get("engine_version"),
             text_encoders=data.get("text_encoders", []),
+            is_custom=bool(data.get("is_custom", False)),
         )
 
     # ---------- Helpers ----------
