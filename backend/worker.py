@@ -575,7 +575,12 @@ class Worker:
 
         # Dispatch: stable-diffusion.cpp engine
         if getattr(model, "engine", "quantfunc") == "sd_cpp":
-            from .sd_cpp import SDCppWorker
+            from .sd_cpp import SDCppWorker, is_sd_cpp_installed
+            if not is_sd_cpp_installed():
+                raise RuntimeError(
+                    "Engine stable-diffusion.cpp (SD.CPP) is not installed. "
+                    "Please go to Settings → Engine to download it."
+                )
             sd_worker = SDCppWorker()
             self._sd_worker = sd_worker
             try:

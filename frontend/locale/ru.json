@@ -96,6 +96,10 @@
   "settings.check_updates": "Проверить обновления",
   "settings.download_engine": "Скачать engine",
   "settings.verify_engine": "Проверить контрольную сумму",
+  "settings.engine.qf17_desc": "Основной SVDQuant движок (Qwen-2.1)",
+  "settings.engine.qf12_desc": "Движок с поддержкой NVFP4 (Klein FP4, Z-Image)",
+  "settings.engine.sdcpp_desc": "Автономный GGUF движок (Flux.1 Schnell, SDXL, Unsloth Q4)",
+  "settings.engine.download_sdcpp": "Скачать (~320 МБ)",
 
   "settings.gpu_name": "Имя GPU",
   "settings.gpu_sm": "SM capability",

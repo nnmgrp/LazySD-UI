@@ -16,6 +16,7 @@ Then open: http://127.0.0.1:7860
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -169,8 +170,50 @@ def init_state() -> None:
 
 
 # ============================================================
-# Build the main HTML page
+# Build the main HTML page & Engine Status
 # ============================================================
+def _get_engines_info() -> dict:
+    from backend.engine import is_engine_installed, get_engine_paths
+    from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version
+
+    _, cli17 = get_engine_paths("0.0.17")
+    _, cli12 = get_engine_paths("0.0.12")
+    cli_sd = get_sd_cpp_cli_path()
+
+    return {
+        "quantfunc_0_17": {
+            "id": "quantfunc_0_17",
+            "engine": "quantfunc",
+            "version": "0.0.17",
+            "name": "QuantFunc v0.0.17",
+            "title": "QuantFunc v0.0.17 (Primary SVDQuant)",
+            "installed": is_engine_installed("0.0.17"),
+            "path": str(cli17),
+            "description": "Primary engine for Qwen-Image-2.1 and standard SVDQuant models.",
+        },
+        "quantfunc_0_12": {
+            "id": "quantfunc_0_12",
+            "engine": "quantfunc",
+            "version": "0.0.12",
+            "name": "QuantFunc v0.0.12",
+            "title": "QuantFunc v0.0.12 (Legacy NVFP4)",
+            "installed": is_engine_installed("0.0.12"),
+            "path": str(cli12),
+            "description": "Legacy engine with native NVFP4 support (Flux.2 Klein FP4, Z-Image).",
+        },
+        "sd_cpp": {
+            "id": "sd_cpp",
+            "engine": "sd_cpp",
+            "version": get_sd_cpp_version(),
+            "name": "stable-diffusion.cpp",
+            "title": "stable-diffusion.cpp (GGUF Runtime)",
+            "installed": is_sd_cpp_installed(),
+            "path": str(cli_sd),
+            "description": "Standalone C++/CUDA runner for GGUF models (Flux.1 Schnell, SDXL, Unsloth Q4).",
+        },
+    }
+
+
 def _api_auth_status() -> dict:
     """Engine auth status for the frontend (config.json + user key)."""
     cfg_present = engine_config_json_path().exists()
@@ -205,6 +248,10 @@ def build_index_html() -> str:
         }
 
     engine_status = check_engine_status()
+    installed_engines = list_installed_engine_versions()
+    if is_sd_cpp_installed():
+        installed_engines.append("sd_cpp")
+
     config_json = json.dumps({
         "settings": {
             "lang": settings.lang,
@@ -221,6 +268,10 @@ def build_index_html() -> str:
             "status": engine_status.status,
             "message": engine_status.message,
         },
+        "installed_engines": installed_engines,
+        "engines": _get_engines_info(),
+        "sd_cpp_installed": is_sd_cpp_installed(),
+        "sd_cpp_version": get_sd_cpp_version(),
         "api_auth": _api_auth_status(),
     }, default=str)
 
@@ -393,6 +444,7 @@ def create_app() -> FastAPI:
                 "message": check_engine_status().message,
             },
             "installed_engines": installed_engines,
+            "engines": _get_engines_info(),
             "sd_cpp_installed": is_sd_cpp_installed(),
             "sd_cpp_version": get_sd_cpp_version(),
             "api_auth": _api_auth_status(),
@@ -938,25 +990,98 @@ def create_app() -> FastAPI:
         return {"status": "no_changes"}
 
     # ---------- API: Engine ----------
+    @app.get("/api/engine/status")
+    async def api_engine_status():
+        """Get status of all three supported engines."""
+        from backend.engine import is_engine_installed, get_engine_paths
+        from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version
+
+        _, cli17 = get_engine_paths("0.0.17")
+        _, cli12 = get_engine_paths("0.0.12")
+        cli_sd = get_sd_cpp_cli_path()
+
+        return {
+            "status": "ok",
+            "engines": {
+                "quantfunc_0_17": {
+                    "id": "quantfunc_0_17",
+                    "engine": "quantfunc",
+                    "version": "0.0.17",
+                    "name": "QuantFunc v0.0.17",
+                    "title": "QuantFunc v0.0.17 (Primary SVDQuant)",
+                    "installed": is_engine_installed("0.0.17"),
+                    "path": str(cli17),
+                    "description": "Primary engine for Qwen-Image-2.1 and standard SVDQuant models.",
+                },
+                "quantfunc_0_12": {
+                    "id": "quantfunc_0_12",
+                    "engine": "quantfunc",
+                    "version": "0.0.12",
+                    "name": "QuantFunc v0.0.12",
+                    "title": "QuantFunc v0.0.12 (Legacy NVFP4)",
+                    "installed": is_engine_installed("0.0.12"),
+                    "path": str(cli12),
+                    "description": "Legacy engine with native NVFP4 support (Flux.2 Klein FP4, Z-Image).",
+                },
+                "sd_cpp": {
+                    "id": "sd_cpp",
+                    "engine": "sd_cpp",
+                    "version": get_sd_cpp_version(),
+                    "name": "stable-diffusion.cpp",
+                    "title": "stable-diffusion.cpp (GGUF Runtime)",
+                    "installed": is_sd_cpp_installed(),
+                    "path": str(cli_sd),
+                    "description": "Standalone C++/CUDA runner for GGUF models (Flux.1 Schnell, SDXL, Unsloth Q4).",
+                },
+            },
+        }
+
     @app.post("/api/engine/download")
-    async def api_engine_download():
-        """Download engine binary from ModelScope (verify-before-replace)."""
+    async def api_engine_download(body: Optional[dict] = None):
+        """Download engine binary (QuantFunc v0.0.17 / v0.0.12 or SD.CPP).
+
+        Body (optional):
+            {"engine": "quantfunc", "version": "0.0.17"} or
+            {"engine": "quantfunc", "version": "0.0.12"} or
+            {"engine": "sd_cpp", "force": false}
+        """
+        body = body or {}
+        engine_type = body.get("engine", "quantfunc")
+        version = body.get("version")
+
         try:
-            binary_path = download_engine()
-            return {
-                "status": "ok",
-                "message": f"Engine downloaded and verified: {binary_path}",
-                "path": str(binary_path),
-            }
+            if engine_type == "sd_cpp":
+                from backend.sd_cpp import download_sd_cpp
+                binary_path = await asyncio.to_thread(download_sd_cpp, force=bool(body.get("force", False)))
+                return {
+                    "status": "ok",
+                    "engine": "sd_cpp",
+                    "message": f"SD.CPP engine installed: {binary_path}",
+                    "path": str(binary_path),
+                }
+            else:
+                target_ver = version or get_settings().engine_version
+                binary_path = await asyncio.to_thread(download_engine, version=target_ver)
+                return {
+                    "status": "ok",
+                    "engine": "quantfunc",
+                    "version": target_ver,
+                    "message": f"QuantFunc engine v{target_ver} installed and verified: {binary_path}",
+                    "path": str(binary_path),
+                }
         except Exception as e:
             raise HTTPException(500, f"Engine download failed: {e}")
 
     @app.post("/api/engine/verify")
-    async def api_engine_verify():
+    async def api_engine_verify(body: Optional[dict] = None):
         """Verify engine SHA-256 against remote verify.json."""
-        result = verify_engine()
+        body = body or {}
+        version = body.get("version")
+        target_ver = version or get_settings().engine_version
+        result = await asyncio.to_thread(verify_engine, version=target_ver)
         return {
             "status": result.status,
+            "version": target_ver,
             "message": result.message,
             "local_sha256": result.local_sha256,
             "remote_sha256": result.remote_sha256,

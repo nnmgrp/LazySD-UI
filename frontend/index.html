@@ -221,41 +221,56 @@
         <h2 data-i18n="settings.title">Settings</h2>
 
         <div class="settings-section">
-          <h3 data-i18n="settings.section.engine">Engine</h3>
+          <h3 data-i18n="settings.section.engine">Engines & Runtimes</h3>
+
+          <!-- QuantFunc v0.0.17 -->
           <div class="setting-row">
-            <div class="setting-label" data-i18n="settings.engine_version">Engine version</div>
-            <div class="setting-value" id="setting-engine-version">0.0.17</div>
-            <div></div>
+            <div class="setting-label">
+              <strong>QuantFunc v0.0.17</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.qf17_desc">Primary SVDQuant (Qwen-2.1)</small>
+            </div>
+            <div class="setting-value" id="setting-engine-qf17-status">—</div>
+            <div style="display: flex; gap: 6px;">
+              <button class="icon-btn" onclick="verifyEngine('0.0.17')" data-i18n="settings.verify_engine">Verify</button>
+              <button class="icon-btn" onclick="downloadEngine('0.0.17')" data-i18n="settings.download_engine">Download</button>
+            </div>
           </div>
+
+          <!-- QuantFunc v0.0.12 (Legacy) -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>QuantFunc v0.0.12</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.qf12_desc">Legacy NVFP4 (Klein FP4 / Z-Image)</small>
+            </div>
+            <div class="setting-value" id="setting-engine-qf12-status">—</div>
+            <div style="display: flex; gap: 6px;">
+              <button class="icon-btn" onclick="verifyEngine('0.0.12')" data-i18n="settings.verify_engine">Verify</button>
+              <button class="icon-btn" onclick="downloadEngine('0.0.12')" data-i18n="settings.download_engine">Download</button>
+            </div>
+          </div>
+
+          <!-- stable-diffusion.cpp (SD.CPP) -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>SD.CPP (GGUF)</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.sdcpp_desc">Standalone GGUF runner (Flux.1 Schnell, SDXL, Unsloth Q4)</small>
+            </div>
+            <div class="setting-value" id="setting-engine-sdcpp-status">—</div>
+            <div style="display: flex; gap: 6px;">
+              <button class="icon-btn" onclick="downloadSDCpp()" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
+            </div>
+          </div>
+
+          <!-- CUDA version & dependencies -->
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.cuda_version">CUDA version</div>
             <div class="setting-value" id="setting-cuda-version">13</div>
             <div></div>
           </div>
           <div class="setting-row">
-            <div class="setting-label" data-i18n="settings.engine_path">Engine path</div>
-            <div class="setting-value" id="setting-engine-path">—</div>
-            <button class="icon-btn" onclick="verifyEngine()" data-i18n="settings.verify_engine">Verify</button>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="settings.download_engine">Download engine</div>
-            <div class="setting-value" id="setting-engine-status">—</div>
-            <button class="icon-btn" onclick="downloadEngine()" data-i18n="settings.download_engine">Download</button>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="settings.check_updates">Check for updates</div>
-            <div class="setting-value"></div>
-            <button class="icon-btn" onclick="checkUpdates()" data-i18n="settings.check_updates">Check</button>
-          </div>
-          <div class="setting-row">
             <div class="setting-label">CUDA deps</div>
             <div class="setting-value" id="setting-cuda-status">—</div>
             <button class="icon-btn" onclick="downloadCudaDeps()">Download</button>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">SD.CPP engine<br><small style="color: var(--text-dim);">GGUF fallback</small></div>
-            <div class="setting-value" id="setting-sd-cpp-status">—</div>
-            <div></div>
           </div>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.qf_api_key">QuantFunc API key</div>
@@ -469,22 +484,24 @@
 
   <script>
     // ---------- Settings tab helpers ----------
-    async function verifyEngine() {
+    async function verifyEngine(version) {
+      const ver = version || '0.0.17';
       try {
-        App.toast("info", "Verifying engine...");
-        const res = await App.apiPost("/api/engine/verify");
+        App.toast("info", `Verifying engine v${ver}...`);
+        const res = await App.apiPost("/api/engine/verify", { version: ver });
         App.toast(res.status === "ok" ? "success" : "warning", res.message);
       } catch (e) {
         App.toast("error", e.message);
       }
     }
 
-    async function downloadEngine() {
+    async function downloadEngine(version) {
+      const ver = version || '0.0.17';
       const btn = event?.target;
       if (btn) { btn.disabled = true; btn.textContent = "Downloading..."; }
       try {
-        App.toast("info", "Downloading engine (~120 MB)...");
-        const res = await App.apiPost("/api/engine/download");
+        App.toast("info", `Downloading QuantFunc v${ver} (~120 MB)...`);
+        const res = await App.apiPost("/api/engine/download", { engine: "quantfunc", version: ver });
         App.toast("success", res.message);
         // Refresh config to update UI state
         await App.refreshConfig();
@@ -492,6 +509,22 @@
         App.toast("error", "Engine download failed: " + e.message);
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = "Download"; }
+      }
+    }
+
+    async function downloadSDCpp() {
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; btn.textContent = "Downloading..."; }
+      try {
+        App.toast("info", "Downloading stable-diffusion.cpp (~320 MB)...");
+        const res = await App.apiPost("/api/engine/download", { engine: "sd_cpp" });
+        App.toast("success", res.message);
+        // Refresh config to update UI state
+        await App.refreshConfig();
+      } catch (e) {
+        App.toast("error", "SD.CPP download failed: " + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Download (~320 MB)"; }
       }
     }
 
@@ -706,29 +739,40 @@
       const config = window.QF_INITIAL_CONFIG;
       if (!config) return;
 
-      // Engine section
-      document.getElementById("setting-engine-version").textContent = config.settings.engine_version;
-      document.getElementById("setting-cuda-version").textContent = config.settings.cuda_version;
-      document.getElementById("setting-engine-path").textContent = config.settings.engine_platform + "/quantfunc";
+      // Multi-engine status
+      const engines = config.engines || {};
 
-      // Engine status
-      const statusEl = document.getElementById("setting-engine-status");
-      if (config.engine_status.status === "ok") {
-        statusEl.innerHTML = '<span class="state-badge installed">✓ installed</span>';
-      } else if (config.engine_status.status === "missing") {
-        statusEl.innerHTML = '<span class="state-badge missing">✗ missing</span>';
-      } else {
-        statusEl.textContent = config.engine_status.status;
+      const qf17El = document.getElementById("setting-engine-qf17-status");
+      if (qf17El) {
+        const qf17 = engines.quantfunc_0_17 || {};
+        const isInst = qf17.installed ?? (config.engine_status?.status === "ok");
+        qf17El.innerHTML = isInst
+          ? '<span class="state-badge installed">✓ installed (v0.0.17)</span>'
+          : '<span class="state-badge missing">✗ missing</span>';
       }
 
-      // SD.CPP engine status
-      const sdCppEl = document.getElementById("setting-sd-cpp-status");
+      const qf12El = document.getElementById("setting-engine-qf12-status");
+      if (qf12El) {
+        const qf12 = engines.quantfunc_0_12 || {};
+        const isInst = qf12.installed ?? (config.installed_engines?.includes("0.0.12"));
+        qf12El.innerHTML = isInst
+          ? '<span class="state-badge installed">✓ installed (v0.0.12)</span>'
+          : '<span class="state-badge missing">✗ missing</span>';
+      }
+
+      const sdCppEl = document.getElementById("setting-engine-sdcpp-status");
       if (sdCppEl) {
-        if (config.sd_cpp_installed) {
-          sdCppEl.innerHTML = '<span class="state-badge installed">✓ installed (' + (config.sd_cpp_version || 'ready') + ')</span>';
-        } else {
-          sdCppEl.innerHTML = '<span class="state-badge missing">✗ missing</span>';
-        }
+        const sd = engines.sd_cpp || {};
+        const isInst = sd.installed ?? config.sd_cpp_installed;
+        const ver = sd.version || config.sd_cpp_version || 'ready';
+        sdCppEl.innerHTML = isInst
+          ? `<span class="state-badge installed">✓ installed (${ver})</span>`
+          : '<span class="state-badge missing">✗ missing</span>';
+      }
+
+      const cudaEl = document.getElementById("setting-cuda-version");
+      if (cudaEl && config.settings) {
+        cudaEl.textContent = config.settings.cuda_version || '13';
       }
 
       // GPU section

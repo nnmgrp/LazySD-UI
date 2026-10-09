@@ -266,7 +266,8 @@ def _plan_engine_files(
     engine file whose SHA-256 we can't verify.
     """
     settings = get_settings()
-    binary_path, cli_path = get_engine_paths()
+    binary_path, cli_path = get_engine_paths(version)
+    target_dir = binary_path.parent
     effective_sm = _get_effective_gpu_sm(gpu_sm)
 
     verify_json = _fetch_verify_json(version)
@@ -303,7 +304,7 @@ def _plan_engine_files(
                 f"verify.json for v{version} does not list {name} "
                 f"(build: {kernel_set or 'flat'}) — refusing to install unverified files"
             )
-        files.append(EngineFile(remote=remote, local=settings.engine_dir / name, sha256=hashes[remote]))
+        files.append(EngineFile(remote=remote, local=target_dir / name, sha256=hashes[remote]))
     return files, kernel_set
 
 
@@ -312,8 +313,7 @@ def get_engine_paths(version: Optional[str] = None) -> tuple[Path, Path]:
     """Get (binary_path, cli_path) for current platform + CUDA version.
 
     If `version` is specified and differs from DEFAULT_ENGINE_VERSION:
-    looks for `settings.engine_dir / f"v{version}" / ...`.
-    If that subfolder exists and contains the binary, returns paths in that subfolder.
+    returns paths in `settings.engine_dir / f"v{version}"`.
     Otherwise returns default paths in `settings.engine_dir`.
     """
     settings = get_settings()
@@ -324,9 +324,8 @@ def get_engine_paths(version: Optional[str] = None) -> tuple[Path, Path]:
     binary_name, cli_name = ENGINE_FILENAMES[key]
 
     if version and version != DEFAULT_ENGINE_VERSION:
-        for sub in (settings.engine_dir / f"v{version}", settings.engine_dir / version):
-            if (sub / cli_name).exists():
-                return sub / binary_name, sub / cli_name
+        sub = settings.engine_dir / f"v{version}"
+        return sub / binary_name, sub / cli_name
 
     return settings.engine_dir / binary_name, settings.engine_dir / cli_name
 
@@ -445,14 +444,15 @@ def ensure_config_json(force: bool = False, timeout: int = 15) -> tuple[Path, st
     return config_path, "bundled-fallback"
 
 
-def verify_engine(gpu_sm: Optional[int] = None) -> VerifyResult:
+def verify_engine(version: Optional[str] = None, gpu_sm: Optional[int] = None) -> VerifyResult:
     """Verify local engine binary and addons SHA-256 against remote verify.json.
 
     Network access required. If offline, returns status="offline".
     Checks all planned files for current platform, CUDA, and GPU SM.
     """
     settings = get_settings()
-    binary_path, _ = get_engine_paths()
+    target_version = version or settings.engine_version
+    binary_path, _ = get_engine_paths(target_version)
     effective_sm = _get_effective_gpu_sm(gpu_sm)
 
     # Fast existence check first
@@ -464,14 +464,14 @@ def verify_engine(gpu_sm: Optional[int] = None) -> VerifyResult:
         )
 
     try:
-        files, kernel_set = _plan_engine_files(settings.engine_version, effective_sm)
+        files, kernel_set = _plan_engine_files(target_version, effective_sm)
     except Exception as e:
         local_sha = _compute_sha256(binary_path) if binary_path.exists() else None
         return VerifyResult(
             status="offline",
             local_sha256=local_sha,
             local_path=binary_path,
-            message=f"Could not fetch remote manifests for engine v{settings.engine_version} ({e})",
+            message=f"Could not fetch remote manifests for engine v{target_version} ({e})",
         )
 
     # Check that all planned files exist locally
@@ -481,7 +481,7 @@ def verify_engine(gpu_sm: Optional[int] = None) -> VerifyResult:
                 status="missing",
                 local_path=f.local,
                 remote_sha256=f.sha256,
-                remote_version=settings.engine_version,
+                remote_version=target_version,
                 message=f"Engine file missing: {f.local.name}",
             )
 
@@ -494,7 +494,7 @@ def verify_engine(gpu_sm: Optional[int] = None) -> VerifyResult:
                 status="outdated",
                 local_sha256=local_sha,
                 remote_sha256=f.sha256,
-                remote_version=settings.engine_version,
+                remote_version=target_version,
                 local_path=f.local,
                 message=f"SHA-256 mismatch for {f.local.name}: local {local_sha[:12]}... != remote {f.sha256[:12]}...",
             )
@@ -503,13 +503,14 @@ def verify_engine(gpu_sm: Optional[int] = None) -> VerifyResult:
         status="ok",
         local_sha256=binary_file.sha256,
         remote_sha256=binary_file.sha256,
-        remote_version=settings.engine_version,
+        remote_version=target_version,
         local_path=binary_path,
-        message=f"Engine v{settings.engine_version} ({kernel_set or 'flat'}) is up to date",
+        message=f"Engine v{target_version} ({kernel_set or 'flat'}) is up to date",
     )
 
 
 def download_engine(
+    version: Optional[str] = None,
     progress_callback=None,
     replace_existing: bool = True,
     gpu_sm: Optional[int] = None,
@@ -522,6 +523,7 @@ def download_engine(
     atomically renamed into place.
 
     Args:
+        version: Target version (e.g. '0.0.17' or '0.0.12'). Defaults to settings.engine_version.
         progress_callback: Optional callable(downloaded_bytes, total_bytes, speed_bps)
         replace_existing: If True, replaces existing binary after successful verify.
                          If False, raises if binary already exists.
@@ -530,19 +532,20 @@ def download_engine(
     Returns:
         Path to the installed engine binary.
     """
-    binary_path, cli_path = get_engine_paths()
     settings = get_settings()
+    target_version = version or settings.engine_version
+    binary_path, cli_path = get_engine_paths(target_version)
     effective_sm = _get_effective_gpu_sm(gpu_sm)
 
     # Check existing
     if binary_path.exists() and not replace_existing:
         raise FileExistsError(f"Engine binary already exists: {binary_path}")
 
-    version = settings.engine_version
-    files, kernel_set = _plan_engine_files(version, effective_sm)
+    files, kernel_set = _plan_engine_files(target_version, effective_sm)
 
-    # Ensure engine_dir exists
-    settings.engine_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure engine directory exists (root engine_dir or v0.0.12 subfolder)
+    target_dir = binary_path.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     temp_files: list[tuple[EngineFile, Path]] = []
     try:
@@ -551,7 +554,7 @@ def download_engine(
             temp_files.append((f, temp_file))
             url = (
                 f"{MODELSCOPE_PLUGIN_FILE}?Revision=master"
-                f"&FilePath={version}/{settings.engine_platform}/{f.remote}"
+                f"&FilePath={target_version}/{settings.engine_platform}/{f.remote}"
             )
             print(f"[engine] Downloading {f.local.name} (from {f.remote}) from ModelScope...")
             _download_file_with_progress(url, temp_file, progress_callback)

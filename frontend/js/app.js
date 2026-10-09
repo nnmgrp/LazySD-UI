@@ -139,15 +139,35 @@ const App = {
 
   updateEngineStatusUI() {
     // Update Settings tab engine status display after download.
-    const statusEl = document.getElementById("setting-engine-status");
-    if (!statusEl) return;
-    const status = this.state.engineStatus?.status;
-    if (status === "ok") {
-      statusEl.innerHTML = '<span class="state-badge installed">✓ installed</span>';
-    } else if (status === "missing") {
-      statusEl.innerHTML = '<span class="state-badge missing">✗ missing</span>';
-    } else {
-      statusEl.textContent = status || "—";
+    const config = this.state.config || window.QF_INITIAL_CONFIG || {};
+    const engines = config.engines || {};
+
+    const qf17El = document.getElementById("setting-engine-qf17-status");
+    if (qf17El) {
+      const qf17 = engines.quantfunc_0_17 || {};
+      const isInst = qf17.installed ?? (this.state.engineStatus?.status === "ok");
+      qf17El.innerHTML = isInst
+        ? '<span class="state-badge installed">✓ installed (v0.0.17)</span>'
+        : '<span class="state-badge missing">✗ missing</span>';
+    }
+
+    const qf12El = document.getElementById("setting-engine-qf12-status");
+    if (qf12El) {
+      const qf12 = engines.quantfunc_0_12 || {};
+      const isInst = qf12.installed ?? (config.installed_engines?.includes("0.0.12"));
+      qf12El.innerHTML = isInst
+        ? '<span class="state-badge installed">✓ installed (v0.0.12)</span>'
+        : '<span class="state-badge missing">✗ missing</span>';
+    }
+
+    const sdCppEl = document.getElementById("setting-engine-sdcpp-status");
+    if (sdCppEl) {
+      const sd = engines.sd_cpp || {};
+      const isInst = sd.installed ?? config.sd_cpp_installed;
+      const ver = sd.version || config.sd_cpp_version || 'ready';
+      sdCppEl.innerHTML = isInst
+        ? `<span class="state-badge installed">✓ installed (${ver})</span>`
+        : '<span class="state-badge missing">✗ missing</span>';
     }
   },
 

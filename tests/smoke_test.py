@@ -348,12 +348,25 @@ def test_engine_status():
         p12_bin, p12_cli = get_engine_paths("0.0.12")
         assert "v0.0.12" in str(p12_cli)
 
-        from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version
+        from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version, download_sd_cpp
         print(f"  ✓ SD.CPP installed: {is_sd_cpp_installed()}")
         print(f"    SD.CPP CLI path: {get_sd_cpp_cli_path()}")
         print(f"    SD.CPP version: {get_sd_cpp_version()}")
         assert is_sd_cpp_installed()
         assert get_sd_cpp_cli_path().exists()
+
+        # Test FastAPI /api/engine/status endpoint
+        from fastapi.testclient import TestClient
+        from app import create_app
+        client = TestClient(create_app())
+        res = client.get("/api/engine/status")
+        assert res.status_code == 200, f"/api/engine/status failed with {res.status_code}"
+        data = res.json()
+        assert "engines" in data
+        assert "quantfunc_0_17" in data["engines"]
+        assert "quantfunc_0_12" in data["engines"]
+        assert "sd_cpp" in data["engines"]
+        print("  ✓ /api/engine/status returns all 3 engines with installed=True")
         return True
     except Exception as e:
         print(f"  ✗ Engine status test failed: {e}")

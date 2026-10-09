@@ -96,6 +96,10 @@
   "settings.check_updates": "Check for updates",
   "settings.download_engine": "Download engine",
   "settings.verify_engine": "Verify engine checksum",
+  "settings.engine.qf17_desc": "Primary SVDQuant (Qwen-2.1)",
+  "settings.engine.qf12_desc": "Legacy NVFP4 (Flux.2 Klein FP4, Z-Image)",
+  "settings.engine.sdcpp_desc": "Standalone GGUF runner (Flux.1 Schnell, SDXL, Unsloth Q4)",
+  "settings.engine.download_sdcpp": "Download (~320 MB)",
 
   "settings.gpu_name": "GPU name",
   "settings.gpu_sm": "SM capability",

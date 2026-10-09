@@ -53,6 +53,53 @@ def get_sd_cpp_version() -> str:
     return "master-a4a9669 (cu12)"
 
 
+SD_CPP_WINDOWS_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-946-a4a9669/sd-master-a4a9669-bin-win-cuda12-x64.zip"
+
+
+def download_sd_cpp(
+    progress_callback: Optional[Callable[[int, int, float], None]] = None,
+    force: bool = False,
+) -> Path:
+    """Download and extract stable-diffusion.cpp standalone CUDA 12 build.
+
+    Extracts to settings.engine_dir / 'sd_cpp'.
+    """
+    target_dir = get_sd_cpp_dir()
+    cli_path = get_sd_cpp_cli_path()
+    if cli_path.exists() and not force:
+        return cli_path
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    temp_zip = target_dir / "sd_master_cuda12.zip.tmp"
+
+    import zipfile
+    from .engine import _download_file_with_progress
+
+    try:
+        logger.info("Downloading SD.CPP from %s", SD_CPP_WINDOWS_URL)
+        _download_file_with_progress(
+            SD_CPP_WINDOWS_URL,
+            temp_zip,
+            progress_callback=progress_callback,
+        )
+
+        logger.info("Extracting SD.CPP zip to %s", target_dir)
+        with zipfile.ZipFile(temp_zip, "r") as z:
+            z.extractall(target_dir)
+
+        if not cli_path.exists():
+            raise RuntimeError(f"sd-cli.exe not found after extracting {temp_zip}")
+
+        logger.info("SD.CPP installed successfully at %s", cli_path)
+        return cli_path
+    finally:
+        if temp_zip.exists():
+            try:
+                temp_zip.unlink()
+            except OSError:
+                pass
+
+
 # Progress matching regex for stable-diffusion.cpp
 # Example outputs:
 #   "| 3/20 [00:02<00:11,  1.45s/it]"
