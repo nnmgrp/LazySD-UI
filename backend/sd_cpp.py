@@ -218,6 +218,11 @@ class SDCppWorker:
                         break
             if diff_rel:
                 diff_path = resolve_model_file(diff_rel)
+                if not diff_path.exists():
+                    raise RuntimeError(
+                        f"Diffusion model file not found: {diff_path.name}. "
+                        "Please download it from the Models tab."
+                    )
                 cmd.extend(["--diffusion-model", str(diff_path)])
 
             # Text encoders (GGUF / safetensors)
@@ -235,14 +240,36 @@ class SDCppWorker:
                 custom_te = Path(request.custom_text_encoder_path)
                 if custom_te.exists():
                     cmd.extend(["--llm", str(custom_te)])
+                else:
+                    raise RuntimeError(f"Custom text encoder file not found: {custom_te}")
             elif getattr(request, "text_encoder_id", None) and getattr(model, "text_encoders", None):
                 te_spec = model.get_text_encoder(request.text_encoder_id)
                 if te_spec and te_spec.get("file"):
-                    cmd.extend(["--llm", str(resolve_model_file(te_spec["file"]))])
+                    te_path = resolve_model_file(te_spec["file"])
+                    if not te_path.exists():
+                        raise RuntimeError(
+                            f"Selected text encoder not found: {te_spec['file']}. "
+                            "Please download it from the Models tab."
+                        )
+                    cmd.extend(["--llm", str(te_path)])
                 elif llm_rel:
                     cmd.extend(["--llm", str(resolve_model_file(llm_rel))])
             elif llm_rel:
-                cmd.extend(["--llm", str(resolve_model_file(llm_rel))])
+                llm_path = resolve_model_file(llm_rel)
+                if not llm_path.exists() and getattr(model, "text_encoders", None):
+                    # Smart fallback: check if another registered text encoder is installed
+                    for te in model.text_encoders:
+                        cand = resolve_model_file(te.get("file", ""))
+                        if cand.exists():
+                            logger.info(f"[sd_cpp] Default LLM {llm_rel} not found; falling back to installed {te.get('file')}")
+                            llm_path = cand
+                            break
+                if not llm_path.exists():
+                    raise RuntimeError(
+                        f"Text encoder file not found: {llm_rel}. "
+                        "Please download it from the Models tab."
+                    )
+                cmd.extend(["--llm", str(llm_path)])
 
             # VAE
             vae_rel = model.engine_args.get("vae")
@@ -254,6 +281,11 @@ class SDCppWorker:
                         settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
                     ] if p.exists()
                 ), resolve_model_file(vae_rel))
+                if not candidate_vae.exists():
+                    raise RuntimeError(
+                        f"VAE file not found: {vae_rel}. "
+                        "Please download it from the Models tab."
+                    )
                 cmd.extend(["--vae", str(candidate_vae)])
 
             # VAE latent format override

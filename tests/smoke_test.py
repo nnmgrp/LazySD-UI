@@ -222,9 +222,11 @@ def test_registry():
         # Qwen-Image-2.1 GGUF (SD.CPP)
         qwen_gguf = registry.get("qwen_image_2_1_gguf")
         assert qwen_gguf.engine == "sd_cpp"
-        assert qwen_gguf.engine_args.get("llm") == "Qwen3-VL-8B-Instruct-Q4_K_M.gguf"
+        assert qwen_gguf.engine_args.get("llm") == "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf"
         assert qwen_gguf.engine_args.get("vae") == "qwen_image_2.1_vae_bf16.safetensors"
-        assert len(qwen_gguf.text_encoders) == 2
+        assert len(qwen_gguf.text_encoders) == 3
+        ud = qwen_gguf.get_text_encoder("ud_q4_k_xl")
+        assert ud is not None and ud["recommended"] is True
         print(f"  ✓ Qwen-Image-2.1 GGUF (SD.CPP) loaded: diffusion={qwen_gguf.engine_args.get('diffusion_model')}, llm={qwen_gguf.engine_args.get('llm')}")
         return True
     except Exception as e:

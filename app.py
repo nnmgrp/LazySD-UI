@@ -912,6 +912,12 @@ def create_app() -> FastAPI:
                         message=f"[{i+1}/{total_tasks}] {kind} downloaded ✓",
                     ))
 
+                if model.id == "qwen_image_2_1":
+                    try:
+                        get_worker()._ensure_qwen_image_2_1_configs(local_repo_dir)
+                    except Exception as e:
+                        print(f"[download] Warning ensuring Qwen 2.1 configs: {e}")
+
                 STATE.update_job(job_id, ProgressEvent(
                     status=JobStatus.COMPLETE,
                     progress=1.0,

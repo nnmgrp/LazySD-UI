@@ -307,6 +307,27 @@ class Worker:
             }
             s_cfg_path.write_text(json.dumps(s_cfg, indent=2), encoding="utf-8")
 
+        # Ensure tokenizer directory and files exist (vocab.json, merges.txt, tokenizer.json)
+        tok_dir = model_dir / "tokenizer"
+        tok_file = tok_dir / "tokenizer.json"
+        root_tok_file = model_dir / "tokenizer.json"
+        if not tok_file.exists() and not root_tok_file.exists():
+            try:
+                tok_dir.mkdir(parents=True, exist_ok=True)
+                from .sources import HuggingFaceSource
+                hf = HuggingFaceSource(token=self._get_token("huggingface"))
+                for fname in ["tokenizer.json", "vocab.json", "merges.txt"]:
+                    try:
+                        hf.download_file(
+                            repo_id="Qwen/Qwen3-VL-8B-Instruct",
+                            file_path=fname,
+                            local_dir=tok_dir,
+                        )
+                    except Exception as e:
+                        print(f"[worker] Warning downloading {fname}: {e}")
+            except Exception as e:
+                print(f"[worker] Could not auto-download tokenizer files: {e}")
+
     def _resolve_local_paths(
         self,
         model: ModelSpec,
@@ -440,6 +461,17 @@ class Worker:
         if not (local_base / "model_index.json").exists():
             need_base_download = True
         required_paths["model_dir"] = local_base
+
+        # Resolve tokenizer directory if available
+        for tok_candidate in [
+            local_base / "tokenizer",
+            local_base,
+            local_repo_dir / "tokenizer",
+            local_repo_dir,
+        ]:
+            if (tok_candidate / "tokenizer.json").exists() or (tok_candidate / "vocab.json").exists():
+                required_paths["tokenizer"] = tok_candidate
+                break
 
         # Transformer file (top-level transformer/ dir, NOT inside base-model)
         transformer_path = required_files["transformer_path"]
@@ -651,6 +683,8 @@ class Worker:
         # Validate that model_dir and transformer are within cache (path traversal protection)
         local_paths["model_dir"] = validate_path(str(local_paths["model_dir"]), base_dir=settings.models_dir, must_exist=True)
         local_paths["transformer"] = validate_path(str(local_paths["transformer"]), base_dir=settings.models_dir, must_exist=True)
+        if local_paths.get("tokenizer"):
+            local_paths["tokenizer"] = validate_path(str(local_paths["tokenizer"]), base_dir=settings.models_dir, must_exist=True)
 
         # ----- Phase 4: Build subprocess args -----
         cli_path = engine_cli_path(version=engine_ver)
@@ -687,6 +721,9 @@ class Worker:
 
         if local_paths.get("text_precision"):
             args.extend(["--text-precision", str(local_paths["text_precision"])])
+
+        if local_paths.get("tokenizer"):
+            args.extend(["--tokenizer", str(local_paths["tokenizer"])])
 
         if request.init_image_path:
             resolved_init = validate_path(str(request.init_image_path), base_dir=settings.output_dir, must_exist=True)

@@ -19,20 +19,33 @@
   },
   "engine_args": {
     "diffusion_model": "qwen-image-2.1-Q4_K_M.gguf",
-    "llm": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+    "llm": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
     "vae": "qwen_image_2.1_vae_bf16.safetensors",
     "vae_repo": "Comfy-Org/Qwen-Image-2.1",
     "vae_remote": "vae/qwen_image_2.1_vae_bf16.safetensors"
   },
   "text_encoders": [
     {
+      "id": "ud_q4_k_xl",
+      "name": "Qwen3-VL-8B UD-Q4_K_XL (~4.8 GB, Recommended)",
+      "file": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
+      "precision": "ud_q4_k_xl",
+      "size_gb": 4.79,
+      "size_bytes": 5148699488,
+      "recommended": true,
+      "source": {
+        "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
+        "file_path": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf"
+      }
+    },
+    {
       "id": "q4_k_m",
-      "name": "Qwen3-VL-8B Q4_K_M (~5.0 GB)",
+      "name": "Qwen3-VL-8B Q4_K_M (~4.7 GB)",
       "file": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
       "precision": "q4_k_m",
       "size_gb": 4.68,
       "size_bytes": 5027785568,
-      "recommended": true,
+      "recommended": false,
       "source": {
         "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
         "file_path": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf"
@@ -58,7 +71,7 @@
       "path": "qwen-image-2.1-Q4_K_M.gguf",
       "tier": "universal",
       "backend": "sd_cpp",
-      "steps": 20,
+      "steps": 28,
       "size_gb": 3.91,
       "size_bytes": 4199565024,
       "recommended": true,
@@ -69,7 +82,7 @@
       "path": "qwen-image-2.1-Q4_K_S.gguf",
       "tier": "universal",
       "backend": "sd_cpp",
-      "steps": 20,
+      "steps": 28,
       "size_gb": 3.64,
       "size_bytes": 3906356960,
       "recommended": false,
@@ -85,7 +98,7 @@
   "scheduler_presets": {
     "default": {
       "sampler": "euler",
-      "steps": 20,
+      "steps": 28,
       "cfg": 6.0
     }
   }
