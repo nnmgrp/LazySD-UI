@@ -618,6 +618,15 @@ const App = {
           }
         }
         this.updateModelTrigger();
+        if (this.state.modelState) {
+          const activeTe = this.state.modelState.text_encoders?.find(te => te.id === this.state.selectedTextEncoder);
+          const activeVar = currentVariant || (this.state.modelState.transformers || [])[0];
+          const activeVarMissing = activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted");
+          const hasMissing = activeVarMissing
+                          || !this.state.modelState.base_model_installed
+                          || (activeTe && !activeTe.installed && this.state.selectedTextEncoder !== "custom");
+          this.updateDownloadButton(hasMissing, this.state.modelState);
+        }
       });
     }
 
@@ -841,12 +850,6 @@ const App = {
       }
     }
 
-    // Check if any files are missing — if so, show download button
-    const hasMissing = variants.some(v => v.state === "missing" || v.state === "downloadable")
-                    || !modelState.base_model_installed
-                    || teMissing;
-    this.updateDownloadButton(hasMissing, modelState);
-
     // Group: recommended first
     const recommended = variants.filter(v => v.recommended);
     const others = variants.filter(v => !v.recommended);
@@ -885,6 +888,13 @@ const App = {
         stepsInput.value = activeVar.steps;
       }
     }
+
+    // Check if selected variant / base model / text encoder are missing
+    const activeVarMissing = activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted");
+    const hasMissing = activeVarMissing
+                    || !modelState.base_model_installed
+                    || teMissing;
+    this.updateDownloadButton(hasMissing, modelState);
     this.updateModelTrigger();
   },
 
@@ -903,8 +913,9 @@ const App = {
     }
     if (this.state.modelState) {
       const activeTe = this.state.modelState.text_encoders?.find(te => te.id === teSelect.value);
-      const variants = this.state.modelState.transformers || [];
-      const hasMissing = variants.some(v => v.state === "missing" || v.state === "downloadable")
+      const activeVar = this.state.modelState.transformers?.find(v => v.id === this.state.selectedVariant) || (this.state.modelState.transformers || [])[0];
+      const activeVarMissing = activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted");
+      const hasMissing = activeVarMissing
                       || !this.state.modelState.base_model_installed
                       || (activeTe && !activeTe.installed && teSelect.value !== "custom");
       this.updateDownloadButton(hasMissing, this.state.modelState);
@@ -939,12 +950,11 @@ const App = {
       container.appendChild(dlBtn);
     }
     dlBtn.style.display = "flex";
-    const totalSize = (modelState.transformers || [])
-      .filter(v => v.recommended)
-      .reduce((sum, v) => sum + (v.size_gb || 0), 0);
+    const activeVar = (modelState.transformers || []).find(v => v.id === this.state.selectedVariant) || (modelState.transformers || [])[0];
+    const varSize = (activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted")) ? (activeVar.size_gb || 0) : 0;
     const teMissing = modelState?.text_encoders?.find(te => te.id === this.state.selectedTextEncoder && !te.installed);
     const teSize = teMissing ? (teMissing.size_gb || 0) : 0;
-    dlBtn.textContent = `⬇ Download (~${(totalSize + teSize).toFixed(1)} GB)`;
+    dlBtn.textContent = `⬇ Download (~${(varSize + teSize).toFixed(1)} GB)`;
   },
 
   async downloadModel() {

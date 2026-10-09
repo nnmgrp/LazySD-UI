@@ -91,7 +91,6 @@ class HuggingFaceSource(ModelSource):
             filename=file_path,
             revision=revision,
             local_dir=str(local_dir),
-            local_dir_use_symlinks=False,
             token=self.token,
         )
         return Path(local_path)
@@ -116,7 +115,6 @@ class HuggingFaceSource(ModelSource):
             ignore_patterns=ignore_patterns,
             revision=revision,
             local_dir=str(local_dir),
-            local_dir_use_symlinks=False,
             token=self.token,
         )
 

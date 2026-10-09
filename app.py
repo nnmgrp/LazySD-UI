@@ -617,7 +617,7 @@ def create_app() -> FastAPI:
             entry = cache.check_file(
                 repo_id=repo_id,
                 file_path=t.path,
-                expected_size=t.size_bytes or (int(t.size_gb * 1024**3) if t.size_gb else 0),
+                expected_size=t.size_bytes or 0,
                 expected_sha256=t.sha256,
                 compute_checksum=False,  # Fast check on first load
             )

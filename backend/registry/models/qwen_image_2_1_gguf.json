@@ -22,9 +22,7 @@
     "llm": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
     "vae": "qwen_image_2.1_vae_bf16.safetensors",
     "vae_repo": "Comfy-Org/Qwen-Image-2.1",
-    "vae_remote": "vae/qwen_image_2.1_vae_bf16.safetensors",
-    "vae_format": "wan",
-    "flow_shift": 3.0
+    "vae_remote": "vae/qwen_image_2.1_vae_bf16.safetensors"
   },
   "text_encoders": [
     {
@@ -32,7 +30,8 @@
       "name": "Qwen3-VL-8B Q4_K_M (~5.0 GB)",
       "file": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
       "precision": "q4_k_m",
-      "size_gb": 5.03,
+      "size_gb": 4.68,
+      "size_bytes": 5027785568,
       "recommended": true,
       "source": {
         "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
@@ -41,10 +40,11 @@
     },
     {
       "id": "q4_k_s",
-      "name": "Qwen3-VL-8B Q4_K_S (~4.7 GB)",
+      "name": "Qwen3-VL-8B Q4_K_S (~4.5 GB)",
       "file": "Qwen3-VL-8B-Instruct-Q4_K_S.gguf",
       "precision": "q4_k_s",
-      "size_gb": 4.68,
+      "size_gb": 4.47,
+      "size_bytes": 4802014048,
       "recommended": false,
       "source": {
         "repo_id": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
@@ -59,7 +59,8 @@
       "tier": "universal",
       "backend": "sd_cpp",
       "steps": 20,
-      "size_gb": 4.23,
+      "size_gb": 3.91,
+      "size_bytes": 4199565024,
       "recommended": true,
       "note": "Unsloth Q4_K_M medium quantization (recommended)"
     },
@@ -69,7 +70,8 @@
       "tier": "universal",
       "backend": "sd_cpp",
       "steps": 20,
-      "size_gb": 3.96,
+      "size_gb": 3.64,
+      "size_bytes": 3906356960,
       "recommended": false,
       "note": "Unsloth Q4_K_S compact quantization"
     }
@@ -84,7 +86,7 @@
     "default": {
       "sampler": "euler",
       "steps": 20,
-      "cfg": 3.5
+      "cfg": 6.0
     }
   }
 }

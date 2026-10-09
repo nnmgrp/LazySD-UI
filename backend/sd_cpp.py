@@ -288,18 +288,28 @@ class SDCppWorker:
             "-o", str(output_path),
         ])
 
+        # Flash Attention for diffusion model
+        cmd.append("--diffusion-fa")
+
         # Guidance / CFG scale
         guidance = getattr(request, "guidance_scale", None)
         if model.engine_args.get("guidance_type") == "distilled" or model.family in ("flux", "sd3"):
             cfg_val = guidance if guidance is not None else 3.5
             cmd.extend(["--guidance", str(cfg_val)])
         else:
-            cfg_val = guidance if guidance is not None else 7.0
+            default_cfg = 6.0
+            if getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
+                default_cfg = model.scheduler_presets["default"].get("cfg", 6.0)
+            cfg_val = guidance if guidance is not None else default_cfg
             cmd.extend(["--cfg-scale", str(cfg_val)])
 
         # Sampling method
-        if getattr(request, "sampler", None):
-            cmd.extend(["--sampling-method", request.sampler])
+        sampler = getattr(request, "sampler", None)
+        if not sampler and getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
+            sampler = model.scheduler_presets["default"].get("sampler")
+        if not sampler:
+            sampler = "euler"
+        cmd.extend(["--sampling-method", str(sampler)])
 
         # Logging
         logger.info(f"[sd_cpp] Launching SD.CPP: {width}x{height}, steps={request.steps}, seed={seed}")
