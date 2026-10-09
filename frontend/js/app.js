@@ -47,6 +47,7 @@ const App = {
     modelPickerSearch: "",
     modelPickerFilter: "all",
     isModelPickerOpen: false,
+    selectedVae: "texture_fix",
   },
 
   // ---------- Init ----------
@@ -931,6 +932,21 @@ const App = {
       }
     }
 
+    // VAE select
+    const vaeGroup = document.getElementById("vae-group");
+    const vaeSelect = document.getElementById("vae-select");
+    const customVaeInput = document.getElementById("custom-vae-input");
+    if (vaeGroup && vaeSelect) {
+      if (activeModelObj && (activeModelObj.family === "qwen" || activeModelObj.id.includes("qwen"))) {
+        vaeGroup.style.display = "flex";
+        const curVae = this.state.selectedVae || this.state.settings?.qwen_vae_type || "texture_fix";
+        vaeSelect.value = curVae;
+      } else {
+        vaeGroup.style.display = "none";
+        if (customVaeInput) customVaeInput.style.display = "none";
+      }
+    }
+
     // Group: recommended first
     const recommended = variants.filter(v => v.recommended);
     const others = variants.filter(v => !v.recommended);
@@ -1010,6 +1026,29 @@ const App = {
     const isHidden = customTeInput.style.display === "none";
     customTeInput.style.display = isHidden ? "block" : "none";
     if (isHidden) customTeInput.focus();
+  },
+
+  toggleCustomVaeInput(e) {
+    if (e) e.preventDefault();
+    const customVaeInput = document.getElementById("custom-vae-input");
+    const vaeSelect = document.getElementById("vae-select");
+    const link = document.getElementById("toggle-custom-vae-link");
+    if (!customVaeInput || !vaeSelect) return;
+    const isHidden = customVaeInput.style.display === "none";
+    customVaeInput.style.display = isHidden ? "block" : "none";
+    vaeSelect.style.display = isHidden ? "none" : "block";
+    if (link) link.textContent = isHidden ? (t("controls.standard_select") || "List") : (t("controls.custom_path") || "Custom path");
+    if (isHidden) customVaeInput.focus();
+  },
+
+  async onVaeChange() {
+    const val = document.getElementById("vae-select")?.value || "texture_fix";
+    this.state.selectedVae = val;
+    try {
+      await this.apiPatch("/api/settings", { qwen_vae_type: val });
+    } catch (e) {
+      console.warn("Failed to persist VAE setting:", e);
+    }
   },
 
   updateDownloadButton(showButton, modelState) {
@@ -1173,6 +1212,17 @@ const App = {
         }
       } else {
         params.text_encoder_id = teSelect.value;
+      }
+    }
+
+    const customVaeInput = document.getElementById("custom-vae-input");
+    const customVaeVal = customVaeInput && customVaeInput.style.display !== "none" ? customVaeInput.value.trim() : "";
+    if (customVaeVal) {
+      params.custom_vae_path = customVaeVal;
+    } else {
+      const vaeSelect = document.getElementById("vae-select");
+      if (vaeSelect && vaeSelect.value) {
+        params.vae = vaeSelect.value;
       }
     }
 

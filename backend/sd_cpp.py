@@ -279,13 +279,17 @@ class SDCppWorker:
                 cmd.extend(["--llm", str(llm_path)])
 
             # VAE
-            vae_rel = model.engine_args.get("vae")
-            if model.family == "qwen" or model.id.startswith("qwen"):
-                vae_type = getattr(settings, "qwen_vae_type", "texture_fix")
-                if vae_type == "texture_fix":
-                    vae_rel = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
-                else:
-                    vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
+            custom_vae_str = getattr(request, "custom_vae_path", None)
+            if custom_vae_str and Path(custom_vae_str).exists():
+                cmd.extend(["--vae", str(custom_vae_str)])
+            else:
+                vae_rel = model.engine_args.get("vae")
+                if model.family == "qwen" or model.id.startswith("qwen"):
+                    vae_type = getattr(request, "vae", None) or getattr(settings, "qwen_vae_type", "texture_fix")
+                    if vae_type == "official":
+                        vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
+                    else:
+                        vae_rel = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
 
             if vae_rel:
                 candidate_vae = next((

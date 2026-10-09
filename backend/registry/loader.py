@@ -38,6 +38,7 @@ class TransformerVariant:
     recommended_for_gpu: list[str] = field(default_factory=list)
     klein_tier: Optional[str] = None  # Only for Klein family: "30x-below" / "40x" / "50x"
     note: Optional[str] = None  # Optional descriptive note
+    repo_id: Optional[str] = None  # Optional custom remote repo_id
 
     @property
     def size_label(self) -> str:

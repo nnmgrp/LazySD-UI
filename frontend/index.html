@@ -182,6 +182,17 @@
               <div id="text-encoder-hint" class="control-hint" style="display: none; font-size: 11px; color: var(--text-dim); margin-top: 3px;"></div>
               <input type="text" id="custom-text-encoder-input" placeholder="e.g. D:/ComfyUI/models/text_encoders/qwen3vl_8b_bf16.safetensors" data-i18n-placeholder="controls.custom_te_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
             </div>
+            <div class="control-group" id="vae-group" style="display: none;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <label data-i18n="controls.vae">VAE</label>
+                <a href="javascript:void(0)" id="toggle-custom-vae-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomVaeInput(event)" data-i18n="controls.custom_path">Custom path</a>
+              </div>
+              <select id="vae-select" onchange="App.onVaeChange()">
+                <option value="texture_fix">Texture-Fix VAE (Recommended)</option>
+                <option value="official">Official Wan / Qwen VAE</option>
+              </select>
+              <input type="text" id="custom-vae-input" placeholder="e.g. D:/ComfyUI/models/vae/texture_fix_vae.safetensors" data-i18n-placeholder="controls.custom_vae_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
+            </div>
             <div class="control-group">
               <label data-i18n="controls.steps">Steps</label>
               <input type="number" id="steps-input" value="4" min="1" max="50">

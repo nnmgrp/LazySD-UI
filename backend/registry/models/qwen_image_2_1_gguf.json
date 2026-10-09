@@ -52,6 +52,18 @@
       "note": "Unsloth Q4_K_M medium quantization (recommended)"
     },
     {
+      "id": "rebelai_q4",
+      "path": "Qwen-Image-2.1-Q4.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 28,
+      "size_gb": 5.55,
+      "size_bytes": 5959104000,
+      "recommended": false,
+      "repo_id": "realrebelai/Qwen-Image-2.1_GGUFs",
+      "note": "RebelAI Q4 GGUF (higher precision, ~5.5 GB)"
+    },
+    {
       "id": "q4_k_s",
       "path": "qwen-image-2.1-Q4_K_S.gguf",
       "tier": "universal",

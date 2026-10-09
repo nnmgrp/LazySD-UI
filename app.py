@@ -831,7 +831,8 @@ def create_app() -> FastAPI:
                 # Transformer
                 local_transformer = local_repo_dir / selected.path
                 if not local_transformer.exists():
-                    tasks.append(("transformer", selected.path, selected.path))
+                    t_repo = getattr(selected, "repo_id", None) or repo_id
+                    tasks.append(("transformer", selected.path, selected.path, t_repo))
                 else:
                     STATE.update_job(job_id, ProgressEvent(
                         status=JobStatus.DOWNLOADING, progress=0.5,
@@ -933,8 +934,10 @@ def create_app() -> FastAPI:
                             shutil.move(str(dl_file), str(base_file))
                     else:
                         # Single file download
-                        source.download_file(
-                            repo_id=repo_id,
+                        target_repo = item[3] if len(item) > 3 else repo_id
+                        target_source = get_source("huggingface", token=_get_token_for_source("huggingface")) if len(item) > 3 else source
+                        target_source.download_file(
+                            repo_id=target_repo,
                             file_path=file_path,
                             local_dir=local_repo_dir,
                             revision=revision,
@@ -1116,6 +1119,8 @@ def create_app() -> FastAPI:
             init_image_strength=init_image_strength,
             text_encoder_id=body.get("text_encoder_id"),
             custom_text_encoder_path=body.get("custom_text_encoder_path"),
+            vae=body.get("vae"),
+            custom_vae_path=body.get("custom_vae_path"),
         )
 
         # Create job

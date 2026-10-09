@@ -88,6 +88,8 @@ class GenerateRequest:
     output_filename: Optional[str] = None
     text_encoder_id: Optional[str] = None
     custom_text_encoder_path: Optional[str] = None
+    vae: Optional[str] = None
+    custom_vae_path: Optional[str] = None
 
 
 # ---------- Result ----------
@@ -375,49 +377,53 @@ class Worker:
                 self._ensure_qwen_image_2_1_configs(local_base)
 
                 settings = get_settings()
-                vae_type = getattr(settings, "qwen_vae_type", "texture_fix")
-                if vae_type == "texture_fix":
-                    vae_filename = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
-                    vae_repo = "madebyollin/texture-fix-vae-for-qwen-image-2.1"
-                    vae_remote = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+                custom_vae_str = getattr(request, "custom_vae_path", None) if request else None
+                if custom_vae_str and Path(custom_vae_str).exists():
+                    vae_file = Path(custom_vae_str)
                 else:
-                    vae_filename = "qwen_image_2.1_vae_bf16.safetensors"
-                    vae_repo = "Comfy-Org/Qwen-Image-2.1"
-                    vae_remote = "vae/qwen_image_2.1_vae_bf16.safetensors"
+                    vae_type = (getattr(request, "vae", None) if request else None) or getattr(settings, "qwen_vae_type", "texture_fix")
+                    if vae_type == "official":
+                        vae_filename = "qwen_image_2.1_vae_bf16.safetensors"
+                        vae_repo = "Comfy-Org/Qwen-Image-2.1"
+                        vae_remote = "vae/qwen_image_2.1_vae_bf16.safetensors"
+                    else:
+                        vae_filename = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+                        vae_repo = "madebyollin/texture-fix-vae-for-qwen-image-2.1"
+                        vae_remote = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
 
-                # Check if VAE already exists in local_base, vae/ subdir, or other model caches
-                vae_candidates = [
-                    local_base / vae_filename,
-                    local_base / "vae" / vae_filename,
-                    settings.models_dir / "Qwen-Image-2.1-4bit" / vae_filename,
-                    settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_filename,
-                    settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_filename,
-                    settings.models_dir / "vae" / vae_filename,
-                ]
-                vae_file = next((p for p in vae_candidates if p.exists()), local_base / vae_filename)
+                    # Check if VAE already exists in local_base, vae/ subdir, or other model caches
+                    vae_candidates = [
+                        local_base / vae_filename,
+                        local_base / "vae" / vae_filename,
+                        settings.models_dir / "Qwen-Image-2.1-4bit" / vae_filename,
+                        settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_filename,
+                        settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_filename,
+                        settings.models_dir / "vae" / vae_filename,
+                    ]
+                    vae_file = next((p for p in vae_candidates if p.exists()), local_base / vae_filename)
 
-                # Auto-download VAE (644 MB) if missing
-                if not vae_file.exists():
-                    emit(ProgressEvent(
-                        status=JobStatus.DOWNLOADING,
-                        progress=0.1,
-                        message=f"Downloading Qwen-Image-2.1 VAE ({vae_filename}, 644 MB)...",
-                    ))
-                    from .sources import HuggingFaceSource
-                    hf = HuggingFaceSource(token=self._get_token("huggingface"))
-                    hf.download_file(
-                        repo_id=vae_repo,
-                        file_path=vae_remote,
-                        local_dir=local_base,
-                    )
-                    downloaded_vae = local_base / vae_remote
-                    if downloaded_vae.exists() and not (local_base / vae_filename).exists():
-                        downloaded_vae.rename(local_base / vae_filename)
-                        vae_file = local_base / vae_filename
-                    elif (local_base / vae_filename).exists():
-                        vae_file = local_base / vae_filename
-                    elif downloaded_vae.exists():
-                        vae_file = downloaded_vae
+                    # Auto-download VAE (644 MB) if missing
+                    if not vae_file.exists():
+                        emit(ProgressEvent(
+                            status=JobStatus.DOWNLOADING,
+                            progress=0.1,
+                            message=f"Downloading Qwen-Image-2.1 VAE ({vae_filename}, 644 MB)...",
+                        ))
+                        from .sources import HuggingFaceSource
+                        hf = HuggingFaceSource(token=self._get_token("huggingface"))
+                        hf.download_file(
+                            repo_id=vae_repo,
+                            file_path=vae_remote,
+                            local_dir=local_base,
+                        )
+                        downloaded_vae = local_base / vae_remote
+                        if downloaded_vae.exists() and not (local_base / vae_filename).exists():
+                            downloaded_vae.rename(local_base / vae_filename)
+                            vae_file = local_base / vae_filename
+                        elif (local_base / vae_filename).exists():
+                            vae_file = local_base / vae_filename
+                        elif downloaded_vae.exists():
+                            vae_file = downloaded_vae
 
                 if vae_file.exists():
                     required_paths["vae"] = vae_file
