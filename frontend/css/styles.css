@@ -568,6 +568,12 @@ textarea {
   min-width: 150px;
 }
 
+#cfg-group,
+#noise-group {
+  flex: 1.5 1 150px;
+  min-width: 140px;
+}
+
 .control-group label {
   font-size: 11px;
   color: var(--text-dim);
@@ -600,14 +606,56 @@ textarea {
 }
 
 .slider-input-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
   flex: 1;
-  min-width: 50px;
+  min-width: 65px;
   height: 6px;
   padding: 0;
   accent-color: var(--accent);
   cursor: pointer;
   background: var(--bg-card);
+  border-radius: 3px;
   border: none;
+  outline: none;
+}
+
+.slider-input-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--bg-card);
+  border-radius: 3px;
+}
+
+.slider-input-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  margin-top: -4px;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.slider-input-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.slider-input-row input[type="range"]::-moz-range-track {
+  height: 6px;
+  background: var(--bg-card);
+  border-radius: 3px;
+}
+
+.slider-input-row input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
 }
 
 .slider-input-row input[type="number"] {

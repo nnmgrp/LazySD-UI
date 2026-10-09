@@ -177,7 +177,7 @@ const App = {
     const dotEl = document.getElementById("gpu-status");
     if (!nameEl || !dotEl) return;
 
-    if (this.state.gpuInfo) {
+    if (this.state.gpuInfo && this.state.gpuInfo.name) {
       const gpu = this.state.gpuInfo;
       nameEl.textContent = `${gpu.name} · ${gpu.tier} · ${Math.round(gpu.vram_mb / 1024)} GB`;
       dotEl.classList.remove("offline");
@@ -200,12 +200,17 @@ const App = {
 
     // Filter models compatible with current GPU
     const gpuSm = this.state.gpuInfo?.sm || 0;
-    const compatible = this.state.models.filter(m =>
+    let compatible = this.state.models.filter(m =>
       m.requirements.gpu_min_sm <= gpuSm
     );
 
+    // Graceful fallback: if GPU SM is not detected or no models match, show all models
     if (!compatible.length) {
-      select.innerHTML = `<option value="">No compatible models</option>`;
+      compatible = this.state.models;
+    }
+
+    if (!compatible.length) {
+      select.innerHTML = `<option value="">No models available</option>`;
       return;
     }
 
@@ -468,21 +473,6 @@ const App = {
     this.toast("info", `${t("models.active_model")}: ${modelId}`);
   },
 
-    const select = document.getElementById("model-select");
-    if (select) {
-      select.value = modelId;
-    }
-    
-    if (this.state.currentTab !== "generate") {
-      this.switchTab("generate");
-    }
-
-    await this.onModelChange();
-    this.updateModelTrigger();
-    this.closeModelPickerModal();
-    this.toast("info", `${t("models.active_model")}: ${modelId}`);
-  },
-
   renderModelsTab() {
     const listEl = document.getElementById("models-list");
     if (!listEl) return;
@@ -609,6 +599,12 @@ const App = {
     const modelSelect = document.getElementById("model-select");
     if (modelSelect) {
       modelSelect.addEventListener("change", () => this.onModelChange());
+    }
+
+    // Model picker modal trigger
+    const modelPickerTrigger = document.getElementById("model-picker-trigger");
+    if (modelPickerTrigger) {
+      modelPickerTrigger.addEventListener("click", () => this.openModelPickerModal());
     }
 
     // Variant select

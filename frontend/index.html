@@ -192,8 +192,8 @@
                 <span class="control-rec-badge" id="cfg-rec-badge" title="Recommended for this model">(Rec: 3.0)</span>
               </div>
               <div class="slider-input-row">
-                <input type="range" id="cfg-slider" min="1.0" max="15.0" step="0.1" value="3.0">
-                <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1">
+                <input type="range" id="cfg-slider" min="1.0" max="20.0" step="0.1" value="3.0" oninput="document.getElementById('cfg-input').value = this.value">
+                <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1" oninput="document.getElementById('cfg-slider').value = this.value">
               </div>
             </div>
             <div class="control-group" id="noise-group">
@@ -202,8 +202,8 @@
                 <span class="control-rec-badge" id="noise-rec-badge" title="Recommended for this model">(Rec: 0.0)</span>
               </div>
               <div class="slider-input-row">
-                <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0">
-                <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05">
+                <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0" oninput="document.getElementById('noise-input').value = this.value">
+                <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05" oninput="document.getElementById('noise-slider').value = this.value">
               </div>
             </div>
             <div class="control-group">
