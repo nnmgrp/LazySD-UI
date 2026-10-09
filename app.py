@@ -896,7 +896,7 @@ def create_app() -> FastAPI:
                         if dl_file.exists() and not base_file.exists():
                             import shutil
                             base_file.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(dl_file, base_file)
+                            shutil.move(str(dl_file), str(base_file))
                     else:
                         # Single file download
                         source.download_file(
@@ -1040,6 +1040,22 @@ def create_app() -> FastAPI:
         if not selected:
             raise HTTPException(400, f"No compatible transformer found for backend={backend}")
 
+        # Determine steps and CFG
+        effective_steps = int(body["steps"]) if "steps" in body and body["steps"] not in (None, "") else selected.steps
+        cfg_val = 1.0
+        if "cfg" in body and body["cfg"] not in (None, ""):
+            try:
+                cfg_val = float(body["cfg"])
+            except (ValueError, TypeError):
+                pass
+        elif getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
+            cfg_val = float(model.scheduler_presets["default"].get("cfg", 1.0))
+        elif getattr(model, "scheduler_presets", None):
+            for p in model.scheduler_presets.values():
+                if "cfg" in p:
+                    cfg_val = float(p["cfg"])
+                    break
+
         # Build GenerateRequest
         request = GenerateRequest(
             model_id=model_id,
@@ -1047,7 +1063,8 @@ def create_app() -> FastAPI:
             seed=seed,
             width=width,
             height=height,
-            steps=selected.steps,
+            steps=effective_steps,
+            cfg=cfg_val,
             backend=selected.backend,
             use_prequant=selected.prequant,
             init_image_path=Path(init_image_path) if init_image_path else None,

@@ -45,7 +45,7 @@
       "path": "qwen_image_21_base_quantfunc_int4_r128.safetensors",
       "tier": "universal",
       "backend": "lighting",
-      "steps": 4,
+      "steps": 28,
       "prequant": false,
       "size_gb": 4.34,
       "size_bytes": 4664877408,
@@ -59,7 +59,7 @@
       "path": "qwen_image_21_base_quantfunc_int4_r32.safetensors",
       "tier": "universal",
       "backend": "lighting",
-      "steps": 4,
+      "steps": 28,
       "prequant": false,
       "size_gb": 4.03,
       "size_bytes": 4325133120,
@@ -73,7 +73,7 @@
       "path": "qwen_image_21_base_quantfunc_int4_r128.safetensors",
       "tier": "universal",
       "backend": "svdq",
-      "steps": 4,
+      "steps": 28,
       "prequant": false,
       "size_gb": 4.34,
       "size_bytes": 4664877408,
@@ -87,7 +87,7 @@
       "path": "qwen_image_21_base_quantfunc_int4_r32.safetensors",
       "tier": "universal",
       "backend": "svdq",
-      "steps": 4,
+      "steps": 28,
       "prequant": false,
       "size_gb": 4.03,
       "size_bytes": 4325133120,
@@ -107,11 +107,10 @@
     "default_vram_mode": "auto"
   },
   "scheduler_presets": {
-    "lighting-4steps": {
-      "steps": 4,
-      "cfg": 1.0,
-      "sampler": "euler",
-      "scheduler": "simple"
+    "default": {
+      "steps": 28,
+      "cfg": 3.0,
+      "sampler": "euler"
     }
   }
 }

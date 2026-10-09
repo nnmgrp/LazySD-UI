@@ -704,6 +704,19 @@ class Worker:
             "--height", str(height),
         ]
 
+        # Guidance scale / CFG
+        cfg = getattr(request, "cfg", 1.0)
+        if cfg is None or cfg == 1.0:
+            if getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
+                cfg = model.scheduler_presets["default"].get("cfg", cfg)
+            elif getattr(model, "scheduler_presets", None):
+                for p in model.scheduler_presets.values():
+                    if "cfg" in p:
+                        cfg = p["cfg"]
+                        break
+        if cfg is not None and cfg > 0.0:
+            args.extend(["--guidance-scale", str(cfg)])
+
         if settings.auto_optimize:
             args.append("--auto-optimize")
 
