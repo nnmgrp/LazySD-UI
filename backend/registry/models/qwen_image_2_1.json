@@ -1,11 +1,11 @@
 {
   "id": "qwen_image_2_1",
-  "name": "Qwen-Image-2.1 (4-bit INT4)",
+  "name": "Qwen-Image-2.1 (4-bit INT4) [Не реком. / Raw]",
   "family": "qwen",
   "pipeline": "text_to_image",
   "key_protected": false,
   "engine_version": "0.0.17",
-  "description": "Pre-quantized Qwen-Image-2.1 INT4 model by QuantFunc. SVDQuant 4-bit compression (4x reduction) with visual quality close to 16-bit baseline. Features r128 (quality-first) and r32 (compact) INT4 variants for all NVIDIA SM75+ GPUs (RTX 20/30/40/50 series).",
+  "description": "⚠️ Не рекомендуется (сырое квантование с артефактами — используйте версию SDNQ Turbo INT8 или Unsloth GGUF). Pre-quantized Qwen-Image-2.1 INT4 model by QuantFunc.",
   "upstream": {
     "model": "Qwen/Qwen-Image-2.1",
     "license": "Qwen Research License",

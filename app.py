@@ -33,7 +33,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.resolve()
@@ -44,8 +44,6 @@ from backend.cache import CacheManager
 from backend.engine import (
     check_engine_status,
     download_engine,
-    engine_binary_path,
-    engine_cli_path,
     engine_config_json_path,
     ensure_config_json,
     is_engine_installed,
@@ -54,9 +52,10 @@ from backend.engine import (
     verify_engine,
 )
 from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_version
+from backend.sdnq_engine import is_sdnq_installed, get_sdnq_version, get_sdnq_path
 from backend.gpu import detect_gpu, GPUInfo
-from backend.registry import get_registry, reload_registry
-from backend.settings import get_settings, reload_settings
+from backend.registry import get_registry
+from backend.settings import get_settings
 from backend.worker import (
     GenerateRequest,
     JobStatus,
@@ -71,7 +70,7 @@ from backend.worker import (
 # custom index.html + JSON API endpoints. This avoids gradio's heavy
 # dependencies (huggingface_hub version conflicts, etc.).
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -220,6 +219,16 @@ def _get_engines_info() -> dict:
             "path": str(cli_sd),
             "description": "Standalone C++/CUDA runner for GGUF models (Flux.1 Schnell, SDXL, Unsloth Q4).",
         },
+        "sdnq": {
+            "id": "sdnq",
+            "engine": "sdnq",
+            "version": get_sdnq_version(),
+            "name": "SDNQ (Diffusers)",
+            "title": "SDNQ (SD.Next Quantization + Diffusers)",
+            "installed": is_sdnq_installed(),
+            "path": get_sdnq_path(),
+            "description": "PyTorch + Triton INT8/INT4/FP8 quantization with Hadamard rotation & SVD (Qwen-Image-2.1 Turbo INT8).",
+        },
     }
 
 
@@ -260,6 +269,8 @@ def build_index_html() -> str:
     installed_engines = list_installed_engine_versions()
     if is_sd_cpp_installed():
         installed_engines.append("sd_cpp")
+    if is_sdnq_installed():
+        installed_engines.append("sdnq")
 
     config_json = json.dumps({
         "settings": {
@@ -271,6 +282,7 @@ def build_index_html() -> str:
             "engine_version": settings.engine_version,
             "engine_platform": settings.engine_platform,
             "cuda_version": settings.cuda_version,
+            "qwen_vae_type": getattr(settings, "qwen_vae_type", "texture_fix"),
         },
         "gpu": gpu_dict,
         "engine_status": {
@@ -281,6 +293,8 @@ def build_index_html() -> str:
         "engines": _get_engines_info(),
         "sd_cpp_installed": is_sd_cpp_installed(),
         "sd_cpp_version": get_sd_cpp_version(),
+        "sdnq_installed": is_sdnq_installed(),
+        "sdnq_version": get_sdnq_version(),
         "api_auth": _api_auth_status(),
     }, default=str)
 
@@ -363,6 +377,22 @@ def create_app() -> FastAPI:
                     return False
                 return True
 
+            if getattr(model, "engine", "quantfunc") == "sdnq":
+                repo_id = model.sources.primary.repo_id if model.sources else ""
+                repo_dir = cache.repo_dir_for(repo_id) if repo_id else get_settings().models_dir
+                if not (repo_dir / "model_index.json").exists():
+                    return False
+                if not (repo_dir / "vae" / "diffusion_pytorch_model.safetensors").exists():
+                    return False
+                for te in getattr(model, "text_encoders", []):
+                    te_f = te.get("file", "")
+                    if te_f and not (repo_dir / te_f).exists():
+                        return False
+                for t in model.transformers:
+                    if t.recommended and (repo_dir / t.path).exists():
+                        return True
+                return False
+
             base_path = model.get_base_model_path(gpu_tier) if gpu_tier != "unknown" else None
             if not base_path and model.base_models:
                 base_path = list(model.base_models.values())[0]
@@ -387,10 +417,9 @@ def create_app() -> FastAPI:
                     return False
 
             for t in model.transformers:
-                if t.recommended:
-                    f = cache.repo_dir_for(model.sources.primary.repo_id) / t.path
-                    if f.exists():
-                        return True
+                f = cache.repo_dir_for(model.sources.primary.repo_id) / t.path
+                if f.exists():
+                    return True
             return False
         except Exception:
             return False
@@ -409,6 +438,7 @@ def create_app() -> FastAPI:
         for m in registry.list_all():
             repo_id = m.sources.primary.repo_id if m.sources else ""
             repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
+            default_cfg = m.get_default_cfg()
             models_list.append({
                 "id": m.id,
                 "name": m.name,
@@ -420,6 +450,7 @@ def create_app() -> FastAPI:
                 "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
+                "default_cfg": default_cfg,
                 "requirements": {
                     "vram_min_gb": m.requirements.vram_min_gb,
                     "vram_recommended_gb": m.requirements.vram_recommended_gb,
@@ -454,6 +485,8 @@ def create_app() -> FastAPI:
         installed_engines = list_installed_engine_versions()
         if is_sd_cpp_installed():
             installed_engines.append("sd_cpp")
+        if is_sdnq_installed():
+            installed_engines.append("sdnq")
 
         return {
             "settings": {
@@ -483,6 +516,8 @@ def create_app() -> FastAPI:
             "engines": _get_engines_info(),
             "sd_cpp_installed": is_sd_cpp_installed(),
             "sd_cpp_version": get_sd_cpp_version(),
+            "sdnq_installed": is_sdnq_installed(),
+            "sdnq_version": get_sdnq_version(),
             "api_auth": _api_auth_status(),
             "models": models_list,
         }
@@ -497,6 +532,7 @@ def create_app() -> FastAPI:
         for m in registry.list_all():
             repo_id = m.sources.primary.repo_id if m.sources else ""
             repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
+            default_cfg = m.get_default_cfg()
             models_out.append({
                 "id": m.id,
                 "name": m.name,
@@ -508,6 +544,7 @@ def create_app() -> FastAPI:
                 "installed": _model_is_installed(m, cache, gpu_tier),
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
+                "default_cfg": default_cfg,
                 "requirements": {
                     "vram_min_gb": m.requirements.vram_min_gb,
                     "vram_recommended_gb": m.requirements.vram_recommended_gb,
@@ -642,7 +679,12 @@ def create_app() -> FastAPI:
             # Fall back to first available base model
             base_path = list(model.base_models.values())[0]
         base_installed = False
-        if base_path:
+        if getattr(model, "engine", "quantfunc") == "sdnq":
+            base_installed = (
+                (local_repo_dir / "model_index.json").exists()
+                and (local_repo_dir / "vae" / "diffusion_pytorch_model.safetensors").exists()
+            )
+        elif base_path:
             local_base = local_repo_dir / base_path
             base_installed = (local_base / "model_index.json").exists()
         elif getattr(model, "engine", "quantfunc") == "sd_cpp" or not model.base_models:
@@ -654,6 +696,7 @@ def create_app() -> FastAPI:
         for te in getattr(model, "text_encoders", []):
             te_f = te.get("file")
             known_te_files.add(te_f)
+            known_te_files.add(Path(te_f).name)
             installed = (local_repo_dir / te_f).exists() or (local_repo_dir / "text_encoders" / te_f).exists()
             if not installed and (local_repo_dir / "qwen3vl_8b_bf16.safetensors").exists() and te.get("id") == "bf16":
                 installed = True
@@ -667,8 +710,8 @@ def create_app() -> FastAPI:
                 "installed": installed,
             })
 
-        # Dynamically discover any other custom/local encoders in the directory
-        if getattr(model, "text_encoders", None) or model.family == "qwen" or getattr(model, "engine", "") == "sd_cpp":
+        # Dynamically discover any other custom/local encoders in the directory (skip for sdnq pipeline folders)
+        if getattr(model, "engine", "") != "sdnq" and (getattr(model, "text_encoders", None) or model.family == "qwen" or getattr(model, "engine", "") == "sd_cpp"):
             known_files = set(known_te_files)
             known_files.add("model_index.json")
             for tr in getattr(model, "transformers", []):
@@ -809,14 +852,25 @@ def create_app() -> FastAPI:
                     base_path = model.get_base_model_path(gpu_tier)
                     if base_path:
                         local_base = local_repo_dir / base_path
-                        if not (local_base / "model_index.json").exists():
+                        is_sdnq = getattr(model, "engine", "quantfunc") == "sdnq"
+                        base_ready = (local_base / "model_index.json").exists() and (
+                            not is_sdnq or (local_base / "vae" / "diffusion_pytorch_model.safetensors").exists()
+                        )
+                        if not base_ready:
                             sub = base_path.rstrip("/")
                             if sub in ("", "."):
-                                patterns = [
-                                    "model_index.json", "config.json", "*.json",
-                                    "text_encoder/**", "text_encoder*/**",
-                                    "vae/**", "scheduler/**", "tokenizer/**", "processor/**",
-                                ]
+                                if is_sdnq:
+                                    patterns = [
+                                        "model_index.json", "config.json", "*.json",
+                                        "*/*.json", "*/*.jinja", "*/*.txt",
+                                        "vae/**", "scheduler/**", "tokenizer/**", "processor/**",
+                                    ]
+                                else:
+                                    patterns = [
+                                        "model_index.json", "config.json", "*.json",
+                                        "text_encoder/**", "text_encoder*/**",
+                                        "vae/**", "scheduler/**", "tokenizer/**", "processor/**",
+                                    ]
                                 tasks.append(("base", ".", patterns))
                             else:
                                 tasks.append(("base", sub, [f"{sub}/**"]))
@@ -928,7 +982,7 @@ def create_app() -> FastAPI:
                         )
                         dl_file = local_repo_dir / file_path
                         base_file = local_repo_dir / te_fname
-                        if dl_file.exists() and not base_file.exists():
+                        if dl_file.exists() and not base_file.exists() and dl_file.resolve() != base_file.resolve():
                             import shutil
                             base_file.parent.mkdir(parents=True, exist_ok=True)
                             shutil.move(str(dl_file), str(base_file))
@@ -1025,9 +1079,6 @@ def create_app() -> FastAPI:
         if not STATE.gpu_info:
             raise HTTPException(400, "GPU not detected")
 
-        if not is_engine_installed():
-            raise HTTPException(400, "Engine not installed. Go to Settings → Download engine.")
-
         # Parse request
         try:
             model_id = body["model_id"]
@@ -1064,6 +1115,17 @@ def create_app() -> FastAPI:
         except KeyError:
             raise HTTPException(404, f"Model not found: {model_id}")
 
+        model_engine = getattr(model, "engine", "quantfunc")
+        if model_engine == "sd_cpp":
+            if not is_sd_cpp_installed():
+                raise HTTPException(400, "SD.CPP engine not installed. Go to Settings → Download SD.CPP.")
+        elif model_engine == "sdnq":
+            if not is_sdnq_installed():
+                raise HTTPException(400, "SDNQ runtime not installed. Go to Settings → Install/Verify SDNQ.")
+        else:
+            if not (is_engine_installed(model.engine_version) or is_engine_installed()):
+                raise HTTPException(400, "QuantFunc engine not installed. Go to Settings → Download engine.")
+
         if model.pipeline == "image_edit" and not init_image_path:
             raise HTTPException(400, "Reference image is required for image_edit models (upload an image or select one from preview/history)")
 
@@ -1072,6 +1134,8 @@ def create_app() -> FastAPI:
         selected = None
         if variant_id:
             selected = next((t for t in transformers_for_gpu if t.id == variant_id), None)
+            if not selected:
+                selected = next((t for t in model.transformers if t.id == variant_id), None)
         if not selected and transformers_for_gpu:
             selected = transformers_for_gpu[0]
         if not selected:
@@ -1079,21 +1143,14 @@ def create_app() -> FastAPI:
 
         # Determine steps and CFG
         effective_steps = int(body["steps"]) if "steps" in body and body["steps"] not in (None, "") else selected.steps
-        cfg_val = 1.0
+        cfg_val = model.get_default_cfg()
         if "cfg" in body and body["cfg"] not in (None, ""):
             try:
                 cfg_val = float(body["cfg"])
             except (ValueError, TypeError):
                 pass
-        elif getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
-            cfg_val = float(model.scheduler_presets["default"].get("cfg", 1.0))
-        elif getattr(model, "scheduler_presets", None):
-            for p in model.scheduler_presets.values():
-                if "cfg" in p:
-                    cfg_val = float(p["cfg"])
-                    break
 
-        # Determine negative prompt & noise
+        # Determine negative prompt, noise & sampler
         negative_prompt = body.get("negative_prompt", "") or ""
         noise_val = 0.0
         if "noise" in body and body["noise"] not in (None, ""):
@@ -1101,6 +1158,13 @@ def create_app() -> FastAPI:
                 noise_val = float(body["noise"])
             except (ValueError, TypeError):
                 pass
+
+        raw_sampler = str(body.get("sampler") or "").strip().lower()
+        allowed_samplers = {
+            "euler", "euler_a", "heun", "dpm++2m", "dpm++2m_sde",
+            "dpm2", "dpm2_a", "lcm", "unipc"
+        }
+        sampler = raw_sampler if raw_sampler in allowed_samplers else None
 
         # Build GenerateRequest
         request = GenerateRequest(
@@ -1117,6 +1181,8 @@ def create_app() -> FastAPI:
             use_prequant=selected.prequant,
             init_image_path=Path(init_image_path) if init_image_path else None,
             init_image_strength=init_image_strength,
+            variant_id=selected.id,
+            sampler=sampler,
             text_encoder_id=body.get("text_encoder_id"),
             custom_text_encoder_path=body.get("custom_text_encoder_path"),
             vae=body.get("vae"),
@@ -1202,58 +1268,21 @@ def create_app() -> FastAPI:
     # ---------- API: Engine ----------
     @app.get("/api/engine/status")
     async def api_engine_status():
-        """Get status of all three supported engines."""
-        from backend.engine import is_engine_installed, get_engine_paths
-        from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version
-
-        _, cli17 = get_engine_paths("0.0.17")
-        _, cli12 = get_engine_paths("0.0.12")
-        cli_sd = get_sd_cpp_cli_path()
-
+        """Get status of all supported engines."""
         return {
             "status": "ok",
-            "engines": {
-                "quantfunc_0_17": {
-                    "id": "quantfunc_0_17",
-                    "engine": "quantfunc",
-                    "version": "0.0.17",
-                    "name": "QuantFunc v0.0.17",
-                    "title": "QuantFunc v0.0.17 (Primary SVDQuant)",
-                    "installed": is_engine_installed("0.0.17"),
-                    "path": str(cli17),
-                    "description": "Primary engine for Qwen-Image-2.1 and standard SVDQuant models.",
-                },
-                "quantfunc_0_12": {
-                    "id": "quantfunc_0_12",
-                    "engine": "quantfunc",
-                    "version": "0.0.12",
-                    "name": "QuantFunc v0.0.12",
-                    "title": "QuantFunc v0.0.12 (Legacy NVFP4)",
-                    "installed": is_engine_installed("0.0.12"),
-                    "path": str(cli12),
-                    "description": "Legacy engine with native NVFP4 support (Flux.2 Klein FP4, Z-Image).",
-                },
-                "sd_cpp": {
-                    "id": "sd_cpp",
-                    "engine": "sd_cpp",
-                    "version": get_sd_cpp_version(),
-                    "name": "stable-diffusion.cpp",
-                    "title": "stable-diffusion.cpp (GGUF Runtime)",
-                    "installed": is_sd_cpp_installed(),
-                    "path": str(cli_sd),
-                    "description": "Standalone C++/CUDA runner for GGUF models (Flux.1 Schnell, SDXL, Unsloth Q4).",
-                },
-            },
+            "engines": _get_engines_info(),
         }
 
     @app.post("/api/engine/download")
     async def api_engine_download(body: Optional[dict] = None):
-        """Download engine binary (QuantFunc v0.0.17 / v0.0.12 or SD.CPP).
+        """Download engine binary (QuantFunc v0.0.17 / v0.0.12, SD.CPP, or SDNQ).
 
         Body (optional):
             {"engine": "quantfunc", "version": "0.0.17"} or
             {"engine": "quantfunc", "version": "0.0.12"} or
-            {"engine": "sd_cpp", "force": false}
+            {"engine": "sd_cpp", "force": false} or
+            {"engine": "sdnq", "force": false}
         """
         body = body or {}
         engine_type = body.get("engine", "quantfunc")
@@ -1268,6 +1297,15 @@ def create_app() -> FastAPI:
                     "engine": "sd_cpp",
                     "message": f"SD.CPP engine installed: {binary_path}",
                     "path": str(binary_path),
+                }
+            elif engine_type == "sdnq":
+                from backend.sdnq_engine import install_sdnq, get_sdnq_version
+                sdnq_path = await asyncio.to_thread(install_sdnq, force=bool(body.get("force", False)))
+                return {
+                    "status": "ok",
+                    "engine": "sdnq",
+                    "message": f"SDNQ ready ({get_sdnq_version()}): {sdnq_path}",
+                    "path": str(sdnq_path),
                 }
             else:
                 target_ver = version or get_settings().engine_version
@@ -1401,10 +1439,15 @@ def create_app() -> FastAPI:
                 "url": f"/outputs/{p.name}",
                 "prompt": "",
                 "model_id": "",
+                "variant_id": None,
                 "seed": None,
                 "width": None,
                 "height": None,
                 "steps": None,
+                "cfg": None,
+                "noise": None,
+                "sampler": None,
+                "vae": None,
                 "backend": None,
                 "generation_time_sec": None,
             }
@@ -1416,10 +1459,15 @@ def create_app() -> FastAPI:
                         "prompt": meta.get("prompt", ""),
                         "negative_prompt": meta.get("negative_prompt", ""),
                         "model_id": meta.get("model_id", ""),
+                        "variant_id": meta.get("variant_id"),
                         "seed": meta.get("seed"),
                         "width": meta.get("width"),
                         "height": meta.get("height"),
                         "steps": meta.get("steps"),
+                        "cfg": meta.get("cfg"),
+                        "noise": meta.get("noise"),
+                        "sampler": meta.get("sampler"),
+                        "vae": meta.get("vae"),
                         "backend": meta.get("backend"),
                         "generation_time_sec": meta.get("generation_time_sec"),
                     })
@@ -1466,6 +1514,41 @@ def create_app() -> FastAPI:
 # ============================================================
 # Main
 # ============================================================
+def _free_port_if_in_use(host: str, port: int) -> None:
+    """If a previous QuantFunc-WebUI Python instance is still listening on `port`, terminate it cleanly."""
+    import os
+    import socket
+    import time
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.3)
+        if s.connect_ex((host if host != "0.0.0.0" else "127.0.0.1", port)) != 0:
+            return  # Port is already free
+
+    my_pid = os.getpid()
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind="inet"):
+            if conn.laddr and conn.laddr.port == port and conn.status == psutil.CONN_LISTEN:
+                pid = conn.pid
+                if pid and pid != my_pid:
+                    try:
+                        proc = psutil.Process(pid)
+                        pname = (proc.name() or "").lower()
+                        if "python" in pname:
+                            print(f"[startup] Port {port} is held by previous Python process (PID {pid}) — terminating it...")
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=3.0)
+                            except psutil.TimeoutExpired:
+                                proc.kill()
+                            time.sleep(0.4)
+                    except Exception as e:
+                        print(f"[startup] Could not terminate PID {pid} on port {port}: {e}")
+    except Exception:
+        pass
+
+
 def main():
     """Entry point — initialize state, build app, launch server."""
     import argparse
@@ -1498,6 +1581,8 @@ def main():
     )
 
     args = parser.parse_args()
+
+    _free_port_if_in_use(args.host, args.port)
 
     log_file, uvicorn_log_config = setup_logging(verbose=args.verbose, log_dir=args.log_dir)
 

@@ -231,6 +231,16 @@ def test_registry():
         ud = qwen_gguf.get_text_encoder("ud_q4_k_xl")
         assert ud is not None and ud["recommended"] is True
         print(f"  ✓ Qwen-Image-2.1 GGUF (SD.CPP) loaded: diffusion={qwen_gguf.engine_args.get('diffusion_model')}, llm={qwen_gguf.engine_args.get('llm')}, cfg={qwen_gguf.scheduler_presets['default']['cfg']}")
+
+        # Qwen-Image-2.1 Turbo SDNQ INT8
+        qwen_sdnq = registry.get("qwen_image_2_1_turbo_sdnq")
+        assert qwen_sdnq.engine == "sdnq"
+        assert qwen_sdnq.sources.primary.repo_id == "OzzyGT/Qwen_Image_2_1_Turbo_sdnq_dynamic_8bit"
+        assert len(qwen_sdnq.transformers) == 1
+        assert qwen_sdnq.transformers[0].steps == 8
+        assert qwen_sdnq.scheduler_presets["default"]["cfg"] == 1.0
+        assert len(qwen_sdnq.engine_args.get("sample_sigmas", [])) == 8
+        print(f"  ✓ Qwen-Image-2.1 Turbo SDNQ loaded: repo={qwen_sdnq.sources.primary.repo_id}, steps={qwen_sdnq.transformers[0].steps}, cfg={qwen_sdnq.scheduler_presets['default']['cfg']}")
         return True
     except Exception as e:
         print(f"  ✗ Registry test failed: {e}")
@@ -376,6 +386,12 @@ def test_engine_status():
         assert is_sd_cpp_installed()
         assert get_sd_cpp_cli_path().exists()
 
+        from backend.sdnq_engine import is_sdnq_installed, get_sdnq_version, get_sdnq_path
+        print(f"  ✓ SDNQ installed: {is_sdnq_installed()}")
+        print(f"    SDNQ path: {get_sdnq_path()}")
+        print(f"    SDNQ version: {get_sdnq_version()}")
+        assert is_sdnq_installed()
+
         # Test FastAPI /api/engine/status endpoint
         from fastapi.testclient import TestClient
         from app import create_app
@@ -387,7 +403,17 @@ def test_engine_status():
         assert "quantfunc_0_17" in data["engines"]
         assert "quantfunc_0_12" in data["engines"]
         assert "sd_cpp" in data["engines"]
-        print("  ✓ /api/engine/status returns all 3 engines with installed=True")
+        assert "sdnq" in data["engines"]
+        assert data["engines"]["sdnq"]["installed"] is True
+        print("  ✓ /api/engine/status returns all 4 engines with installed=True")
+
+        res_state = client.get("/api/models/qwen_image_2_1_turbo_sdnq/state")
+        assert res_state.status_code == 200
+        state_data = res_state.json()
+        assert state_data["model_id"] == "qwen_image_2_1_turbo_sdnq"
+        assert len(state_data["transformers"]) == 1
+        assert len(state_data["text_encoders"]) == 1
+        print("  ✓ /api/models/qwen_image_2_1_turbo_sdnq/state OK")
 
         res_custom = client.get("/api/custom-models/files")
         assert res_custom.status_code == 200
@@ -396,6 +422,84 @@ def test_engine_status():
         return True
     except Exception as e:
         print(f"  ✗ Engine status test failed: {e}")
+        return False
+
+
+def test_controls_and_samplers():
+    print("\n[8/8] Testing controls, samplers & parameter plumbing...")
+    try:
+        from backend.worker import GenerateRequest, Worker
+        from backend.gpu import GPUInfo
+        from backend.registry import get_registry
+        from backend.flowmatch_samplers import interpolate_sample_sigmas
+        from fastapi.testclient import TestClient
+        from app import create_app
+
+        req = GenerateRequest(
+            prompt="test",
+            model_id="qwen_image_2_1_turbo_sdnq",
+            variant_id="qwen_image_21_turbo_sdnq_int8",
+            sampler="dpm++2m",
+            cfg=2.5,
+            noise=0.3,
+            vae="texture_fix",
+        )
+        assert req.variant_id == "qwen_image_21_turbo_sdnq_int8"
+        assert req.sampler == "dpm++2m"
+        assert req.cfg == 2.5
+        assert req.noise == 0.3
+        assert req.vae == "texture_fix"
+        print("  ✓ GenerateRequest preserves variant_id, sampler, cfg, noise, vae")
+
+        from backend.settings import get_settings
+        s = get_settings()
+        orig_mode = s.vram_mode
+        s.vram_mode = "balanced"
+        try:
+            w = Worker()
+            fake_gpu = GPUInfo(
+                name="RTX 5060 Ti",
+                sm=120,
+                vram_mb=16384,
+                driver_version="610.62",
+                cuda_version="12.8",
+                tier="50x-above",
+                klein_tier="50x",
+            )
+            budget_mb = w._compute_vram_budget(fake_gpu, None)
+            assert budget_mb == 12288, f"Expected 12288 MB, got {budget_mb}"
+            print(f"  ✓ Worker._compute_vram_budget returns MB ({budget_mb} MB for 16 GB balanced)")
+        finally:
+            s.vram_mode = orig_mode
+
+        reg = get_registry()
+        flux_s = reg.get("flux_schnell_gguf")
+        assert flux_s.get_default_cfg() == 3.5
+        z_img = reg.get("z_image_turbo")
+        r_b = z_img.resolve_required_files(gpu_sm=120, variant_id="lighting-50x-above-better")
+        r_v2 = z_img.resolve_required_files(gpu_sm=120, variant_id="lighting-50x-above-v2")
+        assert r_b["transformer_path"] != r_v2["transformer_path"]
+        assert "v2" in r_v2["transformer_path"]
+        print("  ✓ resolve_required_files respects explicit variant_id")
+
+        base_sig = [1.0, 0.811402, 0.654004, 0.502087, 0.362709, 0.228661, 0.114957, 0.017578]
+        s12 = interpolate_sample_sigmas(base_sig, 12)
+        assert len(s12) == 12 and s12[0] == 1.0 and 0 < s12[-1] < s12[-2]
+        print("  ✓ interpolate_sample_sigmas interpolates Turbo schedule to arbitrary steps")
+
+        client = TestClient(create_app())
+        cfg_res = client.get("/api/config").json()
+        assert "qwen_vae_type" in cfg_res["settings"], "qwen_vae_type missing in /api/config settings"
+        print("  ✓ /api/config includes settings.qwen_vae_type")
+
+        html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        assert 'id="sampler-select"' in html, "sampler-select missing in index.html"
+        print("  ✓ frontend/index.html includes #sampler-select")
+        return True
+    except Exception as e:
+        print(f"  ✗ Controls & samplers test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -412,6 +516,7 @@ def main():
         ("Security", test_security()),
         ("Engine auth (config.json)", test_engine_auth()),
         ("Engine status", test_engine_status()),
+        ("Controls & samplers", test_controls_and_samplers()),
     ]
 
     print("\n" + "=" * 60)

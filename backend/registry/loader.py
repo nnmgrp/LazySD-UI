@@ -190,6 +190,25 @@ class ModelSpec:
                 return te
         return self.text_encoders[0]
 
+    def get_default_cfg(self) -> float:
+        """Return default CFG / guidance_scale from scheduler_presets."""
+        if not self.scheduler_presets:
+            return 1.0
+        for key in ("default", "lighting-4steps"):
+            preset = self.scheduler_presets.get(key)
+            if isinstance(preset, dict):
+                if preset.get("cfg") is not None:
+                    return float(preset["cfg"])
+                if preset.get("guidance_scale") is not None:
+                    return float(preset["guidance_scale"])
+        for preset in self.scheduler_presets.values():
+            if isinstance(preset, dict):
+                if preset.get("cfg") is not None:
+                    return float(preset["cfg"])
+                if preset.get("guidance_scale") is not None:
+                    return float(preset["guidance_scale"])
+        return 1.0
+
     def get_base_model_path(self, tier: str) -> Optional[str]:
         """Get the base model subdir path for a GPU tier."""
         return self.base_models.get(tier)
@@ -209,8 +228,8 @@ class ModelSpec:
             if t.tier != tier and t.tier not in ("universal", "50x"):
                 continue
 
-            # Klein-specific: per-file tier filter
-            if self.family == "klein" and t.klein_tier and t.klein_tier != klein_tier:
+            # Per-file sub-tier filter (30x-below / 40x / 50x) when GPU SM is known
+            if t.klein_tier and klein_tier != "unknown" and t.klein_tier != klein_tier:
                 continue
 
             # Optional: filter by backend
@@ -218,6 +237,15 @@ class ModelSpec:
                 continue
 
             result.append(t)
+
+        # Fallback if strict sub-tier filter produced no results
+        if not result:
+            for t in self.transformers:
+                if t.tier != tier and t.tier not in ("universal", "50x"):
+                    continue
+                if backend and t.backend != backend:
+                    continue
+                result.append(t)
 
         return result
 
@@ -232,6 +260,7 @@ class ModelSpec:
         backend: str = "lighting",
         steps: int = 4,
         use_prequant: bool = False,
+        variant_id: Optional[str] = None,
     ) -> dict:
         """Resolve concrete file paths required for a generation.
 
@@ -248,23 +277,39 @@ class ModelSpec:
         if not base_path:
             raise ValueError(f"No base model for tier {tier} in {self.id}")
 
-        # Transformer — pick the first one matching backend + steps (+ prequant flag)
-        candidates = self.get_transformers_for_tier(gpu_sm, backend=backend)
         transformer = None
-        for t in candidates:
-            if t.steps == steps and t.prequant == use_prequant:
-                transformer = t
-                break
+        # 1. Exact match by variant_id if provided
+        if variant_id:
+            tier_candidates = self.get_transformers_for_tier(gpu_sm)
+            for t in tier_candidates:
+                if t.id == variant_id:
+                    transformer = t
+                    backend = t.backend
+                    break
+            if not transformer:
+                for t in self.transformers:
+                    if t.id == variant_id:
+                        transformer = t
+                        backend = t.backend
+                        break
+
+        # 2. Match by backend + steps (+ prequant flag)
         if not transformer:
-            # Fallback: any matching backend + steps
+            candidates = self.get_transformers_for_tier(gpu_sm, backend=backend)
             for t in candidates:
-                if t.steps == steps:
+                if t.steps == steps and t.prequant == use_prequant:
                     transformer = t
                     break
-        if not transformer:
-            # Last resort: any matching backend
-            if candidates:
-                transformer = candidates[0]
+            if not transformer:
+                # Fallback: any matching backend + steps
+                for t in candidates:
+                    if t.steps == steps:
+                        transformer = t
+                        break
+            if not transformer:
+                # Last resort: any matching backend
+                if candidates:
+                    transformer = candidates[0]
         if not transformer:
             raise ValueError(
                 f"No transformer found for backend={backend}, steps={steps}, "

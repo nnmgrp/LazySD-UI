@@ -1,0 +1,80 @@
+{
+  "id": "qwen_image_2_1_turbo_sdnq",
+  "name": "Qwen-Image-2.1 Turbo (SDNQ INT8)",
+  "family": "qwen",
+  "pipeline": "text_to_image",
+  "engine": "sdnq",
+  "engine_version": "sdnq",
+  "engine_args": {
+    "sample_sigmas": [1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568],
+    "enable_cpu_offload": true,
+    "enable_vae_tiling": true
+  },
+  "key_protected": false,
+  "description": "Qwen-Image-2.1 Turbo (8-step distilled) quantized with SDNQ Dynamic INT8 + Hadamard Rotation (group_size 256) by OzzyGT. Includes INT8 Qwen3-VL-8B text encoder and INT8 DiT transformer. Runs on 12–16 GB VRAM GPUs (RTX 5060 Ti / 4070 / 3090) with CPU offload and Texture-Fix VAE.",
+  "upstream": {
+    "model": "OzzyGT/Qwen_Image_2_1_Turbo_sdnq_dynamic_8bit",
+    "license": "Qwen Research License",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "OzzyGT/Qwen_Image_2_1_Turbo_sdnq_dynamic_8bit"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "text_encoders": [
+    {
+      "id": "sdnq_int8",
+      "name": "Qwen3-VL-8B SDNQ Dynamic INT8 (~9.3 GB, Bundled)",
+      "file": "text_encoder/model.safetensors",
+      "precision": "int8",
+      "size_gb": 9.34,
+      "size_bytes": 10031496088,
+      "recommended": true,
+      "source": {
+        "repo_id": "OzzyGT/Qwen_Image_2_1_Turbo_sdnq_dynamic_8bit",
+        "file_path": "text_encoder/model.safetensors"
+      }
+    }
+  ],
+  "transformers": [
+    {
+      "id": "turbo-sdnq-int8",
+      "path": "transformer/diffusion_pytorch_model.safetensors",
+      "tier": "universal",
+      "backend": "sdnq",
+      "steps": 8,
+      "prequant": false,
+      "size_gb": 6.70,
+      "size_bytes": 7197641520,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3060", "RTX 3080", "RTX 3090",
+        "RTX 4060 Ti", "RTX 4070", "RTX 4080", "RTX 4090",
+        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+      ],
+      "note": "Turbo 8-step Dynamic INT8 + Hadamard (6.7 GB DiT + 9.3 GB TE)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 10,
+    "vram_recommended_gb": 16,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler": "euler"
+    }
+  }
+}

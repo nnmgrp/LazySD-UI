@@ -43,6 +43,7 @@
     "default": {
       "sampler": "euler",
       "steps": 4,
+      "cfg": 3.5,
       "guidance_scale": 3.5
     }
   }

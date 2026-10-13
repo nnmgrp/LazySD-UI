@@ -109,10 +109,14 @@ const App = {
   async loadConfig() {
     try {
       const config = await this.apiGet("/api/config");
+      this.state.config = config;
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
       this.state.models = config.models || [];
+      if (config.settings?.qwen_vae_type) {
+        this.state.selectedVae = config.settings.qwen_vae_type;
+      }
       // Inject into window for i18n detection
       window.QF_SETTINGS = config.settings;
     } catch (e) {
@@ -125,10 +129,14 @@ const App = {
     // Re-fetch config from backend after a state change (e.g. engine download).
     try {
       const config = await this.apiGet("/api/config");
+      this.state.config = config;
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
       this.state.models = config.models || [];
+      if (config.settings?.qwen_vae_type) {
+        this.state.selectedVae = config.settings.qwen_vae_type;
+      }
       window.QF_SETTINGS = config.settings;
       this.renderGpuIndicator();
       this.renderModels();
@@ -167,6 +175,16 @@ const App = {
       const isInst = sd.installed ?? config.sd_cpp_installed;
       const ver = sd.version || config.sd_cpp_version || 'ready';
       sdCppEl.innerHTML = isInst
+        ? `<span class="state-badge installed">✓ installed (${ver})</span>`
+        : '<span class="state-badge missing">✗ missing</span>';
+    }
+
+    const sdnqEl = document.getElementById("setting-engine-sdnq-status");
+    if (sdnqEl) {
+      const sdnq = engines.sdnq || {};
+      const isInst = sdnq.installed ?? config.sdnq_installed;
+      const ver = sdnq.version || config.sdnq_version || 'ready';
+      sdnqEl.innerHTML = isInst
         ? `<span class="state-badge installed">✓ installed (${ver})</span>`
         : '<span class="state-badge missing">✗ missing</span>';
     }
@@ -247,7 +265,14 @@ const App = {
 
     nameEl.textContent = current.name;
     const variant = this.state.selectedVariant || current.transformers?.[0]?.id || "default";
-    const engineVer = current.engine === "sd_cpp" ? "SD.CPP" : (current.engine_version ? `v${current.engine_version}` : "");
+    let engineVer = "";
+    if (current.engine === "sd_cpp") {
+      engineVer = "SD.CPP";
+    } else if (current.engine === "sdnq") {
+      engineVer = "SDNQ";
+    } else if (current.engine_version) {
+      engineVer = `v${current.engine_version}`;
+    }
     const steps = document.getElementById("steps-input")?.value || current.transformers?.[0]?.steps || 4;
     
     if (subEl) {
@@ -261,6 +286,8 @@ const App = {
     if (badgeEl) {
       if (current.engine === "sd_cpp") {
         badgeEl.textContent = "⚡ SD.CPP";
+      } else if (current.engine === "sdnq") {
+        badgeEl.textContent = "⚡ SDNQ";
       } else {
         badgeEl.textContent = current.engine_version ? `⚡ v${current.engine_version}` : "⚡";
       }
@@ -268,7 +295,11 @@ const App = {
 
     // Dynamic CFG & Noise recommendations
     let recCfg = 1.0;
-    if (current.id.startsWith("qwen_image_2_1") || current.family === "qwen") {
+    if (current.default_cfg !== undefined && current.default_cfg !== null) {
+      recCfg = Number(current.default_cfg);
+    } else if (current.id.includes("turbo") || current.engine === "sdnq") {
+      recCfg = 1.0;
+    } else if (current.id.startsWith("qwen_image_2_1") || current.family === "qwen") {
       recCfg = 3.0;
     } else if (current.family === "sdxl" || current.id.includes("sdxl")) {
       recCfg = 7.0;
@@ -359,6 +390,8 @@ const App = {
         return m.family === "z-image" || m.id.includes("z_image");
       } else if (filter === "sd_cpp") {
         return m.engine === "sd_cpp" || m.id.includes("gguf");
+      } else if (filter === "sdnq") {
+        return m.engine === "sdnq" || m.id.includes("sdnq");
       }
       return true;
     });
@@ -381,6 +414,8 @@ const App = {
         engineBadge = `<span class="badge-custom">🎨 Custom</span>`;
       } else if (model.engine === "sd_cpp") {
         engineBadge = `<span class="badge-engine sd-cpp" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">⚡ Engine: SD.CPP</span>`;
+      } else if (model.engine === "sdnq") {
+        engineBadge = `<span class="badge-engine sdnq" style="background: rgba(139, 92, 246, 0.18); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.35);">⚡ Engine: SDNQ</span>`;
       } else if (model.engine_version) {
         engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ Engine v${escapeHtml(model.engine_version)}</span>`;
       }
@@ -500,6 +535,8 @@ const App = {
       let engineBadge = "";
       if (model.engine === "sd_cpp") {
         engineBadge = `<span class="badge-engine sd-cpp" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">⚡ SD.CPP</span>`;
+      } else if (model.engine === "sdnq") {
+        engineBadge = `<span class="badge-engine sdnq" style="background: rgba(139, 92, 246, 0.18); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.35);">⚡ SDNQ</span>`;
       } else if (model.engine_version) {
         engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ v${escapeHtml(model.engine_version)}</span>`;
       }
@@ -576,7 +613,7 @@ const App = {
     const modelSelect = document.getElementById("model-select");
     if (modelSelect) {
       modelSelect.value = modelId;
-      await this.onModelChange();
+      await this.onModelChange(variantId || null);
     }
 
     if (btnEl) {
@@ -651,15 +688,24 @@ const App = {
       });
     }
 
-    // Noise slider & input sync
+    // Noise slider & input sync (+ auto-enable stochastic sampler when noise > 0)
     const noiseSlider = document.getElementById("noise-slider");
     const noiseInput = document.getElementById("noise-input");
+    const autoSyncStochasticSampler = (valStr) => {
+      const n = parseFloat(valStr);
+      const samplerSelect = document.getElementById("sampler-select");
+      if (!isNaN(n) && n > 0 && samplerSelect && samplerSelect.value === "euler") {
+        samplerSelect.value = "euler_a";
+      }
+    };
     if (noiseSlider && noiseInput) {
       noiseSlider.addEventListener("input", () => {
         noiseInput.value = noiseSlider.value;
+        autoSyncStochasticSampler(noiseSlider.value);
       });
       noiseInput.addEventListener("input", () => {
         noiseSlider.value = noiseInput.value;
+        autoSyncStochasticSampler(noiseInput.value);
       });
     }
 
@@ -790,6 +836,9 @@ const App = {
   },
 
   async saveQwenVae(value) {
+    this.state.selectedVae = value;
+    const vaeSelect = document.getElementById("vae-select");
+    if (vaeSelect) vaeSelect.value = value;
     try {
       await this.apiPatch("/api/settings", { qwen_vae_type: value });
       this.toast("success", `${t("settings.vae.qwen_title") || "Qwen VAE"}: ${value} ✓`);
@@ -798,7 +847,7 @@ const App = {
     }
   },
 
-  async onModelChange() {
+  async onModelChange(preferredVariantId = null) {
     const select = document.getElementById("model-select");
     if (!select || !select.value) return;
 
@@ -807,7 +856,7 @@ const App = {
     // Fetch model state (cache check)
     try {
       const state = await this.apiGet(`/api/models/${select.value}/state`);
-      this.renderVariants(state);
+      this.renderVariants(state, preferredVariantId);
     } catch (e) {
       console.error("[app] Failed to fetch model state:", e);
     }
@@ -815,7 +864,11 @@ const App = {
     // Dynamic CFG recommendation sync
     const activeModel = this.state.models.find(m => m.id === select.value);
     let recCfg = 1.0;
-    if (activeModel && (activeModel.id.startsWith("qwen_image_2_1") || activeModel.family === "qwen")) {
+    if (activeModel && typeof activeModel.default_cfg === "number") {
+      recCfg = activeModel.default_cfg;
+    } else if (activeModel && (activeModel.id.includes("turbo") || activeModel.engine === "sdnq")) {
+      recCfg = 1.0;
+    } else if (activeModel && (activeModel.id.startsWith("qwen_image_2_1") || activeModel.family === "qwen")) {
       recCfg = 3.0;
     } else if (activeModel && (activeModel.family === "sdxl" || activeModel.id.includes("sdxl"))) {
       recCfg = 7.0;
@@ -833,7 +886,7 @@ const App = {
     this.updateModelTrigger();
   },
 
-  renderVariants(modelState) {
+  renderVariants(modelState, preferredVariantId = null) {
     this.state.modelState = modelState;
     const variantSelect = document.getElementById("variant-select");
     if (!variantSelect) return;
@@ -851,13 +904,15 @@ const App = {
     const teSelect = document.getElementById("text-encoder-select");
     const teHint = document.getElementById("text-encoder-hint");
     const customTeInput = document.getElementById("custom-text-encoder-input");
+    const teLink = document.getElementById("toggle-custom-te-link");
     const backendLabel = document.getElementById("backend-label");
     const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
     const isSDCpp = activeModelObj && activeModelObj.engine === "sd_cpp";
+    const isSDNQ = activeModelObj && activeModelObj.engine === "sdnq";
     const isQuantFuncQwen = activeModelObj && activeModelObj.engine === "quantfunc" && activeModelObj.id === "qwen_image_2_1";
 
     if (backendLabel) {
-      backendLabel.textContent = isSDCpp ? (t("controls.quantization") || "Quantization") : (t("controls.backend") || "Backend");
+      backendLabel.textContent = (isSDCpp || isSDNQ) ? (t("controls.quantization") || "Quantization") : (t("controls.backend") || "Backend");
     }
 
     let teMissing = false;
@@ -867,15 +922,21 @@ const App = {
         teGroup.style.display = "flex";
         teSelect.innerHTML = "";
         
-        if (isQuantFuncQwen) {
+        if (isQuantFuncQwen || isSDNQ) {
           teSelect.disabled = true;
+          teSelect.style.display = "block";
+          if (customTeInput) customTeInput.style.display = "none";
+          if (teLink) teLink.style.display = "none";
           teGroup.classList.add("locked");
           if (teHint) {
             teHint.style.display = "flex";
-            teHint.textContent = "⚡ " + (t("controls.hint_quantfunc_te") || "QuantFunc auto-quantizes BF16 to INT4 in RAM");
+            teHint.textContent = "⚡ " + (isSDNQ
+              ? (t("controls.hint_sdnq_te") || "SDNQ Dynamic INT8 Qwen3-VL-8B (CPU Offload)")
+              : (t("controls.hint_quantfunc_te") || "QuantFunc auto-quantizes BF16 to INT4 in RAM"));
           }
         } else {
           teSelect.disabled = false;
+          if (teLink) teLink.style.display = "inline";
           teGroup.classList.remove("locked");
           if (teHint) {
             if (isSDCpp) {
@@ -903,7 +964,7 @@ const App = {
           teSelect.appendChild(opt);
         }
 
-        if (!isQuantFuncQwen) {
+        if (!isQuantFuncQwen && !isSDNQ) {
           const customOpt = document.createElement("option");
           customOpt.value = "custom";
           customOpt.textContent = `Custom file / ComfyUI...`;
@@ -911,7 +972,9 @@ const App = {
             customOpt.selected = true;
             if (customTeInput) customTeInput.style.display = "block";
           } else {
+            teSelect.style.display = "block";
             if (customTeInput) customTeInput.style.display = "none";
+            if (teLink) teLink.textContent = t("controls.custom_path") || "Custom path";
           }
           teSelect.appendChild(customOpt);
         }
@@ -936,14 +999,22 @@ const App = {
     const vaeGroup = document.getElementById("vae-group");
     const vaeSelect = document.getElementById("vae-select");
     const customVaeInput = document.getElementById("custom-vae-input");
+    const vaeLink = document.getElementById("toggle-custom-vae-link");
     if (vaeGroup && vaeSelect) {
       if (activeModelObj && (activeModelObj.family === "qwen" || activeModelObj.id.includes("qwen"))) {
         vaeGroup.style.display = "flex";
         const curVae = this.state.selectedVae || this.state.settings?.qwen_vae_type || "texture_fix";
         vaeSelect.value = curVae;
+        if (!customVaeInput || !customVaeInput.value.trim()) {
+          vaeSelect.style.display = "block";
+          if (customVaeInput) customVaeInput.style.display = "none";
+          if (vaeLink) vaeLink.textContent = t("controls.custom_path") || "Custom path";
+        }
       } else {
         vaeGroup.style.display = "none";
+        vaeSelect.style.display = "block";
         if (customVaeInput) customVaeInput.style.display = "none";
+        if (vaeLink) vaeLink.textContent = t("controls.custom_path") || "Custom path";
       }
     }
 
@@ -975,8 +1046,9 @@ const App = {
       variantSelect.appendChild(grp);
     }
 
-    // Auto-select first recommended
-    const activeVar = recommended[0] || others[0] || variants[0];
+    // Select preferred variant if provided, otherwise first recommended
+    const preferred = preferredVariantId ? variants.find(v => v.id === preferredVariantId) : null;
+    const activeVar = preferred || recommended[0] || others[0] || variants[0];
     if (activeVar) {
       variantSelect.value = activeVar.id;
       this.state.selectedVariant = activeVar.id;
@@ -998,6 +1070,7 @@ const App = {
   onTextEncoderChange() {
     const teSelect = document.getElementById("text-encoder-select");
     const customTeInput = document.getElementById("custom-text-encoder-input");
+    const link = document.getElementById("toggle-custom-te-link");
     if (!teSelect) return;
     this.state.selectedTextEncoder = teSelect.value;
     if (teSelect.value === "custom") {
@@ -1005,8 +1078,10 @@ const App = {
         customTeInput.style.display = "block";
         customTeInput.focus();
       }
+      if (link) link.textContent = t("controls.standard_select") || "List";
     } else {
       if (customTeInput) customTeInput.style.display = "none";
+      if (link) link.textContent = t("controls.custom_path") || "Custom path";
     }
     if (this.state.modelState) {
       const activeTe = this.state.modelState.text_encoders?.find(te => te.id === teSelect.value);
@@ -1022,10 +1097,26 @@ const App = {
   toggleCustomTeInput(e) {
     if (e) e.preventDefault();
     const customTeInput = document.getElementById("custom-text-encoder-input");
-    if (!customTeInput) return;
+    const teSelect = document.getElementById("text-encoder-select");
+    const link = document.getElementById("toggle-custom-te-link");
+    if (!customTeInput || !teSelect) return;
     const isHidden = customTeInput.style.display === "none";
     customTeInput.style.display = isHidden ? "block" : "none";
-    if (isHidden) customTeInput.focus();
+    teSelect.style.display = isHidden ? "none" : "block";
+    if (isHidden) {
+      this.state.selectedTextEncoder = "custom";
+      if (teSelect.querySelector('option[value="custom"]')) {
+        teSelect.value = "custom";
+      }
+      customTeInput.focus();
+    } else {
+      const firstOpt = teSelect.querySelector('option:not([value="custom"])');
+      if (firstOpt) {
+        teSelect.value = firstOpt.value;
+        this.state.selectedTextEncoder = firstOpt.value;
+      }
+    }
+    if (link) link.textContent = isHidden ? (t("controls.standard_select") || "List") : (t("controls.custom_path") || "Custom path");
   },
 
   toggleCustomVaeInput(e) {
@@ -1070,11 +1161,13 @@ const App = {
       container.appendChild(dlBtn);
     }
     dlBtn.style.display = "flex";
+    const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
     const activeVar = (modelState.transformers || []).find(v => v.id === this.state.selectedVariant) || (modelState.transformers || [])[0];
     const varSize = (activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted")) ? (activeVar.size_gb || 0) : 0;
     const teMissing = modelState?.text_encoders?.find(te => te.id === this.state.selectedTextEncoder && !te.installed);
     const teSize = teMissing ? (teMissing.size_gb || 0) : 0;
-    dlBtn.textContent = `⬇ Download (~${(varSize + teSize).toFixed(1)} GB)`;
+    const baseSize = (!modelState.base_model_installed && activeModelObj?.engine === "sdnq") ? 0.65 : 0;
+    dlBtn.textContent = `⬇ Download (~${(varSize + teSize + baseSize).toFixed(1)} GB)`;
   },
 
   async downloadModel() {
@@ -1164,7 +1257,9 @@ const App = {
       return;
     }
 
-    if (!this.state.engineStatus || this.state.engineStatus.status === "missing") {
+    const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
+    const engineType = activeModel?.engine || "quantfunc";
+    if (engineType === "quantfunc" && (!this.state.engineStatus || this.state.engineStatus.status === "missing")) {
       this.toast("error", t("errors.engine_not_installed"));
       this.switchTab("settings");
       return;
@@ -1181,6 +1276,7 @@ const App = {
     const cfgVal = parseFloat(document.getElementById("cfg-input")?.value);
     const noiseVal = parseFloat(document.getElementById("noise-input")?.value);
     const negPrompt = document.getElementById("negative-prompt-input")?.value?.trim() || "";
+    const samplerVal = document.getElementById("sampler-select")?.value || "euler";
 
     const params = {
       model_id: this.state.selectedModel,
@@ -1193,6 +1289,7 @@ const App = {
       steps: parseInt(document.getElementById("steps-input")?.value || (currentVariant ? String(currentVariant.steps) : "4"), 10),
       cfg: !isNaN(cfgVal) ? cfgVal : 1.0,
       noise: !isNaN(noiseVal) ? noiseVal : 0.0,
+      sampler: samplerVal,
       backend: backend,
     };
 
@@ -1203,26 +1300,29 @@ const App = {
       );
     }
 
-    const teSelect = document.getElementById("text-encoder-select");
-    if (teSelect && teSelect.value) {
-      if (teSelect.value === "custom") {
-        const customTeInput = document.getElementById("custom-text-encoder-input");
-        if (customTeInput && customTeInput.value.trim()) {
-          params.custom_text_encoder_path = customTeInput.value.trim();
-        }
-      } else {
+    const teGroup = document.getElementById("text-encoder-group");
+    if (teGroup && teGroup.style.display !== "none") {
+      const teSelect = document.getElementById("text-encoder-select");
+      const customTeInput = document.getElementById("custom-text-encoder-input");
+      const customTeVal = customTeInput && customTeInput.style.display !== "none" ? customTeInput.value.trim() : "";
+      if (customTeVal) {
+        params.custom_text_encoder_path = customTeVal;
+      } else if (teSelect && teSelect.value && teSelect.value !== "custom") {
         params.text_encoder_id = teSelect.value;
       }
     }
 
-    const customVaeInput = document.getElementById("custom-vae-input");
-    const customVaeVal = customVaeInput && customVaeInput.style.display !== "none" ? customVaeInput.value.trim() : "";
-    if (customVaeVal) {
-      params.custom_vae_path = customVaeVal;
-    } else {
-      const vaeSelect = document.getElementById("vae-select");
-      if (vaeSelect && vaeSelect.value) {
-        params.vae = vaeSelect.value;
+    const vaeGroup = document.getElementById("vae-group");
+    if (vaeGroup && vaeGroup.style.display !== "none") {
+      const customVaeInput = document.getElementById("custom-vae-input");
+      const customVaeVal = customVaeInput && customVaeInput.style.display !== "none" ? customVaeInput.value.trim() : "";
+      if (customVaeVal) {
+        params.custom_vae_path = customVaeVal;
+      } else {
+        const vaeSelect = document.getElementById("vae-select");
+        if (vaeSelect && vaeSelect.value) {
+          params.vae = vaeSelect.value;
+        }
       }
     }
 
@@ -1530,7 +1630,7 @@ const App = {
     this.state.selectedHistoryItem = null;
   },
 
-  reuseHistoryItem(item) {
+  async reuseHistoryItem(item) {
     if (!item) return;
 
     // Set prompt
@@ -1539,12 +1639,12 @@ const App = {
       promptInput.value = item.prompt;
     }
 
-    // Set model
+    // Set model and await variant rendering first so steps/CFG aren't overwritten
     if (item.model_id) {
       const modelSelect = document.getElementById("model-select");
       if (modelSelect) {
         modelSelect.value = item.model_id;
-        this.onModelChange();
+        await this.onModelChange(item.variant_id || null);
       }
     }
 
@@ -1579,7 +1679,7 @@ const App = {
     }
 
     // Set CFG
-    if (item.cfg) {
+    if (item.cfg !== undefined && item.cfg !== null) {
       const cfgInput = document.getElementById("cfg-input");
       const cfgSlider = document.getElementById("cfg-slider");
       if (cfgInput) cfgInput.value = item.cfg;
@@ -1594,11 +1694,30 @@ const App = {
       if (noiseSlider) noiseSlider.value = item.noise;
     }
 
+    // Set Sampler
+    if (item.sampler) {
+      const samplerSelect = document.getElementById("sampler-select");
+      if (samplerSelect && samplerSelect.querySelector(`option[value="${item.sampler}"]`)) {
+        samplerSelect.value = item.sampler;
+      }
+    }
+
+    // Set VAE
+    if (item.vae) {
+      const vaeSelect = document.getElementById("vae-select");
+      if (vaeSelect && vaeSelect.querySelector(`option[value="${item.vae}"]`)) {
+        vaeSelect.value = item.vae;
+        this.state.selectedVae = item.vae;
+      }
+    }
+
     // Set seed
     if (item.seed !== null && item.seed !== undefined) {
       const seedInput = document.getElementById("seed-input");
       if (seedInput) seedInput.value = item.seed;
     }
+
+    this.updateModelTrigger();
 
     // Show preview of selected image in preview area
     this.showPreview(item.name);

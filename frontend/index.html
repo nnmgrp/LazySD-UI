@@ -156,7 +156,7 @@
             <div class="control-group">
               <label data-i18n="controls.model">Model</label>
               <div class="model-picker-trigger-wrap">
-                <button type="button" class="model-picker-trigger" id="model-picker-trigger" onclick="App.openModelPickerModal()">
+                <button type="button" class="model-picker-trigger" id="model-picker-trigger">
                   <div class="model-trigger-info">
                     <span class="model-trigger-name" id="model-trigger-name">—</span>
                     <span class="model-trigger-sub" id="model-trigger-sub">—</span>
@@ -193,6 +193,18 @@
               </select>
               <input type="text" id="custom-vae-input" placeholder="e.g. D:/ComfyUI/models/vae/texture_fix_vae.safetensors" data-i18n-placeholder="controls.custom_vae_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
             </div>
+            <div class="control-group" id="sampler-group">
+              <label data-i18n="controls.sampler">Sampler</label>
+              <select id="sampler-select">
+                <option value="euler">Euler (Default)</option>
+                <option value="euler_a">Euler a (Stochastic / Noise)</option>
+                <option value="heun">Heun (2nd Order)</option>
+                <option value="dpm++2m">DPM++ 2M</option>
+                <option value="dpm++2m_sde">DPM++ 2M SDE (Stochastic)</option>
+                <option value="unipc">UniPC</option>
+                <option value="lcm">LCM</option>
+              </select>
+            </div>
             <div class="control-group">
               <label data-i18n="controls.steps">Steps</label>
               <input type="number" id="steps-input" value="4" min="1" max="50">
@@ -203,8 +215,8 @@
                 <span class="control-rec-badge" id="cfg-rec-badge" title="Recommended for this model">(Rec: 3.0)</span>
               </div>
               <div class="slider-input-row">
-                <input type="range" id="cfg-slider" min="1.0" max="20.0" step="0.1" value="3.0" oninput="document.getElementById('cfg-input').value = this.value">
-                <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1" oninput="document.getElementById('cfg-slider').value = this.value">
+                <input type="range" id="cfg-slider" min="1.0" max="20.0" step="0.1" value="3.0">
+                <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1">
               </div>
             </div>
             <div class="control-group" id="noise-group">
@@ -213,8 +225,8 @@
                 <span class="control-rec-badge" id="noise-rec-badge" title="Recommended for this model">(Rec: 0.0)</span>
               </div>
               <div class="slider-input-row">
-                <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0" oninput="document.getElementById('noise-input').value = this.value">
-                <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05" oninput="document.getElementById('noise-slider').value = this.value">
+                <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0">
+                <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05">
               </div>
             </div>
             <div class="control-group">
@@ -305,6 +317,18 @@
             <div class="setting-value" id="setting-engine-sdcpp-status">—</div>
             <div style="display: flex; gap: 6px;">
               <button class="icon-btn" onclick="downloadSDCpp()" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
+            </div>
+          </div>
+
+          <!-- SDNQ (SD.Next Quantization + Diffusers) -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>SDNQ (Diffusers INT8/INT4)</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.sdnq_desc">PyTorch + Triton quantization with Hadamard & SVD (Qwen-Image-2.1 Turbo INT8)</small>
+            </div>
+            <div class="setting-value" id="setting-engine-sdnq-status">—</div>
+            <div style="display: flex; gap: 6px;">
+              <button class="icon-btn" onclick="installSDNQ()" data-i18n="settings.engine.install_sdnq">Verify / Install</button>
             </div>
           </div>
 
@@ -592,6 +616,21 @@
       }
     }
 
+    async function installSDNQ() {
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; btn.textContent = "Checking..."; }
+      try {
+        App.toast("info", "Checking / installing SDNQ runtime...");
+        const res = await App.apiPost("/api/engine/download", { engine: "sdnq" });
+        App.toast("success", res.message);
+        await App.refreshConfig();
+      } catch (e) {
+        App.toast("error", "SDNQ setup failed: " + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = t("settings.engine.install_sdnq") || "Verify / Install"; }
+      }
+    }
+
     async function checkUpdates() {
       try {
         App.toast("info", "Checking for updates...");
@@ -835,6 +874,16 @@
           : '<span class="state-badge missing">✗ missing</span>';
       }
 
+      const sdnqEl = document.getElementById("setting-engine-sdnq-status");
+      if (sdnqEl) {
+        const sdnq = engines.sdnq || {};
+        const isInst = sdnq.installed ?? config.sdnq_installed;
+        const ver = sdnq.version || config.sdnq_version || 'ready';
+        sdnqEl.innerHTML = isInst
+          ? `<span class="state-badge installed">✓ installed (${ver})</span>`
+          : '<span class="state-badge missing">✗ missing</span>';
+      }
+
       const cudaEl = document.getElementById("setting-cuda-version");
       if (cudaEl && config.settings) {
         cudaEl.textContent = config.settings.cuda_version || '13';
@@ -931,6 +980,7 @@
             <button class="filter-chip" data-filter="klein" onclick="App.setModelPickerFilter('klein', this)">Flux.2</button>
             <button class="filter-chip" data-filter="qwen" onclick="App.setModelPickerFilter('qwen', this)">Qwen</button>
             <button class="filter-chip" data-filter="z-image" onclick="App.setModelPickerFilter('z-image', this)">Z-Image</button>
+            <button class="filter-chip" data-filter="sdnq" onclick="App.setModelPickerFilter('sdnq', this)">SDNQ (INT8)</button>
             <button class="filter-chip" data-filter="sd_cpp" onclick="App.setModelPickerFilter('sd_cpp', this)">SD.CPP (GGUF)</button>
             <button class="filter-chip" data-filter="custom" onclick="App.setModelPickerFilter('custom', this)" data-i18n="models.filter_custom">🎨 Custom</button>
           </div>

@@ -42,6 +42,9 @@
   "controls.vae_official": "Официальный Wan / Qwen VAE",
   "controls.backend": "Бэкенд",
   "controls.variant_backend": "Квантование / Бэкенд",
+  "controls.sampler": "Сэмплер",
+  "controls.custom_path": "Свой путь",
+  "controls.standard_select": "Список",
   "controls.steps": "Шаги",
   "controls.cfg": "CFG",
   "controls.noise": "Шум (Noise)",
@@ -116,6 +119,8 @@
   "settings.engine.qf12_desc": "Движок с поддержкой NVFP4 (Klein FP4, Z-Image)",
   "settings.engine.sdcpp_desc": "Автономный GGUF движок (Flux.1 Schnell, SDXL, Unsloth Q4)",
   "settings.engine.download_sdcpp": "Скачать (~320 МБ)",
+  "settings.engine.sdnq_desc": "PyTorch / Diffusers Dynamic INT8 с Hadamard Rotation (OzzyGT Qwen-2.1 Turbo)",
+  "settings.engine.install_sdnq": "Проверить / Установить",
 
   "settings.gpu_name": "Имя GPU",
   "settings.gpu_sm": "SM capability",
@@ -239,6 +244,7 @@
   "controls.custom_path": "Свой путь",
   "controls.hint_quantfunc_te": "QuantFunc динамически сжимает BF16 в INT4 в RAM",
   "controls.hint_sdcpp_te": "Мультимодальный Unsloth GGUF энкодер (--llm)",
+  "controls.hint_sdnq_te": "SDNQ Dynamic INT8 Qwen3-VL-8B (CPU Offload)",
 
   "custom_model.title": "Импорт своей модели",
   "custom_model.subtitle": "Подключение локальных файлов GGUF или Safetensors через SD.CPP или QuantFunc",

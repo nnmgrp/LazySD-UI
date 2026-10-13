@@ -1,23 +1,49 @@
 # Python / Virtualenv
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 
-# Models cache & binaries
-models/cache/
-bin/
+# Environment & Settings
+.env
 settings.json
-logs/
 
-# Outputs (keep directory structure)
+# Logs & Temp
+logs/
+*.log
+*.tmp
+*.temp
+
+# Binaries & Precompiled engines (QuantFunc, SD.CPP, etc.)
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Models cache & Heavy weights
+models/cache/
+*.safetensors
+*.gguf
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Outputs & Generated Media (keep directory structure only)
 outputs/*
 !outputs/.gitkeep
 !outputs/uploads/
 outputs/uploads/*
 !outputs/uploads/.gitkeep
+*.png
+*.jpg
+*.jpeg
+*.webp
 
-# IDE / OS
+# IDE / OS / Editor
 .vscode/
 .idea/
 .DS_Store

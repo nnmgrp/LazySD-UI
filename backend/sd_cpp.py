@@ -279,51 +279,77 @@ class SDCppWorker:
                 cmd.extend(["--llm", str(llm_path)])
 
             # VAE
+            vae_rel = None
+            vae_type = getattr(request, "vae", None) or getattr(settings, "qwen_vae_type", "texture_fix")
             custom_vae_str = getattr(request, "custom_vae_path", None)
-            if custom_vae_str and Path(custom_vae_str).exists():
-                cmd.extend(["--vae", str(custom_vae_str)])
+            if custom_vae_str:
+                custom_vae_p = Path(custom_vae_str)
+                if not custom_vae_p.is_file():
+                    raise RuntimeError(f"Custom VAE file not found: {custom_vae_p}")
+                cmd.extend(["--vae", str(custom_vae_p)])
             else:
                 vae_rel = model.engine_args.get("vae")
                 if model.family == "qwen" or model.id.startswith("qwen"):
-                    vae_type = getattr(request, "vae", None) or getattr(settings, "qwen_vae_type", "texture_fix")
                     if vae_type == "official":
                         vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
                     else:
                         vae_rel = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
 
             if vae_rel:
-                candidate_vae = next((
-                    p for p in [
-                        resolve_model_file(vae_rel),
-                        settings.models_dir / "Qwen-Image-2.1-4bit" / vae_rel,
-                        settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
-                        settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_rel,
-                        settings.models_dir / "vae" / vae_rel,
-                    ] if p.exists()
-                ), resolve_model_file(vae_rel))
+                vae_search_paths = [
+                    resolve_model_file(vae_rel),
+                    settings.models_dir / "Qwen-Image-2.1-4bit" / vae_rel,
+                    settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
+                    settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_rel,
+                    settings.models_dir / "vae" / vae_rel,
+                ]
+                if vae_type == "official":
+                    vae_search_paths.append(
+                        settings.models_dir / "OzzyGT--Qwen_Image_2_1_Turbo_sdnq_dynamic_8bit" / "vae" / "diffusion_pytorch_model.safetensors"
+                    )
+                candidate_vae = next((p for p in vae_search_paths if p.exists()), resolve_model_file(vae_rel))
 
                 if not candidate_vae.exists():
-                    # Auto-download Texture-Fix VAE if requested and missing
-                    if (model.family == "qwen" or model.id.startswith("qwen")) and getattr(settings, "qwen_vae_type", "texture_fix") == "texture_fix":
-                        emit(ProgressEvent(
-                            status=JobStatus.DOWNLOADING,
-                            progress=0.1,
-                            message=f"Downloading Texture-Fix VAE ({vae_rel}, 644 MB)...",
-                        ))
+                    # Auto-download Qwen VAE if requested and missing
+                    if model.family == "qwen" or model.id.startswith("qwen"):
                         from .sources import HuggingFaceSource
                         hf = HuggingFaceSource(token=settings.huggingface_token)
-                        hf.download_file(
-                            repo_id="madebyollin/texture-fix-vae-for-qwen-image-2.1",
-                            file_path="texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
-                            local_dir=repo_dir,
-                        )
-                        candidate_vae = repo_dir / vae_rel
+                        if vae_type == "texture_fix":
+                            emit(ProgressEvent(
+                                status=JobStatus.DOWNLOADING,
+                                progress=0.1,
+                                message=f"Downloading Texture-Fix VAE ({vae_rel}, 644 MB)...",
+                            ))
+                            hf.download_file(
+                                repo_id="madebyollin/texture-fix-vae-for-qwen-image-2.1",
+                                file_path="texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+                                local_dir=repo_dir,
+                            )
+                            candidate_vae = repo_dir / vae_rel
+                        else:
+                            emit(ProgressEvent(
+                                status=JobStatus.DOWNLOADING,
+                                progress=0.1,
+                                message="Downloading Official Qwen-Image-2.1 VAE (644 MB)...",
+                            ))
+                            hf.download_file(
+                                repo_id="OzzyGT/Qwen_Image_2_1_Turbo_sdnq_dynamic_8bit",
+                                file_path="vae/diffusion_pytorch_model.safetensors",
+                                local_dir=repo_dir,
+                            )
+                            dl_vae = repo_dir / "vae" / "diffusion_pytorch_model.safetensors"
+                            if dl_vae.exists():
+                                candidate_vae = repo_dir / vae_rel
+                                if not candidate_vae.exists():
+                                    dl_vae.rename(candidate_vae)
                     else:
                         raise RuntimeError(
                             f"VAE file not found: {vae_rel}. "
                             "Please download it from the Models tab."
                         )
                 cmd.extend(["--vae", str(candidate_vae)])
+                if model.family == "qwen" or model.id.startswith("qwen"):
+                    cmd.append("--vae-tiling")
 
             # VAE latent format override
             if model.engine_args.get("vae_format"):
@@ -343,10 +369,28 @@ class SDCppWorker:
                 strength = getattr(request, "init_image_strength", 0.75) or 0.75
                 cmd.extend(["--strength", str(round(strength, 2))])
 
+        # Guidance / CFG scale
+        req_cfg = getattr(request, "cfg", None)
+        if req_cfg is None:
+            req_cfg = getattr(request, "guidance_scale", None)
+
+        if model.engine_args.get("guidance_type") == "distilled" or model.family in ("flux", "sd3"):
+            cfg_val = req_cfg if req_cfg is not None else model.get_default_cfg()
+            # Always pass --cfg-scale 1.0 alongside --guidance so sd-cli doesn't use default cfg_scale=7.0
+            cmd.extend(["--cfg-scale", "1.0", "--guidance", str(cfg_val)])
+        else:
+            default_cfg = model.get_default_cfg()
+            cfg_val = req_cfg if req_cfg is not None else default_cfg
+            cmd.extend(["--cfg-scale", str(cfg_val)])
+
         # Prompt & Negative prompt
         cmd.extend(["-p", prompt])
-        if getattr(request, "negative_prompt", None) and request.negative_prompt.strip():
-            cmd.extend(["-n", request.negative_prompt.strip()])
+        neg_str = (getattr(request, "negative_prompt", None) or "").strip()
+        if neg_str:
+            cmd.extend(["-n", neg_str])
+        elif (model.family == "qwen" or model.id.startswith("qwen")) and cfg_val > 1.0:
+            # Ensure unconditional pass is active in sd.cpp when CFG > 1.0
+            cmd.extend(["-n", " "])
 
         # Dimensions, steps, seed
         cmd.extend([
@@ -360,35 +404,35 @@ class SDCppWorker:
         # Flash Attention for diffusion model
         cmd.append("--diffusion-fa")
 
-        # Guidance / CFG scale
-        req_cfg = getattr(request, "cfg", None)
-        if req_cfg is None:
-            req_cfg = getattr(request, "guidance_scale", None)
+        # Sampling method & Noise / Eta
+        noise_val = float(getattr(request, "noise", 0.0) or 0.0)
+        ui_sampler = getattr(request, "sampler", None)
+        if not ui_sampler and getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
+            ui_sampler = model.scheduler_presets["default"].get("sampler")
+        if not ui_sampler:
+            ui_sampler = "euler"
+        if noise_val > 0.0 and ui_sampler == "euler":
+            ui_sampler = "euler_a"
 
-        if model.engine_args.get("guidance_type") == "distilled" or model.family in ("flux", "sd3"):
-            cfg_val = req_cfg if req_cfg is not None else 3.5
-            cmd.extend(["--guidance", str(cfg_val)])
-        else:
-            default_cfg = 3.0 if model.family == "qwen" else 6.0
-            if getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
-                default_cfg = model.scheduler_presets["default"].get("cfg", default_cfg)
-            cfg_val = req_cfg if req_cfg is not None else default_cfg
-            cmd.extend(["--cfg-scale", str(cfg_val)])
-
-        # Noise / Eta
-        if getattr(request, "noise", 0.0) is not None and request.noise > 0.0:
-            cmd.extend(["--eta", str(request.noise)])
-
-        # Sampling method
-        sampler = getattr(request, "sampler", None)
-        if not sampler and getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
-            sampler = model.scheduler_presets["default"].get("sampler")
-        if not sampler:
-            sampler = "euler"
-        cmd.extend(["--sampling-method", str(sampler)])
+        sd_cpp_sampler_map = {
+            "euler": "euler",
+            "euler_a": "euler_a",
+            "heun": "heun",
+            "dpm++2m": "dpm++2m",
+            "dpm++2m_sde": "er_sde",
+            "dpm2": "dpm2",
+            "dpm2_a": "dpm++2s_a",
+            "unipc": "res_multistep",
+            "lcm": "lcm",
+        }
+        mapped_sampler = sd_cpp_sampler_map.get(ui_sampler, "euler")
+        cmd.extend(["--sampling-method", mapped_sampler])
+        # Always pass --eta explicitly when noise is specified or stochastic sampler is active
+        if noise_val > 0.0 or mapped_sampler in ("euler_a", "er_sde", "dpm++2s_a", "lcm"):
+            cmd.extend(["--eta", str(noise_val)])
 
         # Logging
-        logger.info(f"[sd_cpp] Launching SD.CPP: {width}x{height}, steps={request.steps}, seed={seed}")
+        logger.info(f"[sd_cpp] Launching SD.CPP: {width}x{height}, steps={request.steps}, cfg={cfg_val}, sampler={mapped_sampler}, eta={noise_val}, seed={seed}")
         logger.debug(f"[sd_cpp] CLI args: {' '.join(cmd)}")
 
         # 4. Environment PATH
@@ -496,10 +540,15 @@ class SDCppWorker:
                 "prompt": prompt,
                 "negative_prompt": getattr(request, "negative_prompt", None),
                 "model_id": request.model_id,
+                "variant_id": getattr(request, "variant_id", None),
                 "seed": seed,
                 "width": width,
                 "height": height,
                 "steps": request.steps,
+                "cfg": cfg_val,
+                "noise": noise_val,
+                "sampler": ui_sampler,
+                "vae": vae_type,
                 "backend": "sd_cpp",
                 "engine": "stable-diffusion.cpp",
                 "generation_time_sec": round(elapsed, 2),

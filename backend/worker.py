@@ -13,15 +13,16 @@ NEVER use shell=True or os.system().
 from __future__ import annotations
 
 import json
-import os
+import logging
 import re
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from queue import Queue, Empty
 from typing import Callable, Optional
+
+logger = logging.getLogger("worker")
 
 from .cache import CacheManager
 from .engine import engine_cli_path, is_engine_installed, has_api_key_available
@@ -86,6 +87,8 @@ class GenerateRequest:
     lora_paths: list[Path] = field(default_factory=list)
     lora_strengths: list[float] = field(default_factory=list)
     output_filename: Optional[str] = None
+    variant_id: Optional[str] = None
+    sampler: Optional[str] = None
     text_encoder_id: Optional[str] = None
     custom_text_encoder_path: Optional[str] = None
     vae: Optional[str] = None
@@ -196,6 +199,8 @@ class Worker:
     def __init__(self):
         self.cache = CacheManager()
         self._current_process: Optional[subprocess.Popen] = None
+        self._sd_worker = None
+        self._sdnq_worker = None
         self._cancel_flag = threading.Event()
         self._lock = threading.Lock()
 
@@ -371,16 +376,20 @@ class Worker:
         base_path = required_files["base_model_path"]
         local_base = local_repo_dir / base_path
 
-        # Qwen-Image-2.1 & models with text_encoders handling
+        # Custom VAE or Qwen-Image-2.1 VAE handling
+        custom_vae_str = getattr(request, "custom_vae_path", None) if request else None
+        if custom_vae_str:
+            custom_vae_p = Path(custom_vae_str)
+            if not custom_vae_p.is_file():
+                raise RuntimeError(f"Custom VAE file not found: {custom_vae_p}")
+            required_paths["vae"] = custom_vae_p
+
         if model.id == "qwen_image_2_1" or getattr(model, "text_encoders", None):
             if model.id == "qwen_image_2_1":
                 self._ensure_qwen_image_2_1_configs(local_base)
 
-                settings = get_settings()
-                custom_vae_str = getattr(request, "custom_vae_path", None) if request else None
-                if custom_vae_str and Path(custom_vae_str).exists():
-                    vae_file = Path(custom_vae_str)
-                else:
+                if not required_paths.get("vae"):
+                    settings = get_settings()
                     vae_type = (getattr(request, "vae", None) if request else None) or getattr(settings, "qwen_vae_type", "texture_fix")
                     if vae_type == "official":
                         vae_filename = "qwen_image_2.1_vae_bf16.safetensors"
@@ -425,8 +434,8 @@ class Worker:
                         elif downloaded_vae.exists():
                             vae_file = downloaded_vae
 
-                if vae_file.exists():
-                    required_paths["vae"] = vae_file
+                    if vae_file.exists():
+                        required_paths["vae"] = vae_file
 
             # Determine text encoder to use
             te_file_path = None
@@ -667,6 +676,21 @@ class Worker:
             finally:
                 self._sd_worker = None
 
+        # Dispatch: SDNQ (SD.Next Quantization) engine
+        if getattr(model, "engine", "quantfunc") == "sdnq":
+            from .sdnq_engine import SDNQWorker, is_sdnq_installed
+            if not is_sdnq_installed():
+                raise RuntimeError(
+                    "SDNQ runtime environment is not installed. "
+                    "Please go to Settings → Engine to install/verify SDNQ."
+                )
+            sdnq_worker = SDNQWorker()
+            self._sdnq_worker = sdnq_worker
+            try:
+                return sdnq_worker.generate(request, model, gpu_info, progress_callback=emit)
+            finally:
+                self._sdnq_worker = None
+
         # Determine engine version:
         engine_ver = getattr(model, "engine_version", None)
         if not engine_ver:
@@ -702,6 +726,7 @@ class Worker:
             backend=request.backend,
             steps=request.steps,
             use_prequant=request.use_prequant,
+            variant_id=request.variant_id,
         )
 
         emit(ProgressEvent(status=JobStatus.DOWNLOADING, message="Checking cache for missing files..."))
@@ -736,7 +761,13 @@ class Worker:
         if local_paths.get("tokenizer"):
             local_paths["tokenizer"] = validate_path(str(local_paths["tokenizer"]), base_dir=settings.models_dir, must_exist=True)
         if local_paths.get("vae"):
-            local_paths["vae"] = validate_path(str(local_paths["vae"]), base_dir=settings.models_dir, must_exist=True)
+            if getattr(request, "custom_vae_path", None):
+                vae_p = Path(local_paths["vae"]).resolve()
+                if not vae_p.is_file():
+                    raise ValueError(f"Custom VAE file not found: {vae_p}")
+                local_paths["vae"] = vae_p
+            else:
+                local_paths["vae"] = validate_path(str(local_paths["vae"]), base_dir=settings.models_dir, must_exist=True)
 
         # ----- Phase 4: Build subprocess args -----
         cli_path = engine_cli_path(version=engine_ver)
@@ -756,29 +787,61 @@ class Worker:
             "--height", str(height),
         ]
 
-        # Guidance scale / CFG
-        cfg = getattr(request, "cfg", 1.0)
-        if cfg is None or cfg == 1.0:
-            if getattr(model, "scheduler_presets", None) and "default" in model.scheduler_presets:
-                cfg = model.scheduler_presets["default"].get("cfg", cfg)
-            elif getattr(model, "scheduler_presets", None):
-                for p in model.scheduler_presets.values():
-                    if "cfg" in p:
-                        cfg = p["cfg"]
-                        break
+        # Guidance scale / CFG & True CFG
+        cfg = getattr(request, "cfg", None)
+        if cfg is None:
+            cfg = model.get_default_cfg()
         if cfg is not None and cfg > 0.0:
             args.extend(["--guidance-scale", str(cfg)])
+            has_neg = bool(getattr(request, "negative_prompt", None) and request.negative_prompt.strip())
+            if model.family == "qwen" or model.id.startswith("qwen") or has_neg or request.init_image_path:
+                args.extend(["--true-cfg-scale", str(cfg)])
 
         # Negative prompt
         if getattr(request, "negative_prompt", None) and request.negative_prompt.strip():
-            args.extend(["--negative-prompt", request.negative_prompt.strip()])
+            from .security import validate_negative_prompt
+            neg_prompt = validate_negative_prompt(request.negative_prompt)
+            if neg_prompt:
+                args.extend(["--negative-prompt", neg_prompt])
 
-        # Noise / Eta
-        if getattr(request, "noise", 0.0) is not None and request.noise > 0.0:
-            args.extend(["--eta", str(request.noise)])
+        # Sampler & Noise / Eta
+        # NOTE: Binary disassembly of quantfunc.exe (v0.0.12 & v0.0.17) confirmed that all
+        # DiT pipelines (Flux2Klein, QwenImage, QwenImageEdit, ZImage) pack latents into a
+        # 3D sequence tensor shape=[B, seq_len, C] (e.g. [1, 4096, 128]) before calling
+        # sampler->denoise(). Inside Sampler.cpp, stochastic/ancestral samplers (euler_a,
+        # dpm++2m_sde, ddim) hardcode 4D indexing `x.shape[3]` when eta > 0, which throws
+        # `TensorShape::operator[]: index 3 out of range for size 3 shape=[1, 4096, 128]`.
+        # Deterministic samplers (euler, heun, dpm++2m, and unipc in v0.0.17) operate
+        # elementwise on 3D packed latents without indexing shape[3].
+        noise_val = getattr(request, "noise", 0.0) or 0.0
+        req_sampler = (getattr(request, "sampler", None) or "euler").lower().strip()
+        qf_sampler_map = {
+            "euler": "euler",
+            "euler_a": "euler",
+            "lcm": "euler",
+            "ddim": "euler",
+            "heun": "heun",
+            "dpm++2m": "dpm++2m",
+            "dpm++2m_sde": "dpm++2m",
+            "dpm2_a": "dpm++2m",
+            "unipc": "dpm++2m" if engine_ver == "0.0.12" else "unipc",
+        }
+        sampler_val = qf_sampler_map.get(req_sampler, "euler")
+        if sampler_val != req_sampler or noise_val > 0.0:
+            logger.info(
+                "[worker] quantfunc.exe uses 3D packed latents [B, L, C]; "
+                "mapped sampler '%s' (noise=%.2f) -> '%s' (eta=0)",
+                req_sampler,
+                noise_val,
+                sampler_val,
+            )
+        args.extend(["--sampler", str(sampler_val)])
 
         if settings.auto_optimize:
             args.append("--auto-optimize")
+
+        if getattr(settings, "rotation_block_size", 0) and int(settings.rotation_block_size) > 0:
+            args.extend(["--rotation-block-size", str(int(settings.rotation_block_size))])
 
         if vram_budget > 0:
             args.extend(["--vram-budget", str(vram_budget)])
@@ -807,7 +870,7 @@ class Worker:
             strength = validate_float(request.init_image_strength, "init_image_strength", min_val=0.01, max_val=1.0)
             args.extend([
                 "--ref-image", str(resolved_init),
-                "--init-img-strength", str(strength),
+                "--edit-strength", str(strength),
             ])
 
         # QuantFunc API key — user key from Settings takes precedence.
@@ -959,10 +1022,15 @@ class Worker:
                 "prompt": request.prompt,
                 "negative_prompt": request.negative_prompt,
                 "model_id": request.model_id,
+                "variant_id": getattr(request, "variant_id", None),
                 "seed": seed,
                 "width": width,
                 "height": height,
                 "steps": request.steps,
+                "cfg": cfg,
+                "noise": noise_val,
+                "sampler": sampler_val,
+                "vae": getattr(request, "vae", None),
                 "backend": request.backend,
                 "generation_time_sec": round(elapsed, 2),
                 "timestamp": int(time.time()),
@@ -996,6 +1064,11 @@ class Worker:
                 self._sd_worker.cancel()
             except Exception:
                 pass
+        if hasattr(self, "_sdnq_worker") and self._sdnq_worker:
+            try:
+                self._sdnq_worker.cancel()
+            except Exception:
+                pass
         if self._current_process:
             try:
                 self._current_process.terminate()
@@ -1003,18 +1076,18 @@ class Worker:
                 pass
 
     def _compute_vram_budget(self, gpu_info: GPUInfo, model: ModelSpec) -> int:
-        """Compute --vram-budget value in GB based on settings + GPU."""
+        """Compute --vram-budget value in MB based on settings + GPU."""
         settings = get_settings()
         mode = settings.vram_mode
 
         if mode == VRAMMode.AUTO or gpu_info.vram_gb == 0:
             return 0  # No budget — let engine decide
         elif mode == VRAMMode.CONSERVATIVE:
-            return int(gpu_info.vram_gb * 0.5)
+            return int(gpu_info.vram_gb * 0.5 * 1024)
         elif mode == VRAMMode.BALANCED:
-            return int(gpu_info.vram_gb * 0.75)
+            return int(gpu_info.vram_gb * 0.75 * 1024)
         elif mode == VRAMMode.MAXIMUM:
-            return int(gpu_info.vram_gb)
+            return int(gpu_info.vram_gb * 1024)
         return 0
 
 
