@@ -21,8 +21,8 @@
     "diffusion_model": "flux3_image_klein_sd_Q8_0.gguf",
     "llm": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
     "vae": "flux2-vae.safetensors",
-    "vae_repo": "black-forest-labs/flux-3-image-klein-comfy",
-    "vae_remote": "vae/flux2-vae.safetensors",
+    "vae_repo": "unsloth/FLUX.2-VAE",
+    "vae_remote": "split_files/vae/flux2-vae.safetensors",
     "vae_format": "flux2",
     "guidance_type": "distilled"
   },
