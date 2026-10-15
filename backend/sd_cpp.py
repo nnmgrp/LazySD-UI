@@ -50,10 +50,10 @@ def get_sd_cpp_version() -> str:
     """Return installed or known SD.CPP release version."""
     if not is_sd_cpp_installed():
         return "not installed"
-    return "master-a4a9669 (cu12)"
+    return "master-8cd731e (cu12)"
 
 
-SD_CPP_WINDOWS_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-946-a4a9669/sd-master-a4a9669-bin-win-cuda12-x64.zip"
+SD_CPP_WINDOWS_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-968-8cd731e/sd-master-8cd731e-bin-win-cuda12-x64.zip"
 
 
 def download_sd_cpp(
