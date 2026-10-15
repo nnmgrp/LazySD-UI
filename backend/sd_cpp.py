@@ -298,6 +298,10 @@ class SDCppWorker:
             if vae_rel:
                 vae_search_paths = [
                     resolve_model_file(vae_rel),
+                    settings.models_dir / "Klein-4B-Series" / "klein-4b-series-50x-above-base-model" / "vae" / "diffusion_pytorch_model.safetensors",
+                    settings.models_dir / "Klein-9B-Series" / "klein-9b-series-50x-above-base-model" / "vae" / "diffusion_pytorch_model.safetensors",
+                    settings.models_dir / "FLUX.1-schnell-gguf" / "ae.safetensors",
+                    settings.models_dir / "FLUX.1-schnell-gguf" / vae_rel,
                     settings.models_dir / "Qwen-Image-2.1-4bit" / vae_rel,
                     settings.models_dir / "Qwen-Image-2.1-4bit" / "vae" / vae_rel,
                     settings.models_dir / "Qwen-Image-2.1-GGUF" / vae_rel,
@@ -342,6 +346,27 @@ class SDCppWorker:
                                 candidate_vae = repo_dir / vae_rel
                                 if not candidate_vae.exists():
                                     dl_vae.rename(candidate_vae)
+                    elif model.engine_args.get("vae_repo"):
+                        from .sources import HuggingFaceSource
+                        hf = HuggingFaceSource(token=settings.huggingface_token)
+                        vae_remote = model.engine_args.get("vae_remote", f"vae/{vae_rel}")
+                        emit(ProgressEvent(
+                            status=JobStatus.DOWNLOADING,
+                            progress=0.1,
+                            message=f"Downloading VAE ({vae_rel})...",
+                        ))
+                        hf.download_file(
+                            repo_id=model.engine_args["vae_repo"],
+                            file_path=vae_remote,
+                            local_dir=repo_dir,
+                        )
+                        target_v = repo_dir / vae_rel
+                        dl_v = repo_dir / vae_remote
+                        if dl_v.exists() and not target_v.exists() and dl_v != target_v:
+                            import shutil
+                            target_v.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(dl_v, target_v)
+                        candidate_vae = target_v if target_v.exists() else dl_v
                     else:
                         raise RuntimeError(
                             f"VAE file not found: {vae_rel}. "

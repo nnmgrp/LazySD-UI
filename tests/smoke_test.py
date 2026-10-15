@@ -213,6 +213,14 @@ def test_registry():
         assert flux_gguf.engine_args.get("diffusion_model") == "flux1-schnell-Q4_K_S.gguf"
         print(f"  ✓ Flux Schnell GGUF loaded: engine={flux_gguf.engine}, diffusion={flux_gguf.engine_args.get('diffusion_model')}")
 
+        flux3 = registry.get("flux_3_image_klein_gguf")
+        assert flux3.engine == "sd_cpp"
+        assert any(t.id == "q8_0" for t in flux3.transformers), "Q8_0 variant must be present"
+        assert flux3.engine_args.get("diffusion_model") == "flux3_image_klein_sd_Q8_0.gguf"
+        assert len(flux3.transformers) == 5
+        assert len(flux3.text_encoders) == 4
+        print(f"  ✓ FLUX 3 Image Klein GGUF loaded: 5 variants (Q8_0: {flux3.transformers[0].path}), 4 text encoders")
+
         # Qwen text encoders
         qwen = registry.get("qwen_image_2_1")
         assert len(qwen.text_encoders) == 1

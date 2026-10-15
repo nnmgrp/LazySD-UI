@@ -1,0 +1,154 @@
+{
+  "id": "flux_3_image_klein_gguf",
+  "name": "FLUX 3 Image Klein (GGUF)",
+  "family": "flux",
+  "pipeline": "text_to_image",
+  "engine": "sd_cpp",
+  "engine_version": "sd_cpp",
+  "description": "Black Forest Labs FLUX 3 Image Klein (16-step distilled) via stable-diffusion.cpp with GGUF quantizations from Abiray. Multimodal diffusion model with Q8_0, Q6_K, Q5_K_M, Q4_K_M, and Q3_K_S variants, powered by Qwen3-VL-4B text encoder and Flux2 VAE.",
+  "upstream": {
+    "model": "black-forest-labs/flux-3-image-klein",
+    "license": "FLUX Kommunity License v1.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "Abiray/flux-3-image-klein-sd-GGUF"
+    }
+  },
+  "engine_args": {
+    "diffusion_model": "flux3_image_klein_sd_Q8_0.gguf",
+    "llm": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+    "vae": "flux2-vae.safetensors",
+    "vae_repo": "black-forest-labs/flux-3-image-klein-comfy",
+    "vae_remote": "vae/flux2-vae.safetensors",
+    "vae_format": "flux2",
+    "guidance_type": "distilled"
+  },
+  "text_encoders": [
+    {
+      "id": "qwen3vl_4b_q4_k_m",
+      "name": "Qwen3-VL-4B Q4_K_M (~2.3 GB, GGUF Recommended for SD.CPP)",
+      "file": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+      "precision": "q4_k_m",
+      "size_gb": 2.33,
+      "size_bytes": 2497281664,
+      "recommended": true,
+      "source": {
+        "repo_id": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+        "file_path": "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+      }
+    },
+    {
+      "id": "qwen3vl_4b_q8_0",
+      "name": "Qwen3-VL-4B Q8_0 (~4.0 GB, GGUF High Fidelity)",
+      "file": "Qwen3VL-4B-Instruct-Q8_0.gguf",
+      "precision": "q8_0",
+      "size_gb": 3.99,
+      "size_bytes": 4280406144,
+      "recommended": false,
+      "source": {
+        "repo_id": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+        "file_path": "Qwen3VL-4B-Instruct-Q8_0.gguf"
+      }
+    },
+    {
+      "id": "qwen3vl_4b_int8_convrot",
+      "name": "BFL Qwen3-VL-4B INT8 ConvRot (~4.5 GB, Official Safetensors for ComfyUI)",
+      "file": "qwen3vl_4b_int8_convrot.safetensors",
+      "precision": "int8_convrot",
+      "size_gb": 4.52,
+      "size_bytes": 4858559240,
+      "recommended": false,
+      "source": {
+        "repo_id": "black-forest-labs/flux-3-image-klein-comfy",
+        "file_path": "text_encoders/qwen3vl_4b_int8_convrot.safetensors"
+      }
+    },
+    {
+      "id": "qwen3vl_4b_bf16",
+      "name": "BFL Qwen3-VL-4B BF16 (~8.3 GB, Official Safetensors)",
+      "file": "qwen3vl_4b_bf16.safetensors",
+      "precision": "bf16",
+      "size_gb": 8.27,
+      "size_bytes": 8875719408,
+      "recommended": false,
+      "source": {
+        "repo_id": "black-forest-labs/flux-3-image-klein-comfy",
+        "file_path": "text_encoders/qwen3vl_4b_bf16.safetensors"
+      }
+    }
+  ],
+  "transformers": [
+    {
+      "id": "q8_0",
+      "path": "flux3_image_klein_sd_Q8_0.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 16,
+      "size_gb": 5.58,
+      "size_bytes": 5991748384,
+      "recommended": true,
+      "note": "Q8_0 Maximum quality GGUF (~5.6 GB)"
+    },
+    {
+      "id": "q6_k",
+      "path": "flux3_image_klein_sd_Q6_K.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 16,
+      "size_gb": 4.35,
+      "size_bytes": 4673712928,
+      "recommended": false,
+      "note": "Q6_K Near-lossless GGUF (~4.4 GB)"
+    },
+    {
+      "id": "q5_k_m",
+      "path": "flux3_image_klein_sd_Q5_K_M.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 16,
+      "size_gb": 3.68,
+      "size_bytes": 3950514976,
+      "recommended": false,
+      "note": "Q5_K_M Balanced quality/VRAM (~3.7 GB)"
+    },
+    {
+      "id": "q4_k_m",
+      "path": "flux3_image_klein_sd_Q4_K_M.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 16,
+      "size_gb": 3.05,
+      "size_bytes": 3269858080,
+      "recommended": false,
+      "note": "Q4_K_M Recommended medium quantization (~3.1 GB)"
+    },
+    {
+      "id": "q3_k_s",
+      "path": "flux3_image_klein_sd_Q3_K_S.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 16,
+      "size_gb": 2.37,
+      "size_bytes": 2546660128,
+      "recommended": false,
+      "note": "Q3_K_S Low VRAM quantization (~2.4 GB)"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "sampler": "euler",
+      "steps": 16,
+      "cfg": 1.0,
+      "guidance_scale": 1.0
+    }
+  }
+}

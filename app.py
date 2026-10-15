@@ -373,8 +373,16 @@ def create_app() -> FastAPI:
                 if not diff_ok:
                     return False
                 llm_rel = model.engine_args.get("llm")
-                if llm_rel and not ((repo_dir / llm_rel).exists() or (repo_dir / "text_encoders" / llm_rel).exists()):
-                    return False
+                if llm_rel:
+                    has_llm = (repo_dir / llm_rel).exists() or (repo_dir / "text_encoders" / llm_rel).exists()
+                    if not has_llm and getattr(model, "text_encoders", None):
+                        for te in model.text_encoders:
+                            te_f = te.get("file")
+                            if te_f and ((repo_dir / te_f).exists() or (repo_dir / "text_encoders" / te_f).exists()):
+                                has_llm = True
+                                break
+                    if not has_llm:
+                        return False
                 return True
 
             if getattr(model, "engine", "quantfunc") == "sdnq":
