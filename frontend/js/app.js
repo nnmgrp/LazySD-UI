@@ -1344,6 +1344,12 @@ const App = {
     }
   },
 
+  snapDimension(val, multiple = 64) {
+    const v = parseInt(val, 10);
+    if (isNaN(v) || v <= 0) return 1024;
+    return Math.max(multiple, Math.round(v / multiple) * multiple);
+  },
+
   parseResolution() {
     const val = document.getElementById("resolution-select")?.value?.trim() || "1024x1024";
     if (val.includes("x")) {
@@ -1351,12 +1357,12 @@ const App = {
       const w = parseInt(parts[0], 10);
       const h = parseInt(parts[1], 10);
       return {
-        width: !isNaN(w) && w > 0 ? w : 1024,
-        height: !isNaN(h) && h > 0 ? h : 1024,
+        width: this.snapDimension(!isNaN(w) && w > 0 ? w : 1024, 64),
+        height: this.snapDimension(!isNaN(h) && h > 0 ? h : 1024, 64),
       };
     }
     const num = parseInt(val, 10);
-    const sz = !isNaN(num) && num > 0 ? num : 1024;
+    const sz = this.snapDimension(!isNaN(num) && num > 0 ? num : 1024, 64);
     return { width: sz, height: sz };
   },
 
@@ -1375,6 +1381,8 @@ const App = {
     }
 
     let pollCount = 0;
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 10;
     const MAX_POLLS = 9000;  // 30 min at 200ms — fail-safe against stuck jobs
 
     this.state.pollInterval = setInterval(async () => {
@@ -1387,6 +1395,7 @@ const App = {
       }
       try {
         const status = await this.apiGet(`/api/jobs/${jobId}`);
+        consecutiveErrors = 0;
         this.updateProgress(status);
 
         if (status.status === "complete") {
@@ -1404,11 +1413,18 @@ const App = {
           this.toast("info", t("toast.cancelled"));
         }
       } catch (e) {
-        console.error("[app] Polling failed:", e);
-        // If job endpoint returns 404 (job lost), stop polling
-        this.stopPolling();
-        this.setGenerating(false);
-        this.toast("error", "Generation job lost — try again");
+        consecutiveErrors++;
+        console.warn(`[app] Polling warning (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, e);
+        const errMsg = String(e?.message || "");
+        if (errMsg.includes("404") || errMsg.includes("Not Found")) {
+          this.stopPolling();
+          this.setGenerating(false);
+          this.toast("error", "Generation job lost (404) — try again");
+        } else if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          this.stopPolling();
+          this.setGenerating(false);
+          this.toast("error", "Network connection lost during generation — try again");
+        }
       }
     }, 200);  // Poll every 200ms
   },
@@ -1763,6 +1779,21 @@ const App = {
 
   // ---------- Img2Img ----------
   async uploadImg2ImgFile(file) {
+    if (!file) return;
+
+    const ext = "." + (file.name ? file.name.split(".").pop().toLowerCase() : "");
+    const validExts = [".png", ".jpg", ".jpeg", ".webp"];
+    const validMimes = ["image/png", "image/jpeg", "image/webp"];
+    if (!validMimes.includes(file.type) && !validExts.includes(ext)) {
+      this.toast("error", "Unsupported file format. Allowed: PNG, JPEG, WEBP");
+      return;
+    }
+    const sizeMb = file.size / 1024 / 1024;
+    if (sizeMb > 25) {
+      this.toast("error", `File too large (${sizeMb.toFixed(1)} MB). Maximum allowed size is 25 MB.`);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
 

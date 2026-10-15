@@ -19,7 +19,7 @@ if errorlevel 1 (
 
 echo.
 echo Checking dependencies...
-python -c "import gradio, fastapi, requests, pydantic" 2>nul
+python -c "import fastapi, uvicorn, requests, pydantic, PIL" 2>nul
 if errorlevel 1 (
     echo Installing dependencies from requirements.txt...
     python -m pip install -r requirements.txt

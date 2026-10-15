@@ -8,7 +8,7 @@ class Dropzone {
     this.element = element;
     this.onFile = options.onFile || (() => {});
     this.acceptedTypes = options.acceptedTypes || ["image/png", "image/jpeg", "image/webp"];
-    this.maxSizeMb = options.maxSizeMb || 20;
+    this.maxSizeMb = options.maxSizeMb || 25;
 
     this.dropOverlay = null;
     this._setup();
@@ -89,15 +89,26 @@ class Dropzone {
   }
 
   _handleFile(file) {
-    // Validate type
-    if (!this.acceptedTypes.includes(file.type)) {
-      console.warn(`[dropzone] Rejected file type: ${file.type}`);
+    // Validate type (MIME type or extension fallback)
+    const ext = "." + (file.name ? file.name.split(".").pop().toLowerCase() : "");
+    const validExts = [".png", ".jpg", ".jpeg", ".webp"];
+    const isMimeValid = this.acceptedTypes.includes(file.type);
+    const isExtValid = validExts.includes(ext);
+
+    if (!isMimeValid && !isExtValid) {
+      console.warn(`[dropzone] Rejected file type: ${file.type || ext}`);
+      if (window.App && typeof window.App.toast === "function") {
+        window.App.toast("error", `Unsupported file type: ${file.type || ext}. Allowed: PNG, JPEG, WEBP`);
+      }
       return;
     }
     // Validate size
     const sizeMb = file.size / 1024 / 1024;
     if (sizeMb > this.maxSizeMb) {
       console.warn(`[dropzone] File too large: ${sizeMb.toFixed(1)} MB > ${this.maxSizeMb} MB`);
+      if (window.App && typeof window.App.toast === "function") {
+        window.App.toast("error", `File too large: ${sizeMb.toFixed(1)} MB (Max: ${this.maxSizeMb} MB)`);
+      }
       return;
     }
 
