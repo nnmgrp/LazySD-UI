@@ -135,6 +135,54 @@
       "size_bytes": 2546660128,
       "recommended": false,
       "note": "Q3_K_S Low VRAM quantization (~2.4 GB)"
+    },
+    {
+      "id": "base_q8_0",
+      "path": "flux3_image_klein_base-Q8_0.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 5.56,
+      "size_bytes": 5971301024,
+      "repo_id": "akhaliq/flux-3-image-klein-base-gguf",
+      "recommended": false,
+      "note": "Base (undistilled) Q8_0 GGUF (~5.6 GB, cfg=3.5, 20 steps)"
+    },
+    {
+      "id": "base_q6_k",
+      "path": "flux3_image_klein_base-Q6_K.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 4.33,
+      "size_bytes": 4653265568,
+      "repo_id": "akhaliq/flux-3-image-klein-base-gguf",
+      "recommended": false,
+      "note": "Base (undistilled) Q6_K GGUF (~4.3 GB, cfg=3.5, 20 steps)"
+    },
+    {
+      "id": "base_q4_k_m",
+      "path": "flux3_image_klein_base-Q4_K_M.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 3.03,
+      "size_bytes": 3249410720,
+      "repo_id": "akhaliq/flux-3-image-klein-base-gguf",
+      "recommended": false,
+      "note": "Base (undistilled) Q4_K_M GGUF (~3.0 GB, cfg=3.5, 20 steps)"
+    },
+    {
+      "id": "base_q3_k_s",
+      "path": "flux3_image_klein_base-Q3_K_S.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 2.35,
+      "size_bytes": 2526212768,
+      "repo_id": "akhaliq/flux-3-image-klein-base-gguf",
+      "recommended": false,
+      "note": "Base (undistilled) Q3_K_S GGUF (~2.4 GB, cfg=3.5, 20 steps)"
     }
   ],
   "requirements": {
@@ -149,6 +197,12 @@
       "steps": 16,
       "cfg": 1.0,
       "guidance_scale": 1.0
+    },
+    "base": {
+      "sampler": "euler",
+      "steps": 20,
+      "cfg": 3.5,
+      "guidance_scale": 3.5
     }
   }
 }

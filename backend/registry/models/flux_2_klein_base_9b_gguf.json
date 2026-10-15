@@ -1,0 +1,126 @@
+{
+  "id": "flux_2_klein_base_9b_gguf",
+  "name": "Flux.2 Klein 9B Base (GGUF)",
+  "family": "klein",
+  "pipeline": "text_to_image",
+  "engine": "sd_cpp",
+  "engine_version": "sd_cpp",
+  "description": "Black Forest Labs FLUX.2 [klein] 9B Base (undistilled foundation model) via stable-diffusion.cpp with Unsloth Dynamic 2.0 GGUF quantizations. Powered by Qwen3-8B Q8/Q4 text encoder and Flux2 VAE.",
+  "upstream": {
+    "model": "black-forest-labs/FLUX.2-klein-base-9B",
+    "license": "FLUX Non-Commercial License",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "unsloth/FLUX.2-klein-base-9B-GGUF"
+    }
+  },
+  "engine_args": {
+    "diffusion_model": "flux-2-klein-base-9b-Q8_0.gguf",
+    "llm": "Qwen3-8B-Q8_0.gguf",
+    "vae": "flux2-vae.safetensors",
+    "vae_repo": "unsloth/FLUX.2-VAE",
+    "vae_remote": "split_files/vae/flux2-vae.safetensors",
+    "vae_format": "flux2"
+  },
+  "text_encoders": [
+    {
+      "id": "qwen3_8b_q8_0",
+      "name": "Qwen3-8B Q8_0 (~8.1 GB, High Fidelity Q8 Encoder)",
+      "file": "Qwen3-8B-Q8_0.gguf",
+      "precision": "q8_0",
+      "size_gb": 8.11,
+      "size_bytes": 8709519168,
+      "recommended": true,
+      "source": {
+        "repo_id": "unsloth/Qwen3-8B-GGUF",
+        "file_path": "Qwen3-8B-Q8_0.gguf"
+      }
+    },
+    {
+      "id": "qwen3_8b_q4_k_m",
+      "name": "Qwen3-8B Q4_K_M (~4.7 GB, Balanced GGUF Encoder)",
+      "file": "Qwen3-8B-Q4_K_M.gguf",
+      "precision": "q4_k_m",
+      "size_gb": 4.68,
+      "size_bytes": 5027784512,
+      "recommended": false,
+      "source": {
+        "repo_id": "unsloth/Qwen3-8B-GGUF",
+        "file_path": "Qwen3-8B-Q4_K_M.gguf"
+      }
+    }
+  ],
+  "transformers": [
+    {
+      "id": "q8_0",
+      "path": "flux-2-klein-base-9b-Q8_0.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 9.29,
+      "size_bytes": 9978304800,
+      "recommended": true,
+      "note": "Q8_0 Maximum quality (~9.3 GB, undistilled base, 20 steps, cfg=4.0)"
+    },
+    {
+      "id": "q6_k",
+      "path": "flux-2-klein-base-9b-Q6_K.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 7.33,
+      "size_bytes": 7865424160,
+      "recommended": false,
+      "note": "Q6_K Near-lossless (~7.3 GB)"
+    },
+    {
+      "id": "q5_k_m",
+      "path": "flux-2-klein-base-9b-Q5_K_M.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 6.54,
+      "size_bytes": 7018699040,
+      "recommended": false,
+      "note": "Q5_K_M Balanced quality/VRAM (~6.5 GB)"
+    },
+    {
+      "id": "q4_k_m",
+      "path": "flux-2-klein-base-9b-Q4_K_M.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 5.50,
+      "size_bytes": 5909829920,
+      "recommended": false,
+      "note": "Q4_K_M Medium quant (~5.5 GB)"
+    },
+    {
+      "id": "q3_k_s",
+      "path": "flux-2-klein-base-9b-Q3_K_S.gguf",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 20,
+      "size_gb": 4.37,
+      "size_bytes": 4689287456,
+      "recommended": false,
+      "note": "Q3_K_S Low VRAM (~4.4 GB)"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 10,
+    "vram_recommended_gb": 16,
+    "gpu_min_sm": 75,
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "sampler": "euler",
+      "steps": 20,
+      "cfg": 4.0
+    }
+  }
+}

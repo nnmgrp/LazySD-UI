@@ -201,6 +201,22 @@ class SDCppWorker:
                 return repo_dir / "text_encoders" / rel_or_abs
             if (repo_dir / "vae" / rel_or_abs).exists():
                 return repo_dir / "vae" / rel_or_abs
+            # Check secondary repos (e.g. text encoders from unsloth/Qwen3-8B-GGUF or variants from akhaliq/...)
+            sec_repos = [
+                t.repo_id for t in getattr(model, "transformers", []) if getattr(t, "repo_id", None)
+            ] + [
+                te.get("source", {}).get("repo_id")
+                for te in getattr(model, "text_encoders", [])
+                if isinstance(te.get("source"), dict) and te.get("source", {}).get("repo_id")
+            ]
+            for cand_repo in sec_repos:
+                alt_dir = cache.repo_dir_for(cand_repo)
+                if (alt_dir / rel_or_abs).exists():
+                    return alt_dir / rel_or_abs
+                if (alt_dir / "text_encoders" / rel_or_abs).exists():
+                    return alt_dir / "text_encoders" / rel_or_abs
+                if (alt_dir / "vae" / rel_or_abs).exists():
+                    return alt_dir / "vae" / rel_or_abs
             return p if p.is_absolute() else repo_dir / rel_or_abs
 
         # Checkpoint vs standalone diffusion-model
@@ -399,12 +415,15 @@ class SDCppWorker:
         if req_cfg is None:
             req_cfg = getattr(request, "guidance_scale", None)
 
-        if model.engine_args.get("guidance_type") == "distilled" or model.family in ("flux", "sd3"):
+        variant_id = getattr(request, "variant_id", "") or ""
+        is_base = ("base" in variant_id.lower()) or ("base" in model.id.lower())
+
+        if not is_base and (model.engine_args.get("guidance_type") == "distilled" or model.family in ("flux", "sd3")):
             cfg_val = req_cfg if req_cfg is not None else model.get_default_cfg()
             # Always pass --cfg-scale 1.0 alongside --guidance so sd-cli doesn't use default cfg_scale=7.0
             cmd.extend(["--cfg-scale", "1.0", "--guidance", str(cfg_val)])
         else:
-            default_cfg = model.get_default_cfg()
+            default_cfg = model.scheduler_presets.get("base", {}).get("cfg") if is_base and "base" in model.scheduler_presets else model.get_default_cfg()
             cfg_val = req_cfg if req_cfg is not None else default_cfg
             cmd.extend(["--cfg-scale", str(cfg_val)])
 
@@ -413,7 +432,7 @@ class SDCppWorker:
         neg_str = (getattr(request, "negative_prompt", None) or "").strip()
         if neg_str:
             cmd.extend(["-n", neg_str])
-        elif (model.family == "qwen" or model.id.startswith("qwen")) and cfg_val > 1.0:
+        elif (model.family in ("qwen", "klein") or model.id.startswith("qwen") or is_base) and cfg_val > 1.0:
             # Ensure unconditional pass is active in sd.cpp when CFG > 1.0
             cmd.extend(["-n", " "])
 

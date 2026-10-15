@@ -216,10 +216,25 @@ def test_registry():
         flux3 = registry.get("flux_3_image_klein_gguf")
         assert flux3.engine == "sd_cpp"
         assert any(t.id == "q8_0" for t in flux3.transformers), "Q8_0 variant must be present"
+        assert any(t.id == "base_q8_0" for t in flux3.transformers), "base_q8_0 variant must be present"
         assert flux3.engine_args.get("diffusion_model") == "flux3_image_klein_sd_Q8_0.gguf"
-        assert len(flux3.transformers) == 5
+        assert len(flux3.transformers) == 9, f"Expected 9 variants, got {len(flux3.transformers)}"
         assert len(flux3.text_encoders) == 4
-        print(f"  ✓ FLUX 3 Image Klein GGUF loaded: 5 variants (Q8_0: {flux3.transformers[0].path}), 4 text encoders")
+        print(f"  ✓ FLUX 3 Image Klein GGUF loaded: 9 variants (5 distilled + 4 base Q8/Q6/Q4/Q3), 4 text encoders")
+
+        assert "flux_2_klein_base_9b_gguf" in registry.models, "flux_2_klein_base_9b_gguf missing from registry"
+        flux2_base = registry.get("flux_2_klein_base_9b_gguf")
+        assert flux2_base.engine == "sd_cpp"
+        assert flux2_base.family == "klein"
+        assert len(flux2_base.transformers) == 5
+        assert any(t.id == "q8_0" for t in flux2_base.transformers), "Q8_0 variant must be present in Klein 9B Base"
+        assert len(flux2_base.text_encoders) == 2
+        q8_te = flux2_base.get_text_encoder("qwen3_8b_q8_0")
+        assert q8_te is not None and q8_te["recommended"] is True
+        assert q8_te["file"] == "Qwen3-8B-Q8_0.gguf"
+        assert flux2_base.scheduler_presets["default"]["cfg"] == 4.0
+        assert flux2_base.scheduler_presets["default"]["steps"] == 20
+        print(f"  ✓ Flux.2 Klein 9B Base GGUF loaded: 5 variants, Q8 text encoder ({q8_te['file']}), cfg=4.0, steps=20")
 
         # Qwen text encoders
         qwen = registry.get("qwen_image_2_1")
