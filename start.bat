@@ -1,5 +1,5 @@
 @echo off
-REM QuantFunc WebUI Windows launcher
+REM LazySD UI Windows launcher
 REM Double-click this file or run from cmd.
 
 setlocal
@@ -7,10 +7,16 @@ set HF_HUB_DISABLE_XET=1
 set HF_HUB_ENABLE_HF_TRANSFER=0
 cd /d "%~dp0"
 
-echo === QuantFunc WebUI ===
+echo === LazySD UI ===
 echo.
-echo Checking Python...
-python --version 2>nul
+
+set "PY_CMD=python"
+if exist "venv\Scripts\python.exe" (
+    set "PY_CMD=venv\Scripts\python.exe"
+)
+
+echo Checking Python (%PY_CMD%)...
+"%PY_CMD%" --version 2>nul
 if errorlevel 1 (
     echo ERROR: Python not found in PATH. Install Python 3.11+ from https://python.org
     pause
@@ -19,16 +25,16 @@ if errorlevel 1 (
 
 echo.
 echo Checking dependencies...
-python -c "import fastapi, uvicorn, requests, pydantic, PIL" 2>nul
+"%PY_CMD%" -c "import fastapi, uvicorn, requests, pydantic, PIL" 2>nul
 if errorlevel 1 (
     echo Installing dependencies from requirements.txt...
-    python -m pip install -r requirements.txt
+    "%PY_CMD%" -m pip install -r requirements.txt
 )
 
 echo.
-echo Starting QuantFunc WebUI on http://127.0.0.1:7860
+echo Starting LazySD UI on http://127.0.0.1:7860
 echo Press Ctrl+C to stop.
 echo.
-python app.py
+"%PY_CMD%" app.py
 
 pause

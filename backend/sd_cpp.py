@@ -54,6 +54,26 @@ def get_sd_cpp_version() -> str:
 
 
 SD_CPP_WINDOWS_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-968-8cd731e/sd-master-8cd731e-bin-win-cuda12-x64.zip"
+SD_CPP_CUDART_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-968-8cd731e/cudart-sd-bin-win-cu12-x64.zip"
+
+
+def _sd_cpp_has_working_cuda(cli_path: Path) -> bool:
+    """Verify whether sd-cli.exe can load ggml-cuda.dll and see a CUDA device."""
+    if not cli_path.exists():
+        return False
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        res = subprocess.run(
+            [str(cli_path), "--list-devices"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(cli_path.parent),
+            creationflags=creationflags,
+        )
+        return "CUDA" in (res.stdout or "")
+    except Exception:
+        return False
 
 
 def download_sd_cpp(
@@ -62,42 +82,64 @@ def download_sd_cpp(
 ) -> Path:
     """Download and extract stable-diffusion.cpp standalone CUDA 12 build.
 
-    Extracts to settings.engine_dir / 'sd_cpp'.
+    Also ensures CUDA 12 runtime DLLs (cudart64_12.dll, cublas64_12.dll, cublasLt64_12.dll)
+    are present if the host system does not have CUDA Toolkit 12 in PATH (e.g. clean RTX 5070 Ti PC).
     """
     target_dir = get_sd_cpp_dir()
     cli_path = get_sd_cpp_cli_path()
-    if cli_path.exists() and not force:
-        return cli_path
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-    temp_zip = target_dir / "sd_master_cuda12.zip.tmp"
 
     import zipfile
     from .engine import _download_file_with_progress
 
-    try:
-        logger.info("Downloading SD.CPP from %s", SD_CPP_WINDOWS_URL)
-        _download_file_with_progress(
-            SD_CPP_WINDOWS_URL,
-            temp_zip,
-            progress_callback=progress_callback,
-        )
+    target_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info("Extracting SD.CPP zip to %s", target_dir)
-        with zipfile.ZipFile(temp_zip, "r") as z:
-            z.extractall(target_dir)
+    if not cli_path.exists() or force:
+        temp_zip = target_dir / "sd_master_cuda12.zip.tmp"
+        try:
+            logger.info("Downloading SD.CPP from %s", SD_CPP_WINDOWS_URL)
+            _download_file_with_progress(
+                SD_CPP_WINDOWS_URL,
+                temp_zip,
+                progress_callback=progress_callback,
+            )
 
-        if not cli_path.exists():
-            raise RuntimeError(f"sd-cli.exe not found after extracting {temp_zip}")
+            logger.info("Extracting SD.CPP zip to %s", target_dir)
+            with zipfile.ZipFile(temp_zip, "r") as z:
+                z.extractall(target_dir)
 
-        logger.info("SD.CPP installed successfully at %s", cli_path)
-        return cli_path
-    finally:
-        if temp_zip.exists():
-            try:
-                temp_zip.unlink()
-            except OSError:
-                pass
+            if not cli_path.exists():
+                raise RuntimeError(f"sd-cli.exe not found after extracting {temp_zip}")
+        finally:
+            if temp_zip.exists():
+                try:
+                    temp_zip.unlink()
+                except OSError:
+                    pass
+
+    # Check if CUDA backend loads properly; if not (missing cudart64_12.dll / cublas64_12.dll on fresh PC),
+    # download the official cudart-sd-bin-win-cu12-x64.zip bundle into target_dir.
+    if not _sd_cpp_has_working_cuda(cli_path) and not (target_dir / "cublas64_12.dll").exists():
+        cudart_zip = target_dir / "cudart_cu12.zip.tmp"
+        try:
+            logger.info("CUDA 12 runtime DLLs not found in system PATH; downloading %s", SD_CPP_CUDART_URL)
+            _download_file_with_progress(
+                SD_CPP_CUDART_URL,
+                cudart_zip,
+                progress_callback=progress_callback,
+            )
+            with zipfile.ZipFile(cudart_zip, "r") as z:
+                z.extractall(target_dir)
+        except Exception as e:
+            logger.warning("Could not download optional cudart bundle: %s", e)
+        finally:
+            if cudart_zip.exists():
+                try:
+                    cudart_zip.unlink()
+                except OSError:
+                    pass
+
+    logger.info("SD.CPP ready at %s", cli_path)
+    return cli_path
 
 
 # Progress matching regex for stable-diffusion.cpp
@@ -400,15 +442,82 @@ class SDCppWorker:
             if model.engine_args.get("flow_shift"):
                 cmd.extend(["--flow-shift", str(model.engine_args["flow_shift"])])
 
-        # Img2Img reference image
+        # Reference Image: Native Control/Ref (-r / --control-image / --control-net) vs Classic Noise Img2Img (-i + --strength)
         if getattr(request, "init_image_path", None):
             ref_path = Path(request.init_image_path)
             if not ref_path.is_absolute():
                 ref_path = settings.output_dir / ref_path
             if ref_path.exists():
-                cmd.extend(["-i", str(ref_path)])
-                strength = getattr(request, "init_image_strength", 0.75) or 0.75
-                cmd.extend(["--strength", str(round(strength, 2))])
+                ref_mode = (getattr(request, "ref_mode", None) or "control_ref").strip().lower()
+                strength = float(getattr(request, "init_image_strength", 0.85) or 0.85)
+                cn_str = (getattr(request, "control_net_path", None) or "").strip()
+                cn_path: Optional[Path] = None
+                if cn_str:
+                    cand_cn = Path(cn_str)
+                    if not cand_cn.is_absolute():
+                        for p in (resolve_model_file(cn_str), settings.models_dir / cn_str, settings.models_dir / "controlnet" / cn_str):
+                            if p.exists():
+                                cand_cn = p
+                                break
+                    if cand_cn.exists():
+                        cn_path = cand_cn
+
+                if ref_mode == "img2img":
+                    # Classic noise-based Img2Img (--init-img + --strength)
+                    cmd.extend(["-i", str(ref_path)])
+                    cmd.extend(["--strength", str(round(strength, 2))])
+                else:
+                    # Step isolation: NO --init-img (-i) and NO --strength!
+                    # Model executes 100% of steps from clean white noise while guided by ControlNet / Reference latents.
+                    if cn_path is not None:
+                        cmd.extend([
+                            "--control-net", str(cn_path),
+                            "--control-image", str(ref_path),
+                            "--control-strength", str(round(strength, 2)),
+                        ])
+                        if ref_mode == "controlnet_canny":
+                            cmd.extend(["--image-preprocess", "target=control,canny=true"])
+                    elif model.family == "qwen" or model.id.startswith("qwen"):
+                        # Native Qwen-Image-2.1 Reference / Control conditioning (-r + --llm_vision)
+                        mmproj_candidates = [
+                            repo_dir / "mmproj-BF16.gguf",
+                            repo_dir / "mmproj-F16.gguf",
+                            settings.models_dir / "unsloth--Qwen3-VL-8B-Instruct-GGUF" / "mmproj-BF16.gguf",
+                            settings.models_dir / "unsloth--Qwen3-VL-8B-Instruct-GGUF" / "mmproj-F16.gguf",
+                        ]
+                        mmproj_path = next((p for p in mmproj_candidates if p.exists()), None)
+                        if mmproj_path is None:
+                            from .sources import HuggingFaceSource
+                            hf = HuggingFaceSource(token=settings.huggingface_token)
+                            emit(ProgressEvent(
+                                status=JobStatus.DOWNLOADING,
+                                progress=0.12,
+                                message="Downloading Qwen3-VL Vision Projector (mmproj-F16.gguf, ~1.1 GB) for Native Control/Reference...",
+                            ))
+                            hf.download_file(
+                                repo_id="unsloth/Qwen3-VL-8B-Instruct-GGUF",
+                                file_path="mmproj-F16.gguf",
+                                local_dir=repo_dir,
+                            )
+                            mmproj_path = repo_dir / "mmproj-F16.gguf"
+                        w32 = max(32, (width // 32) * 32)
+                        h32 = max(32, (height // 32) * 32)
+                        preproc = f"target=ref,mode=crop-resize,width={w32},height={h32}"
+                        if ref_mode == "controlnet_canny":
+                            preproc += ",canny=true"
+                        cmd.extend([
+                            "--llm_vision", str(mmproj_path),
+                            "-r", str(ref_path),
+                            "--image-preprocess", preproc,
+                        ])
+                    elif model.id in ("flux_2_klein_base_9b_gguf", "flux_3_image_klein_gguf") or "klein" in model.id or model.family == "flux":
+                        # Native Flux.2 / Flux.3 in-context Reference / Control conditioning (-r)
+                        cmd.extend(["-r", str(ref_path)])
+                        if ref_mode == "controlnet_canny":
+                            cmd.extend(["--image-preprocess", "target=ref,canny=true"])
+                    else:
+                        # Fallback for SDXL without external ControlNet file
+                        cmd.extend(["-i", str(ref_path), "--strength", str(round(strength, 2))])
 
         # Guidance / CFG scale
         req_cfg = getattr(request, "cfg", None)

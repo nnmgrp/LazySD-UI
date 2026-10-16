@@ -21,13 +21,23 @@
           <span class="gpu-dot" id="gpu-status"></span>
           <span id="gpu-name">Checking GPU...</span>
         </div>
+        <div class="sys-stats-bar" id="sys-stats-bar" title="Потребление видеопамяти (VRAM) и оперативной памяти (RAM)">
+          <span class="sys-stat-item" id="vram-stat-text">VRAM: —</span>
+          <span class="sys-stat-sep">·</span>
+          <span class="sys-stat-item" id="ram-stat-text">RAM: —</span>
+        </div>
       </div>
       <div class="menubar-right">
         <div class="lang-toggle">
           <button class="lang-btn" data-lang="en">EN</button>
           <button class="lang-btn" data-lang="ru">RU</button>
         </div>
-        <button class="icon-btn" id="settings-btn" title="Settings" onclick="App.switchTab('settings')">⚙</button>
+        <div class="menubar-status">
+          <span class="status-pill" id="status-pill">
+            <span data-i18n="status.ready">Ready</span>
+          </span>
+          <span id="status-message" class="menubar-status-msg"></span>
+        </div>
       </div>
     </header>
 
@@ -117,28 +127,43 @@
         </div>
 
         <div class="prompt-panel">
-          <!-- Img2Img Reference Image Container -->
-          <div class="img2img-container" id="img2img-container" style="display: none; margin-bottom: 12px; padding: 10px 12px; background: var(--bg-card); border: 1px dashed var(--accent); border-radius: 6px; align-items: center; gap: 12px; position: relative;">
-            <div style="position: relative; width: 64px; height: 64px; flex-shrink: 0; background: var(--bg-hover); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+          <!-- Reference / ControlNet Image Container -->
+          <div class="img2img-container" id="img2img-container" style="display: none; margin-bottom: 12px; padding: 10px 12px; background: var(--bg-card); border: 1px dashed var(--accent); border-radius: 6px; align-items: flex-start; gap: 12px; position: relative;">
+            <div style="position: relative; width: 68px; height: 68px; flex-shrink: 0; background: var(--bg-hover); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
               <img id="img2img-thumb" style="width: 100%; height: 100%; object-fit: cover;" alt="Reference preview">
             </div>
-            <div style="flex: 1; min-width: 0;">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                <span style="font-weight: 500; font-size: 13px;" data-i18n="img2img.title">Reference Image (Img2Img)</span>
-                <button class="icon-btn danger" onclick="clearImg2ImgRef()" title="Remove image" style="padding: 2px 8px; font-size: 11px;">✕ <span data-i18n="img2img.remove">Remove</span></button>
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="font-weight: 600; font-size: 12.5px;" data-i18n="img2img.title">Референс / ControlNet</span>
+                  <select id="img2img-mode" onchange="App.onRefModeChange()" style="font-size: 11px; padding: 2px 8px; height: 24px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">
+                    <option value="control_ref" selected>🎯 Native Control / Reference (Лайн + Скринтоны, 100% шагов с нуля)</option>
+                    <option value="controlnet_canny">✒️ ControlNet Canny / Lineart (Контуры туши, 100% шагов)</option>
+                    <option value="img2img">🌫️ Классический Img2Img (Через зашумление --init-img)</option>
+                  </select>
+                </div>
+                <button class="icon-btn danger" onclick="clearImg2ImgRef()" title="Remove image" style="padding: 2px 8px; font-size: 11px; width: auto; height: 24px;">✕ <span data-i18n="img2img.remove">Удалить</span></button>
+              </div>
+              <div id="img2img-mode-hint" style="font-size: 11px; color: var(--success, #22c55e); line-height: 1.35;">
+                ✓ Изоляция шагов активна: <code>--init-img</code> и <code>--strength</code> отключены. Модель выполнит 100% шагов с чистого листа, перенося лайн и скринтоны через нативный Reference / ControlNet.
               </div>
               <div style="display: flex; align-items: center; gap: 10px;">
-                <label style="font-size: 11px; color: var(--text-dim); white-space: nowrap;" data-i18n="img2img.strength">Strength:</label>
-                <input type="range" id="img2img-strength" min="0.05" max="0.95" step="0.05" value="0.70" oninput="updateStrengthLabel(this.value)" style="flex: 1; accent-color: var(--accent);">
-                <span id="img2img-strength-val" style="font-size: 11px; font-family: monospace; width: 36px; text-align: right;">0.70</span>
+                <label id="img2img-strength-label" style="font-size: 11px; color: var(--text-dim); white-space: nowrap;" data-i18n="img2img.strength">Сила контроля:</label>
+                <input type="range" id="img2img-strength" min="0.05" max="1.00" step="0.05" value="0.85" oninput="updateStrengthLabel(this.value)" style="flex: 1; accent-color: var(--accent);">
+                <span id="img2img-strength-val" style="font-size: 11px; font-family: monospace; width: 36px; text-align: right;">0.85</span>
+                <a href="javascript:void(0)" onclick="App.toggleControlNetInput(event)" style="font-size: 11px; color: var(--accent); text-decoration: none; white-space: nowrap;" title="Опциональный внешний файл модели ControlNet (.gguf / .safetensors)">+ ControlNet GGUF</a>
               </div>
+              <input type="text" id="controlnet-custom-path" placeholder="Опционально: путь к внешнему ControlNet .gguf (для Flux/Qwen нативный режим работает автоматически без внешнего файла)" style="display: none; font-size: 11px; padding: 4px 8px;">
             </div>
           </div>
 
           <div class="prompt-row">
-            <textarea id="prompt-input"
-                      data-i18n-placeholder="prompt.placeholder"
-                      placeholder="Describe the image to generate..."></textarea>
+            <div class="prompt-textarea-wrap" id="prompt-textarea-wrap">
+              <textarea id="prompt-input"
+                        data-i18n-placeholder="prompt.placeholder"
+                        placeholder="Describe the image to generate..."></textarea>
+              <div class="prompt-resize-handle" id="prompt-resize-handle" title="Потяните вниз для расширения окна промпта"></div>
+            </div>
             <div class="negative-prompt-drawer" id="negative-prompt-drawer">
               <button type="button" class="negative-prompt-toggle" id="negative-prompt-toggle" onclick="App.toggleNegativePrompt()">
                 <span class="negative-prompt-arrow" id="negative-prompt-arrow">▶</span>
@@ -179,7 +204,6 @@
                 <a href="javascript:void(0)" id="toggle-custom-te-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomTeInput(event)" data-i18n="controls.custom_path">Custom path</a>
               </div>
               <select id="text-encoder-select" onchange="App.onTextEncoderChange()"></select>
-              <div id="text-encoder-hint" class="control-hint" style="display: none; font-size: 11px; color: var(--text-dim); margin-top: 3px;"></div>
               <input type="text" id="custom-text-encoder-input" placeholder="e.g. D:/ComfyUI/models/text_encoders/qwen3vl_8b_bf16.safetensors" data-i18n-placeholder="controls.custom_te_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
             </div>
             <div class="control-group" id="vae-group" style="display: none;">
@@ -585,21 +609,6 @@
 
     </main>
 
-    <!-- ============== STATUSBAR ============== -->
-    <footer class="statusbar">
-      <div class="statusbar-left">
-        <span class="status-pill" id="status-pill">
-          <span data-i18n="status.ready">Ready</span>
-        </span>
-        <span id="status-message"></span>
-      </div>
-      <div class="statusbar-right">
-        <span>LazySD UI v0.1.0 Pre-Alpha</span>
-        <span>·</span>
-        <span title="Авторы нейросети: Z.AI GLM 5.3 Flash · Gemini 3.8 Flash High (Antigravity) · Claude Opus">AI Team: Z.AI GLM · Gemini · Claude Opus</span>
-      </div>
-    </footer>
-
   </div>
 
   <!-- ============== Scripts ============== -->
@@ -984,8 +993,11 @@
         </div>
         <div class="history-modal-info-col">
           <h3 data-i18n="history.details">Generation Details</h3>
-          <div class="history-modal-prompt-box">
-            <div class="label" data-i18n="prompt.label">Prompt</div>
+          <div class="history-modal-prompt-box" id="history-modal-prompt-box">
+            <div class="history-modal-prompt-header">
+              <div class="label" data-i18n="prompt.label" style="margin-bottom: 0;">Prompt</div>
+              <button type="button" class="prompt-collapse-btn" id="history-prompt-toggle" onclick="App.toggleHistoryPrompt()">Свернуть ▴</button>
+            </div>
             <p id="history-modal-prompt">—</p>
           </div>
           <div class="history-modal-meta-grid">
@@ -998,9 +1010,9 @@
           </div>
           <div class="history-modal-actions">
             <button class="generate-btn" id="history-modal-reuse-btn">⚡ <span data-i18n="history.reuse">Use prompt & settings</span></button>
-            <button class="icon-btn" id="history-modal-send-img2img-btn">🔄 <span data-i18n="img2img.send_to">Edit in Img2Img</span></button>
-            <button class="icon-btn" id="history-modal-copy-btn">📋 <span data-i18n="history.copy_prompt">Copy prompt</span></button>
-            <button class="icon-btn danger" id="history-modal-delete-btn">🗑 <span data-i18n="history.delete">Delete</span></button>
+            <button class="history-action-btn" id="history-modal-send-img2img-btn">🔄 <span data-i18n="img2img.send_to">Edit in Img2Img</span></button>
+            <button class="history-action-btn" id="history-modal-copy-btn">📋 <span data-i18n="history.copy_prompt">Copy prompt</span></button>
+            <button class="history-action-btn danger" id="history-modal-delete-btn">🗑 <span data-i18n="history.delete">Delete</span></button>
           </div>
         </div>
       </div>

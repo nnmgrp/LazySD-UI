@@ -510,6 +510,7 @@ class SDNQWorker:
         noise = float(getattr(request, "noise", 0.0) or 0.0)
         sampler = getattr(request, "sampler", None) or ("euler_a" if noise > 0.0 else "euler")
         neg_prompt = (getattr(request, "negative_prompt", "") or "").strip()
+        ref_mode = (getattr(request, "ref_mode", None) or "control_ref").strip().lower()
 
         job_payload = {
             "model_dir": str(repo_dir),
@@ -526,6 +527,7 @@ class SDNQWorker:
             "vae_safetensors_path": str(custom_vae_file) if custom_vae_file else None,
             "init_image_path": ref_image_path,
             "init_image_strength": init_image_strength,
+            "ref_mode": ref_mode,
             "sdnq_src": str(sdnq_src) if sdnq_src else None,
         }
 
@@ -704,6 +706,7 @@ def _run_job_cli(job_json_path: str) -> int:
         vae_safetensors_path = payload.get("vae_safetensors_path")
         init_image_path = payload.get("init_image_path")
         init_image_strength = float(payload.get("init_image_strength", 0.7))
+        ref_mode = (payload.get("ref_mode") or "control_ref").strip().lower()
         sdnq_src = payload.get("sdnq_src")
 
         print("[status] Registering SDNQ quantization backend...", flush=True)
@@ -855,9 +858,15 @@ def _run_job_cli(job_json_path: str) -> int:
 
         cond_image = None
         if init_image_path and Path(init_image_path).exists():
-            from PIL import Image
+            from PIL import Image, ImageFilter, ImageOps
 
             cond_image = Image.open(init_image_path).convert("RGB")
+            if ref_mode == "controlnet_canny":
+                # Extract clean high-contrast contours for Canny/Lineart guidance while keeping 100% steps
+                gray = cond_image.convert("L")
+                edges = gray.filter(ImageFilter.FIND_EDGES)
+                edges = ImageOps.autocontrast(edges)
+                cond_image = edges.convert("RGB")
 
         # Handle CFG & Negative Prompt interaction:
         # 1) If user typed a negative prompt while CFG == 1.0, boost effective CFG to 1.5 so QwenImage21Pipeline
@@ -878,22 +887,28 @@ def _run_job_cli(job_json_path: str) -> int:
             use_sigmas = None
 
         initial_latents = None
-        if cond_image is not None and init_image_strength < 0.99:
-            base_sched_sigmas = use_sigmas or interpolate_sample_sigmas([], steps)
-            print(
-                f"[status] Preparing Img2Img latents (strength={init_image_strength:.2f})...",
-                flush=True,
-            )
-            initial_latents, use_sigmas = prepare_qwen21_img2img_latents(
-                pipe=pipe,
-                cond_image=cond_image,
-                width=width,
-                height=height,
-                full_sigmas=base_sched_sigmas,
-                strength=init_image_strength,
-                seed=seed,
-                dtype=torch.bfloat16,
-            )
+        if cond_image is not None:
+            if ref_mode == "img2img" and init_image_strength < 0.99:
+                base_sched_sigmas = use_sigmas or interpolate_sample_sigmas([], steps)
+                print(
+                    f"[status] Preparing Img2Img latents (strength={init_image_strength:.2f})...",
+                    flush=True,
+                )
+                initial_latents, use_sigmas = prepare_qwen21_img2img_latents(
+                    pipe=pipe,
+                    cond_image=cond_image,
+                    width=width,
+                    height=height,
+                    full_sigmas=base_sched_sigmas,
+                    strength=init_image_strength,
+                    seed=seed,
+                    dtype=torch.bfloat16,
+                )
+            else:
+                print(
+                    f"[status] Native Qwen-Image-2.1 Control/Reference ({ref_mode}): running 100% steps from clean latents...",
+                    flush=True,
+                )
 
         total_steps = len(use_sigmas) if use_sigmas else steps
 

@@ -280,3 +280,110 @@ def tier_for_sm(sm: int) -> str:
 def is_model_compatible(model_min_sm: int, gpu_sm: int) -> bool:
     """Check if a model's minimum SM requirement is satisfied by current GPU."""
     return gpu_sm >= model_min_sm
+
+
+_CACHED_NVSMI_EXE: Optional[str] = None
+
+
+def get_system_memory_stats() -> dict:
+    """Return live VRAM and System RAM consumption statistics."""
+    global _CACHED_NVSMI_EXE
+    import ctypes
+    import sys
+
+    stats = {
+        "vram_used_mb": 0,
+        "vram_total_mb": 0,
+        "vram_used_gb": 0.0,
+        "vram_total_gb": 0.0,
+        "vram_percent": 0,
+        "gpu_util": 0,
+        "ram_used_mb": 0,
+        "ram_total_mb": 0,
+        "ram_used_gb": 0.0,
+        "ram_total_gb": 0.0,
+        "ram_percent": 0,
+    }
+
+    # 1. System RAM via Windows GlobalMemoryStatusEx (zero external dependencies)
+    if sys.platform == "win32":
+        try:
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            mem = MEMORYSTATUSEX()
+            mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem)):
+                total_mb = int(mem.ullTotalPhys // (1024 * 1024))
+                avail_mb = int(mem.ullAvailPhys // (1024 * 1024))
+                used_mb = max(0, total_mb - avail_mb)
+                stats["ram_total_mb"] = total_mb
+                stats["ram_used_mb"] = used_mb
+                stats["ram_total_gb"] = round(total_mb / 1024.0, 1)
+                stats["ram_used_gb"] = round(used_mb / 1024.0, 1)
+                stats["ram_percent"] = int(mem.dwMemoryLoad)
+        except Exception:
+            pass
+    else:
+        try:
+            meminfo = Path("/proc/meminfo").read_text(encoding="utf-8")
+            m_tot = re.search(r"MemTotal:\s+(\d+)\s+kB", meminfo)
+            m_av = re.search(r"MemAvailable:\s+(\d+)\s+kB", meminfo)
+            if m_tot and m_av:
+                total_mb = int(m_tot.group(1)) // 1024
+                avail_mb = int(m_av.group(1)) // 1024
+                used_mb = max(0, total_mb - avail_mb)
+                stats["ram_total_mb"] = total_mb
+                stats["ram_used_mb"] = used_mb
+                stats["ram_total_gb"] = round(total_mb / 1024.0, 1)
+                stats["ram_used_gb"] = round(used_mb / 1024.0, 1)
+                stats["ram_percent"] = int(round(used_mb * 100 / max(1, total_mb)))
+        except Exception:
+            pass
+
+    # 2. GPU VRAM via nvidia-smi
+    if _CACHED_NVSMI_EXE is None:
+        _CACHED_NVSMI_EXE = _find_nvidia_smi() or ""
+
+    if _CACHED_NVSMI_EXE:
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+            res = subprocess.run(
+                [
+                    _CACHED_NVSMI_EXE,
+                    "--query-gpu=memory.used,memory.total,utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                creationflags=creationflags,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                line = res.stdout.strip().splitlines()[0]
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 2:
+                    v_used = int(float(parts[0])) if parts[0].replace(".", "", 1).isdigit() else 0
+                    v_tot = int(float(parts[1])) if parts[1].replace(".", "", 1).isdigit() else 0
+                    v_util = int(float(parts[2])) if (len(parts) >= 3 and parts[2].replace(".", "", 1).isdigit()) else 0
+                    stats["vram_used_mb"] = v_used
+                    stats["vram_total_mb"] = v_tot
+                    stats["vram_used_gb"] = round(v_used / 1024.0, 1)
+                    stats["vram_total_gb"] = round(v_tot / 1024.0, 1)
+                    stats["vram_percent"] = int(round(v_used * 100 / max(1, v_tot))) if v_tot > 0 else 0
+                    stats["gpu_util"] = v_util
+        except Exception:
+            pass
+
+    return stats
+

@@ -53,7 +53,7 @@ from backend.engine import (
 )
 from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_version
 from backend.sdnq_engine import is_sdnq_installed, get_sdnq_version, get_sdnq_path
-from backend.gpu import detect_gpu, GPUInfo
+from backend.gpu import detect_gpu, get_system_memory_stats, GPUInfo
 from backend.registry import get_registry
 from backend.settings import get_settings
 from backend.worker import (
@@ -541,8 +541,14 @@ def create_app() -> FastAPI:
             "sdnq_installed": is_sdnq_installed(),
             "sdnq_version": get_sdnq_version(),
             "api_auth": _api_auth_status(),
+            "system_stats": get_system_memory_stats(),
             "models": models_list,
         }
+
+    # ---------- API: Live System Stats (VRAM & RAM) ----------
+    @app.get("/api/system/stats")
+    async def api_system_stats():
+        return get_system_memory_stats()
 
     # ---------- API: Models ----------
     @app.get("/api/models")
@@ -1201,6 +1207,10 @@ def create_app() -> FastAPI:
         }
         sampler = raw_sampler if raw_sampler in allowed_samplers else None
 
+        raw_ref_mode = str(body.get("ref_mode") or "control_ref").strip().lower()
+        ref_mode = raw_ref_mode if raw_ref_mode in ("control_ref", "controlnet_canny", "img2img") else "control_ref"
+        control_net_path = (body.get("control_net_path") or "").strip() or None
+
         # Build GenerateRequest
         request = GenerateRequest(
             model_id=model_id,
@@ -1222,6 +1232,8 @@ def create_app() -> FastAPI:
             custom_text_encoder_path=body.get("custom_text_encoder_path"),
             vae=body.get("vae"),
             custom_vae_path=body.get("custom_vae_path"),
+            ref_mode=ref_mode,
+            control_net_path=control_net_path,
         )
 
         # Create job

@@ -93,6 +93,8 @@ class GenerateRequest:
     custom_text_encoder_path: Optional[str] = None
     vae: Optional[str] = None
     custom_vae_path: Optional[str] = None
+    ref_mode: str = "control_ref"      # "control_ref" | "controlnet_canny" | "img2img"
+    control_net_path: Optional[str] = None
 
 
 # ---------- Result ----------

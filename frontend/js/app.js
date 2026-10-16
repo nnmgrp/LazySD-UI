@@ -65,6 +65,8 @@ const App = {
 
     // Render initial UI
     this.renderGpuIndicator();
+    this.renderSystemStats(this.state.config?.system_stats);
+    this.startStatsPolling();
     this.renderModels();
     this.updateEngineStatusUI();
     this.bindEvents();
@@ -178,6 +180,7 @@ const App = {
       }
       window.QF_SETTINGS = config.settings;
       this.renderGpuIndicator();
+      this.renderSystemStats(config.system_stats);
       this.renderModels();
       this.updateEngineStatusUI();
     } catch (e) {
@@ -256,6 +259,43 @@ const App = {
       nameEl.textContent = t("gpu.not_detected");
       dotEl.classList.add("offline");
     }
+  },
+
+  renderSystemStats(stats) {
+    if (!stats) return;
+    const vramEl = document.getElementById("vram-stat-text");
+    const ramEl = document.getElementById("ram-stat-text");
+
+    if (vramEl) {
+      if (stats.vram_total_gb > 0) {
+        const vramPct = stats.vram_percent || 0;
+        const color = vramPct > 90 ? "#f87171" : (vramPct > 75 ? "#fbbf24" : "var(--text-primary)");
+        vramEl.innerHTML = `VRAM: <strong style="color:${color}">${stats.vram_used_gb.toFixed(1)}/${stats.vram_total_gb.toFixed(1)} GB</strong> (${Math.round(vramPct)}%)`;
+      } else {
+        vramEl.textContent = "VRAM: —";
+      }
+    }
+
+    if (ramEl) {
+      if (stats.ram_total_gb > 0) {
+        const ramPct = stats.ram_percent || 0;
+        const color = ramPct > 90 ? "#f87171" : (ramPct > 80 ? "#fbbf24" : "var(--text-primary)");
+        ramEl.innerHTML = `RAM: <strong style="color:${color}">${stats.ram_used_gb.toFixed(1)}/${stats.ram_total_gb.toFixed(1)} GB</strong> (${Math.round(ramPct)}%)`;
+      } else {
+        ramEl.textContent = "RAM: —";
+      }
+    }
+  },
+
+  startStatsPolling() {
+    if (this._statsInterval) clearInterval(this._statsInterval);
+    this._statsInterval = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const stats = await this.apiGet("/api/system/stats");
+        this.renderSystemStats(stats);
+      } catch (_) {}
+    }, 3000);
   },
 
   renderModels() {
@@ -900,6 +940,55 @@ const App = {
     document.querySelectorAll(".lang-btn").forEach(btn => {
       btn.addEventListener("click", () => window.setLocale(btn.dataset.lang));
     });
+
+    // Custom downward prompt resize handler (prevents Flexbox upward expansion bug)
+    this.initPromptResize();
+  },
+
+  initPromptResize() {
+    const handle = document.getElementById("prompt-resize-handle");
+    const textarea = document.getElementById("prompt-input");
+    const previewArea = document.querySelector("#tab-generate .preview-area");
+    if (!handle || !textarea) return;
+
+    let isDragging = false;
+    let startY = 0;
+    let startHeight = 0;
+
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      isDragging = true;
+      startY = e.clientY;
+      startHeight = textarea.offsetHeight;
+      // Lock preview-area height so expanding prompt-input pushes downward instead of upward
+      if (previewArea && !previewArea.dataset.lockedHeight) {
+        const h = Math.max(180, previewArea.offsetHeight);
+        previewArea.style.minHeight = `${h}px`;
+        previewArea.style.flex = "0 0 auto";
+        previewArea.dataset.lockedHeight = "1";
+      }
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "ns-resize";
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      const dy = e.clientY - startY;
+      const nextHeight = Math.max(76, Math.min(360, startHeight + dy));
+      textarea.style.height = `${nextHeight}px`;
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (!isDragging) return;
+      isDragging = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      if (textarea.offsetHeight <= 84 && previewArea) {
+        previewArea.style.minHeight = "";
+        previewArea.style.flex = "";
+        delete previewArea.dataset.lockedHeight;
+      }
+    });
   },
 
   switchTab(tabName) {
@@ -1043,25 +1132,12 @@ const App = {
           if (customTeInput) customTeInput.style.display = "none";
           if (teLink) teLink.style.display = "none";
           teGroup.classList.add("locked");
-          if (teHint) {
-            teHint.style.display = "flex";
-            teHint.textContent = "⚡ " + (isSDNQ
-              ? (t("controls.hint_sdnq_te") || "SDNQ Dynamic INT8 Qwen3-VL-8B (CPU Offload)")
-              : (t("controls.hint_quantfunc_te") || "QuantFunc auto-quantizes BF16 to INT4 in RAM"));
-          }
         } else {
           teSelect.disabled = false;
           if (teLink) teLink.style.display = "inline";
           teGroup.classList.remove("locked");
-          if (teHint) {
-            if (isSDCpp) {
-              teHint.style.display = "flex";
-              teHint.textContent = "⚡ " + (t("controls.hint_sdcpp_te") || "Unsloth GGUF multimodal encoder (--llm)");
-            } else {
-              teHint.style.display = "none";
-            }
-          }
         }
+        if (teHint) teHint.style.display = "none";
 
         let activeTe = null;
         for (const te of modelState.text_encoders) {
@@ -1420,8 +1496,14 @@ const App = {
     if (this.state.img2imgRef) {
       params.init_image_path = this.state.img2imgRef.path;
       params.init_image_strength = parseFloat(
-        document.getElementById("img2img-strength")?.value || "0.7"
+        document.getElementById("img2img-strength")?.value || "0.85"
       );
+      params.ref_mode = document.getElementById("img2img-mode")?.value || "control_ref";
+      const cnInput = document.getElementById("controlnet-custom-path");
+      const cnPath = cnInput && cnInput.style.display !== "none" ? cnInput.value.trim() : "";
+      if (cnPath) {
+        params.control_net_path = cnPath;
+      }
     }
 
     const teGroup = document.getElementById("text-encoder-group");
@@ -1573,6 +1655,8 @@ const App = {
     const overlay = document.getElementById("progress-overlay");
     const fill = document.getElementById("progress-fill");
     const text = document.getElementById("progress-text");
+    const statusPill = document.getElementById("status-pill");
+    const statusMsg = document.getElementById("status-message");
 
     if (!overlay || !fill || !text) return;
 
@@ -1589,11 +1673,21 @@ const App = {
       msg += ` · ${status.message}`;
     }
     text.textContent = msg;
+
+    if (statusPill) {
+      statusPill.className = "status-pill warning";
+      statusPill.textContent = status.step && status.total_steps ? `${status.step}/${status.total_steps}` : "Busy";
+    }
+    if (statusMsg) {
+      statusMsg.textContent = status.message || "";
+    }
   },
 
   setGenerating(busy) {
     const btn = document.getElementById("generate-btn");
     const overlay = document.getElementById("progress-overlay");
+    const statusPill = document.getElementById("status-pill");
+    const statusMsg = document.getElementById("status-message");
     if (!btn) return;
 
     if (busy) {
@@ -1601,11 +1695,22 @@ const App = {
       btn.disabled = true;
       btn.textContent = t("controls.busy");
       if (overlay) overlay.style.display = "flex";
+      if (statusPill) {
+        statusPill.className = "status-pill warning";
+        statusPill.textContent = t("controls.busy") || "Generating...";
+      }
     } else {
       btn.classList.remove("busy");
       btn.disabled = false;
       btn.textContent = t("controls.generate");
       if (overlay) overlay.style.display = "none";
+      if (statusPill) {
+        statusPill.className = "status-pill success";
+        statusPill.textContent = t("status.ready") || "Ready";
+      }
+      if (statusMsg) {
+        statusMsg.textContent = "";
+      }
     }
   },
 
@@ -1706,6 +1811,8 @@ const App = {
 
     const img = document.getElementById("history-modal-img");
     const promptEl = document.getElementById("history-modal-prompt");
+    const promptBox = document.getElementById("history-modal-prompt-box");
+    const promptToggle = document.getElementById("history-prompt-toggle");
     const modelEl = document.getElementById("history-modal-model");
     const seedEl = document.getElementById("history-modal-seed");
     const resEl = document.getElementById("history-modal-res");
@@ -1713,8 +1820,19 @@ const App = {
     const backendEl = document.getElementById("history-modal-backend");
     const timeEl = document.getElementById("history-modal-time");
 
+    const promptText = item.prompt || t("history.no_prompt");
     if (img) img.src = item.url;
-    if (promptEl) promptEl.textContent = item.prompt || t("history.no_prompt");
+    if (promptEl) {
+      promptEl.textContent = promptText;
+      promptEl.scrollTop = 0;
+    }
+    if (promptBox) {
+      promptBox.classList.remove("collapsed");
+    }
+    if (promptToggle) {
+      promptToggle.style.display = promptText.length > 110 ? "inline-block" : "none";
+      promptToggle.textContent = "Свернуть ▴";
+    }
     if (modelEl) modelEl.textContent = item.model_id || "—";
     if (seedEl) seedEl.textContent = item.seed !== null && item.seed !== undefined ? item.seed : "—";
     if (resEl) resEl.textContent = item.width && item.height ? `${item.width} × ${item.height}` : "—";
@@ -1762,6 +1880,14 @@ const App = {
     }
 
     modal.style.display = "flex";
+  },
+
+  toggleHistoryPrompt() {
+    const box = document.getElementById("history-modal-prompt-box");
+    const btn = document.getElementById("history-prompt-toggle");
+    if (!box || !btn) return;
+    const isCollapsed = box.classList.toggle("collapsed");
+    btn.textContent = isCollapsed ? "Развернуть ▾" : "Свернуть ▴";
   },
 
   closeHistoryModal() {
@@ -1901,7 +2027,50 @@ const App = {
     }, 4000);
   },
 
-  // ---------- Img2Img ----------
+  // ---------- Img2Img / Native ControlNet Reference ----------
+  onRefModeChange() {
+    const mode = document.getElementById("img2img-mode")?.value || "control_ref";
+    const hintEl = document.getElementById("img2img-mode-hint");
+    const strengthLabel = document.getElementById("img2img-strength-label");
+    const strengthSlider = document.getElementById("img2img-strength");
+    const strengthVal = document.getElementById("img2img-strength-val");
+
+    if (mode === "control_ref") {
+      if (hintEl) {
+        hintEl.style.color = "var(--success, #22c55e)";
+        hintEl.innerHTML = "✓ Изоляция шагов активна: <code>--init-img</code> и <code>--strength</code> отключены. Модель выполнит 100% шагов с чистого листа, перенося лайн и скринтоны через нативный Reference / ControlNet.";
+      }
+      if (strengthLabel) strengthLabel.textContent = "Сила контроля:";
+      if (strengthSlider) { strengthSlider.max = "1.00"; strengthSlider.value = "0.85"; }
+      if (strengthVal) strengthVal.textContent = "0.85";
+    } else if (mode === "controlnet_canny") {
+      if (hintEl) {
+        hintEl.style.color = "var(--info, #38bdf8)";
+        hintEl.innerHTML = "✒️ Canny / Lineart препроцессор: выделяет контуры туши и передает в ControlNet / Reference при 100% шагов с чистого белого шума.";
+      }
+      if (strengthLabel) strengthLabel.textContent = "Сила контура:";
+      if (strengthSlider) { strengthSlider.max = "1.00"; strengthSlider.value = "0.90"; }
+      if (strengthVal) strengthVal.textContent = "0.90";
+    } else {
+      if (hintEl) {
+        hintEl.style.color = "var(--warning, #fbbf24)";
+        hintEl.innerHTML = "⚠️ Классический Img2Img (зашумление исходника через <code>--init-img</code> + <code>--strength</code>). Может размывать белый фон и тонкие скринтоны.";
+      }
+      if (strengthLabel) strengthLabel.textContent = "Сила шума:";
+      if (strengthSlider) { strengthSlider.max = "0.95"; strengthSlider.value = "0.70"; }
+      if (strengthVal) strengthVal.textContent = "0.70";
+    }
+  },
+
+  toggleControlNetInput(e) {
+    if (e) e.preventDefault();
+    const input = document.getElementById("controlnet-custom-path");
+    if (!input) return;
+    const isHidden = input.style.display === "none";
+    input.style.display = isHidden ? "block" : "none";
+    if (isHidden) input.focus();
+  },
+
   async uploadImg2ImgFile(file) {
     if (!file) return;
 
@@ -1952,6 +2121,7 @@ const App = {
     if (refData && refData.url) {
       if (thumb) thumb.src = refData.url;
       if (container) container.style.display = "flex";
+      this.onRefModeChange();
       this.switchTab("generate");
     } else {
       if (container) container.style.display = "none";
