@@ -21,7 +21,11 @@
           <span class="gpu-dot" id="gpu-status"></span>
           <span id="gpu-name">Checking GPU...</span>
         </div>
-        <div class="sys-stats-bar" id="sys-stats-bar" title="Потребление видеопамяти (VRAM) и оперативной памяти (RAM)">
+        <div class="sys-stats-bar" id="sys-stats-bar" title="Потребление ресурсов системы (CPU, GPU, VRAM, RAM)">
+          <span class="sys-stat-item" id="cpu-stat-text">CPU: —</span>
+          <span class="sys-stat-sep">·</span>
+          <span class="sys-stat-item" id="gpu-stat-text" style="display: none;">GPU: —</span>
+          <span class="sys-stat-sep" id="gpu-stat-sep" style="display: none;">·</span>
           <span class="sys-stat-item" id="vram-stat-text">VRAM: —</span>
           <span class="sys-stat-sep">·</span>
           <span class="sys-stat-item" id="ram-stat-text">RAM: —</span>
@@ -113,7 +117,20 @@
             </div>
             <div class="preview-image-wrap" id="preview-image-wrap" style="display: none;">
               <img id="preview-img" alt="Generated image">
+              <!-- Compare Curtain / Slider -->
+              <div class="compare-container" id="compare-container" style="display: none;">
+                <img class="compare-image-bg" id="compare-bg-img" alt="Before">
+                <div class="compare-fg-clip" id="compare-fg-clip" style="clip-path: inset(0 0 0 50%);">
+                  <img class="compare-image-fg" id="compare-fg-img" alt="After">
+                </div>
+                <div class="compare-slider-bar" id="compare-slider-bar" style="left: 50%;">
+                  <div class="compare-handle">◀ ▶</div>
+                </div>
+                <div class="compare-badge compare-badge-left" id="compare-label-left">До</div>
+                <div class="compare-badge compare-badge-right" id="compare-label-right">После</div>
+              </div>
               <div class="preview-toolbar">
+                <button class="preview-tool-btn" id="btn-compare-toggle" title="Шторка для сравнения с предыдущим результатом или референсом" onclick="App.toggleCompare()">↔ Сравнить</button>
                 <button class="preview-tool-btn active" id="btn-zoom-fit" title="Fit to screen (Вписать)" onclick="zoomFit()">⤢ Fit</button>
                 <button class="preview-tool-btn" id="btn-zoom-orig" title="Original 1:1 (Масштаб 100%)" onclick="zoomOriginal()">1:1</button>
                 <button class="preview-tool-btn" title="Download" onclick="downloadImage()">⬇</button>
@@ -239,8 +256,38 @@
               </div>
             </div>
 
+            <!-- 5. LoRA Popover -->
+            <div class="dock-popover" id="dock-popover-lora" style="display: none; width: 440px;">
+              <div class="dock-popover-header">
+                <span>🎨 Подключение LoRA (<span id="dock-lora-count">0 активных</span>)</span>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="dock-mini-btn accent" onclick="App.openLoraModal(); App.closeAllDockPopovers();">+ Добавить LoRA</button>
+                </div>
+              </div>
+              <div class="dock-popover-body">
+                <div id="dock-lora-empty" style="padding: 14px; text-align: center; color: var(--text-dim); font-size: 12px;">
+                  В библиотеке пока нет LoRA. Нажмите «+ Добавить LoRA», чтобы загрузить файл с ПК или скачать с Hugging Face.
+                </div>
+                <div id="dock-lora-list" class="lora-popover-list"></div>
+              </div>
+            </div>
+
             <!-- MAIN GEMINI FLOATING DOCK BOX -->
             <div class="gemini-dock" id="gemini-dock">
+              <!-- Dock Top Controls (Position & Minimize) -->
+              <div class="dock-header-controls">
+                <span class="dock-header-drag-hint">LazySD Dock</span>
+                <div class="dock-header-actions">
+                  <button type="button" class="dock-ctrl-btn" onclick="App.cycleDockPosition()" title="Сменить позицию: Центр / Влево / Вправо / Низ" id="dock-pos-btn">⤢</button>
+                  <button type="button" class="dock-ctrl-btn" onclick="App.toggleDockMinimized()" title="Свернуть коробку в плавающую кнопку" id="dock-minimize-btn">_</button>
+                </div>
+              </div>
+              <!-- Minimized Pill -->
+              <div class="dock-minimized-pill" onclick="App.toggleDockMinimized()" title="Нажмите чтобы развернуть центр управления">
+                <span>⚡ LazySD UI · Генерация</span>
+                <span style="font-size: 11px; opacity: 0.7;">(развернуть)</span>
+              </div>
+
               <!-- Top Attachment Bar (44px compact horizontal bar inside dock) -->
               <div class="dock-attachment-bar" id="img2img-container" style="display: none;">
                 <div class="dock-attachment-main">
@@ -300,6 +347,9 @@
                   <button type="button" class="dock-pill" id="dock-neg-pill" onclick="App.toggleNegativePrompt()" title="Негативный промпт">
                     <span>🚫</span> <span>Neg</span>
                     <span class="negative-prompt-dot" id="negative-prompt-dot" style="display: none;"></span>
+                  </button>
+                  <button type="button" class="dock-pill" id="dock-lora-pill" onclick="App.toggleDockPopover('lora', event)" title="Подключение и веса LoRA">
+                    <span>🎨</span> <span id="dock-lora-pill-text">LoRA (0)</span> <span class="pill-caret">▾</span>
                   </button>
                   <button type="button" class="dock-pill" id="dock-params-pill" onclick="App.toggleDockPopover('params', event)" title="Быстрые настройки: Сэмплер, Шаги, CFG, Сид">
                     <span>🎛️</span> <span id="dock-params-pill-text">Euler · 20 · CFG 3.5</span> <span class="pill-caret">▾</span>
@@ -392,6 +442,22 @@
                 <button type="button" class="history-action-btn" onclick="document.getElementById('dock-ref-file-input').click()" style="height: 32px; font-size: 11.5px;">
                   ➕ Загрузить референс / лайн-арт
                 </button>
+              </div>
+            </details>
+
+            <!-- Accordion: LoRA Stacking -->
+            <details class="inspector-accordion" open id="inspector-lora-accordion">
+              <summary class="inspector-summary">
+                <span>🎨 LoRA Stacking (<span id="inspector-lora-count">0</span>)</span>
+                <span class="summary-chevron">▾</span>
+              </summary>
+              <div class="inspector-section-body">
+                <div class="lora-inspector-wrap" id="lora-inspector-list">
+                  <div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px 0;">Нет подключенных LoRA</div>
+                </div>
+                <div style="display: flex; gap: 6px; margin-top: 8px;">
+                  <button type="button" class="dock-mini-btn accent" onclick="App.openLoraModal()" style="width: 100%; justify-content: center; height: 30px;">+ Управление LoRA</button>
+                </div>
               </div>
             </details>
 
@@ -823,6 +889,133 @@
               <input type="checkbox" id="setting-worker-restart" checked>
             </div>
             <div></div>
+          </div>
+        </div>
+
+        <!-- Section: Dock Box & Interface Settings -->
+        <div class="settings-section">
+          <h3>Интерфейс и Коробка (Gemini Dock)</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Позиция коробки</strong><br>
+              <small style="color: var(--text-dim);">Расположение плавающего центра управления на холсте</small>
+            </div>
+            <div class="setting-value">
+              <select id="setting-dock-pos" onchange="App.setDockPosition(this.value)">
+                <option value="center">Плавающий по центру (Gemini)</option>
+                <option value="left">Плавающий слева</option>
+                <option value="right">Плавающий справа</option>
+                <option value="bottom">Прикреплённая нижняя панель</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Непрозрачность коробки (Opacity)</strong><br>
+              <small style="color: var(--text-dim);">Прозрачность фона плавающего блока</small>
+            </div>
+            <div class="setting-value" style="display: flex; align-items: center; gap: 12px;">
+              <input type="range" id="setting-dock-opacity" min="0.30" max="1.00" step="0.05" value="0.88" oninput="App.setDockOpacity(this.value)" style="flex: 1;">
+              <span id="setting-dock-opacity-val" style="font-family: monospace; font-size: 12px; width: 45px;">88%</span>
+            </div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Размытие фона (Backdrop blur)</strong><br>
+              <small style="color: var(--text-dim);">Матовое стекло под коробкой (эффект стекла)</small>
+            </div>
+            <div class="setting-value" style="display: flex; align-items: center; gap: 12px;">
+              <input type="range" id="setting-dock-blur" min="0" max="35" step="1" value="20" oninput="App.setDockBlur(this.value)" style="flex: 1;">
+              <span id="setting-dock-blur-val" style="font-family: monospace; font-size: 12px; width: 45px;">20px</span>
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <!-- Section: Remote Sharing & Quick Tunnels (without Gradio) -->
+        <div class="settings-section">
+          <h3>Деление сайтом (Remote Sharing & Tunnels)</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Публичный доступ (Cloudflare Quick Tunnel)</strong><br>
+              <small style="color: var(--text-dim);">Создание временной защищённой ссылки для друзей без внешнего IP и проброса портов</small>
+            </div>
+            <div class="setting-value">
+              <div id="setting-share-status-badge" class="state-badge missing" style="display: inline-block;">Остановлен</div>
+              <div id="setting-share-url-wrap" style="display: none; margin-top: 8px;">
+                <input type="text" id="setting-share-url" readonly style="width: 100%; font-family: monospace; font-size: 12px; background: var(--bg-primary);">
+              </div>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" id="btn-share-toggle" onclick="App.toggleShareTunnel()">Запустить туннель</button>
+              <button class="setting-btn" id="btn-share-copy" onclick="App.copyShareUrl()" style="display: none;">Копировать</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Токен гостя / Пароль доступа</strong><br>
+              <small style="color: var(--text-dim);">Защищает удалённый доступ: гость должен ввести этот ключ для генерации</small>
+            </div>
+            <div class="setting-value" style="display: flex; gap: 8px;">
+              <input type="text" id="setting-share-token" placeholder="Случайный токен" style="flex: 1; font-family: monospace; font-size: 12px;">
+              <button class="setting-btn" onclick="App.generateShareToken()">Сгенерировать</button>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="App.saveShareToken()">Сохранить</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Автозапуск туннеля</strong><br>
+              <small style="color: var(--text-dim);">Автоматически поднимать ссылку при запуске WebUI</small>
+            </div>
+            <div class="setting-value">
+              <input type="checkbox" id="setting-share-autostart" onchange="App.saveShareAutoStart(this.checked)">
+            </div>
+            <div></div>
+          </div>
+        </div>
+
+        <!-- Section: Extras & Engines (OrbitQuant & Nunchaku) -->
+        <div class="settings-section">
+          <h3>Дополнительные движки (OrbitQuant & Nunchaku)</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Nunchaku SVDQ (vitoom-nunchaku)</strong><br>
+              <small style="color: var(--text-dim);">Быстрый 4-битный движок SVDQuant для Flux.2 Klein (поддержка Blackwell NVFP4). Автоматическая загрузка wheel из HuggingFace.</small>
+            </div>
+            <div class="setting-value" id="setting-nunchaku-status">
+              <span class="state-badge missing">Не установлен</span>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" id="btn-install-nunchaku" onclick="App.installExtrasPackage('nunchaku')">Установить Nunchaku</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>OrbitQuant W4A4 (WaveCut)</strong><br>
+              <small style="color: var(--text-dim);">Движок ротационных квантованных кодеков OrbitQuant W4A4 для FLUX.2 Klein и Z-Image-Turbo.</small>
+            </div>
+            <div class="setting-value" id="setting-orbitquant-status">
+              <span class="state-badge missing">Не установлен</span>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" id="btn-install-orbitquant" onclick="App.installExtrasPackage('orbitquant')">Установить OrbitQuant</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Окружение Extras Python</strong><br>
+              <small style="color: var(--text-dim);">Интерпретатор Python для изолированного запуска дополнительных движков</small>
+            </div>
+            <div class="setting-value">
+              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted);">Проверка...</div>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="App.refreshExtrasStatus()">Проверить</button>
+            </div>
           </div>
         </div>
 
@@ -1491,6 +1684,57 @@
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;">
           <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeSavePresetModal()">Отмена</button>
           <button type="button" class="generate-btn" onclick="App.saveCurrentAsPreset()">💾 Сохранить шаблон</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Manage LoRA -->
+  <div id="lora-manage-modal" class="modal-overlay" style="display: none; z-index: 10003;" onclick="if(event.target===this) App.closeLoraModal()">
+    <div class="modal-content" style="max-width: 620px; padding: 22px;">
+      <button class="modal-close" onclick="App.closeLoraModal()">✕</button>
+      <h3 style="margin: 0 0 6px; font-size: 17px;">🎨 Библиотека и Добавление LoRA</h3>
+      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);">Управление адаптерами LoRA для Flux, Qwen и SDXL. Файлы сохраняются в <code>models/loras</code>.</p>
+      
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <!-- Option 1: File Upload -->
+          <div style="padding: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px;">Загрузить файл</div>
+            <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 8px;">Локальный .safetensors или .gguf</div>
+            <input type="file" id="lora-file-upload-input" accept=".safetensors,.gguf,.pt,.ckpt" style="display: none;" onchange="App.onLoraFileSelected(this)">
+            <button type="button" class="history-action-btn" onclick="document.getElementById('lora-file-upload-input').click()" style="width: 100%; height: 30px; font-size: 11.5px;">📁 Выбрать файл...</button>
+          </div>
+          <!-- Option 2: Local Path Import -->
+          <div style="padding: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px;">Импорт по пути на диске</div>
+            <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 8px;">Скопировать из любой папки Windows</div>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="lora-local-path-input" placeholder="C:\...\lora.safetensors" style="flex: 1; font-size: 11px; height: 30px;">
+              <button type="button" class="history-action-btn" onclick="App.importLocalLora()" style="width: auto; height: 30px; font-size: 11.5px;">Импорт</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Option 3: HuggingFace Download -->
+        <div style="padding: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;">
+          <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px;">Скачать с Hugging Face</div>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="lora-hf-repo-input" placeholder="author/repo (например, ostris/super-flux-lora)" style="flex: 2; font-size: 11.5px; height: 32px;">
+            <input type="text" id="lora-hf-file-input" placeholder="Файл (опционально)" style="flex: 1; font-size: 11.5px; height: 32px;">
+            <button type="button" class="generate-btn" onclick="App.downloadHfLora()" style="height: 32px; padding: 0 14px; font-size: 12px;">Скачать</button>
+          </div>
+        </div>
+
+        <!-- Library List -->
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-weight: 600; font-size: 12px;">Установленные адаптеры (<span id="lora-modal-total">0</span>)</span>
+            <button type="button" class="dock-mini-btn" onclick="App.loadLoras()">Обновить</button>
+          </div>
+          <div id="lora-modal-list-wrap" style="max-height: 200px; overflow-y: auto; background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 6px;">
+            <div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 12px;">Загрузка списка LoRA...</div>
+          </div>
         </div>
       </div>
     </div>

@@ -183,6 +183,7 @@ def init_state() -> None:
 def _get_engines_info() -> dict:
     from backend.engine import is_engine_installed, get_engine_paths
     from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_cli_path, get_sd_cpp_version
+    from backend.extras import is_orbitquant_ready as is_orbitquant_installed, is_nunchaku_ready as is_nunchaku_installed
 
     _, cli17 = get_engine_paths("0.0.17")
     _, cli12 = get_engine_paths("0.0.12")
@@ -228,6 +229,26 @@ def _get_engines_info() -> dict:
             "installed": is_sdnq_installed(),
             "path": get_sdnq_path(),
             "description": "PyTorch + Triton INT8/INT4/FP8 quantization with Hadamard rotation & SVD (Qwen-Image-2.1 Turbo INT8).",
+        },
+        "orbitquant": {
+            "id": "orbitquant",
+            "engine": "orbitquant",
+            "version": "W4A4",
+            "name": "OrbitQuant",
+            "title": "OrbitQuant W4A4 (WaveCut)",
+            "installed": is_orbitquant_installed(),
+            "path": "Diffusers + OrbitQuant runtime",
+            "description": "Quantized rotation transforms + 4-bit weights and activations for Klein and Z-Image.",
+        },
+        "nunchaku": {
+            "id": "nunchaku",
+            "engine": "nunchaku",
+            "version": "1.3.0",
+            "name": "Nunchaku SVDQ",
+            "title": "Nunchaku SVDQ (vitoom-nunchaku)",
+            "installed": is_nunchaku_installed(),
+            "path": "vitoom-nunchaku wheels",
+            "description": "Ultra-fast SVDQuant 4-bit kernel engine for FLUX.2 Klein (INT4 / FP4 Blackwell).",
         },
     }
 
@@ -325,6 +346,14 @@ def create_app() -> FastAPI:
     # Use Gradio's FastAPI underpinning
     app = FastAPI(title="QuantFunc WebUI", version="0.1.0")
 
+    # Access / Share Middleware & Extras / LoRA extensions
+    from backend.share import ShareAccessMiddleware, register_share_routes
+    from backend.extras import register_extras_routes
+
+    app.add_middleware(ShareAccessMiddleware)
+    register_share_routes(app)
+    register_extras_routes(app)
+
     # ---------- Static file mounts ----------
     frontend_dir = PROJECT_ROOT / "frontend"
     app.mount("/css", StaticFiles(directory=str(frontend_dir / "css")), name="css")
@@ -410,6 +439,19 @@ def create_app() -> FastAPI:
                         return False
                 for t in model.transformers:
                     if t.recommended and (repo_dir / t.path).exists():
+                        return True
+                return False
+
+            if getattr(model, "engine", "quantfunc") == "orbitquant":
+                repo_id = model.sources.primary.repo_id if model.sources else ""
+                repo_dir = cache.repo_dir_for(repo_id) if repo_id else get_settings().models_dir
+                return (repo_dir / "model.safetensors").exists()
+
+            if getattr(model, "engine", "quantfunc") == "nunchaku":
+                repo_id = model.sources.primary.repo_id if model.sources else ""
+                repo_dir = cache.repo_dir_for(repo_id) if repo_id else get_settings().models_dir
+                for t in model.transformers:
+                    if (repo_dir / t.path).exists():
                         return True
                 return False
 
@@ -1180,6 +1222,64 @@ def create_app() -> FastAPI:
             "url": f"/outputs/uploads/{safe_stem}",
         }
 
+    # ---------- API: LoRA library ----------
+    @app.get("/api/loras")
+    async def api_list_loras():
+        """List all discovered LoRA files and metadata."""
+        from backend.lora import list_loras
+        return {"loras": list_loras()}
+
+    @app.post("/api/loras/upload")
+    async def api_upload_lora(file: UploadFile = File(...)):
+        """Upload a LoRA file directly into models/loras."""
+        if not file.filename:
+            raise HTTPException(400, "No file provided")
+        from backend.lora import save_uploaded_lora
+        try:
+            res = save_uploaded_lora(file.filename, file.file)
+            return {"status": "ok", "lora": res}
+        except Exception as e:
+            raise HTTPException(400, f"Upload failed: {e}")
+
+    @app.post("/api/loras/import")
+    async def api_import_lora(body: dict):
+        """Import a LoRA file from a local path on the host computer."""
+        path = body.get("path")
+        if not path:
+            raise HTTPException(400, "Missing 'path'")
+        rename = body.get("rename")
+        from backend.lora import import_local_lora
+        try:
+            res = import_local_lora(path, rename)
+            return {"status": "ok", "lora": res}
+        except Exception as e:
+            raise HTTPException(400, f"Import failed: {e}")
+
+    @app.post("/api/loras/download")
+    async def api_download_lora(body: dict):
+        """Download a LoRA file from Hugging Face."""
+        repo_id = body.get("repo_id")
+        if not repo_id:
+            raise HTTPException(400, "Missing 'repo_id'")
+        filename = body.get("filename")
+        settings = get_settings()
+        from backend.lora import download_hf_lora
+        try:
+            res = download_hf_lora(repo_id, filename=filename, token=settings.huggingface_token)
+            return {"status": "ok", "lora": res}
+        except Exception as e:
+            raise HTTPException(400, f"Download failed: {e}")
+
+    @app.delete("/api/loras/{name}")
+    async def api_delete_lora(name: str):
+        """Delete a LoRA file from models/loras."""
+        from backend.lora import delete_lora
+        try:
+            delete_lora(name)
+            return {"status": "ok", "deleted": name}
+        except Exception as e:
+            raise HTTPException(400, f"Delete failed: {e}")
+
     # ---------- API: Generate ----------
     @app.post("/api/generate")
     async def api_generate(body: dict):
@@ -1230,6 +1330,14 @@ def create_app() -> FastAPI:
         elif model_engine == "sdnq":
             if not is_sdnq_installed():
                 raise HTTPException(400, "SDNQ runtime not installed. Go to Settings → Install/Verify SDNQ.")
+        elif model_engine == "orbitquant":
+            from backend.extras import is_orbitquant_ready
+            if not is_orbitquant_ready():
+                raise HTTPException(400, "OrbitQuant runtime not installed. Go to Settings → Extras & Engines.")
+        elif model_engine == "nunchaku":
+            from backend.extras import is_nunchaku_ready
+            if not is_nunchaku_ready():
+                raise HTTPException(400, "Nunchaku runtime not installed. Go to Settings → Extras & Engines.")
         else:
             settings = get_settings()
             if not getattr(settings, "enable_quantfunc_models", False):
@@ -1281,6 +1389,17 @@ def create_app() -> FastAPI:
         ref_mode = raw_ref_mode if raw_ref_mode in ("control_ref", "controlnet_canny", "img2img") else "control_ref"
         control_net_path = (body.get("control_net_path") or "").strip() or None
 
+        # Resolve LoRA stack
+        raw_loras = body.get("loras") or []
+        lora_paths: list[Path] = []
+        lora_strengths: list[float] = []
+        if raw_loras:
+            from backend.lora import resolve_lora_selection
+            try:
+                lora_paths, lora_strengths, _ = resolve_lora_selection(raw_loras)
+            except ValueError as e:
+                raise HTTPException(400, f"LoRA error: {e}")
+
         # Build GenerateRequest
         request = GenerateRequest(
             model_id=model_id,
@@ -1296,6 +1415,8 @@ def create_app() -> FastAPI:
             use_prequant=selected.prequant,
             init_image_path=Path(init_image_path) if init_image_path else None,
             init_image_strength=init_image_strength,
+            lora_paths=lora_paths,
+            lora_strengths=lora_strengths,
             variant_id=selected.id,
             sampler=sampler,
             text_encoder_id=body.get("text_encoder_id"),
@@ -1705,7 +1826,16 @@ def main():
     log_file, uvicorn_log_config = setup_logging(verbose=args.verbose, log_dir=args.log_dir)
 
     init_state()
+    from backend.share import set_bind, get_share_manager
+    set_bind(args.host, args.port)
     app = create_app()
+
+    settings = get_settings()
+    if getattr(settings, "share_auto_start", False):
+        try:
+            get_share_manager().start()
+        except Exception as e:
+            print(f"[share] Auto-start failed: {e}")
 
     import uvicorn
 

@@ -131,6 +131,20 @@ class Settings(BaseModel):
     # Disabled by default due to corrupted/striped upstream weights.
     enable_quantfunc_models: bool = False
 
+    # ---------- Extras runtime (OrbitQuant / Nunchaku) ----------
+    # Optional: python.exe of an existing environment that already has torch +
+    # diffusers (+ nunchaku / orbitquant). Empty = use the managed venv in envs/extras.
+    extras_python: Optional[str] = None
+
+    # ---------- Sharing (Gradio-style `share=True`, but without Gradio) ----------
+    # Remote visitors (anything arriving via LAN/tunnel, i.e. not plain loopback)
+    # must present `share_token`. Remote sessions are "guests": they can generate
+    # and browse, but can't touch settings/engines/models unless share_allow_admin.
+    share_token: Optional[str] = None
+    share_tunnel_provider: str = "cloudflared"   # see backend/share.py PROVIDERS
+    share_auto_start: bool = False               # start the tunnel with the server
+    share_allow_admin: bool = False              # let remote visitors use admin endpoints
+
     # ---------- State ----------
     first_run_completed: bool = False
 
@@ -237,7 +251,8 @@ class Settings(BaseModel):
         ("" means "remove the stored value"). Other fields skip None values
         to avoid accidental resets when a caller omits a key.
         """
-        clearable = {"quantfunc_api_key", "huggingface_token", "modelscope_token"}
+        clearable = {"quantfunc_api_key", "huggingface_token", "modelscope_token",
+                     "share_token", "extras_python"}
         for key, value in kwargs.items():
             if key not in ("models_dir", "output_dir", "cache_dir", "engine_dir"):
                 if not hasattr(self, key):

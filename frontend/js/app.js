@@ -51,6 +51,19 @@ const App = {
     selectedVae: "texture_fix",
     activeDockPopover: null,
     hfInspectedRepo: null,
+    activeLoras: [],
+    loraLibrary: [],
+    compareActive: false,
+    comparePercentage: 50,
+    previousPreviewUrl: null,
+    currentPreviewUrl: null,
+    currentPreviewFilename: null,
+    dockPosition: "center",
+    dockMinimized: false,
+    dockOpacity: 0.88,
+    dockBlur: 20,
+    shareStatus: null,
+    extrasStatus: null,
   },
 
   // ---------- 3-Tier Model Sorting ----------
@@ -91,6 +104,11 @@ const App = {
     this.renderModels();
     this.updateEngineStatusUI();
     this.updateDockPills();
+    this.initDockSettings();
+    this.loadLoras();
+    this.initCompareEvents();
+    this.loadShareStatus();
+    this.refreshExtrasStatus();
     this.bindEvents();
 
     console.log("[app] Ready. GPU:", this.state.gpuInfo?.name || "not detected");
@@ -309,8 +327,33 @@ const App = {
 
   renderSystemStats(stats) {
     if (!stats) return;
+    const cpuEl = document.getElementById("cpu-stat-text");
+    const gpuStatEl = document.getElementById("gpu-stat-text");
+    const gpuSepEl = document.getElementById("gpu-stat-sep");
     const vramEl = document.getElementById("vram-stat-text");
     const ramEl = document.getElementById("ram-stat-text");
+
+    if (cpuEl && stats.cpu_percent !== undefined) {
+      const cpuPct = Math.round(stats.cpu_percent);
+      const color = cpuPct > 90 ? "#f87171" : (cpuPct > 70 ? "#fbbf24" : "var(--text-primary)");
+      const cores = stats.cpu_cores ? ` (${stats.cpu_cores}C)` : "";
+      cpuEl.innerHTML = `CPU: <strong style="color:${color}">${cpuPct}%</strong>${cores}`;
+    }
+
+    if (gpuStatEl) {
+      const parts = [];
+      if (stats.gpu_temp_c != null) parts.push(`${stats.gpu_temp_c}°C`);
+      if (stats.gpu_power_w != null) parts.push(`${stats.gpu_power_w}W`);
+      if (stats.gpu_util != null) parts.push(`${stats.gpu_util}%`);
+      if (parts.length > 0) {
+        gpuStatEl.innerHTML = `GPU: <strong>${parts.join(" · ")}</strong>`;
+        gpuStatEl.style.display = "";
+        if (gpuSepEl) gpuSepEl.style.display = "";
+      } else {
+        gpuStatEl.style.display = "none";
+        if (gpuSepEl) gpuSepEl.style.display = "none";
+      }
+    }
 
     if (vramEl) {
       if (stats.vram_total_gb > 0) {
@@ -341,7 +384,7 @@ const App = {
         const stats = await this.apiGet("/api/system/stats");
         this.renderSystemStats(stats);
       } catch (_) {}
-    }, 3000);
+    }, 2000);
   },
 
   renderModels() {
@@ -1581,6 +1624,14 @@ const App = {
       backend: backend,
     };
 
+    // Attach active LoRA stack
+    if (this.state.activeLoras && this.state.activeLoras.length > 0) {
+      params.loras = this.state.activeLoras.map(l => ({
+        name: l.name,
+        strength: l.strength !== undefined ? parseFloat(l.strength) : 1.0,
+      }));
+    }
+
     if (this.state.img2imgRef) {
       params.init_image_path = this.state.img2imgRef.path;
       params.init_image_strength = parseFloat(
@@ -1810,14 +1861,20 @@ const App = {
     if (placeholder) placeholder.style.display = "none";
     if (wrap) wrap.style.display = "flex";
     if (img) {
-      // imagePath is an absolute system path like "G:\\...\\outputs\\filename.png".
-      // The server mounts /outputs/ as a static directory (app.py), so we only
-      // need the filename. Cache-bust query forces the browser to reload.
+      if (this.state.currentPreviewUrl) {
+        this.state.previousPreviewUrl = this.state.currentPreviewUrl;
+      }
       const filename = imagePath.split(/[\/\\]/).pop();
       const url = `/outputs/${encodeURIComponent(filename)}?t=${Date.now()}`;
       img.src = url;
+      this.state.currentPreviewFilename = filename;
+      this.state.currentPreviewUrl = url;
       this.state.lastPreviewName = filename;
       this.state.lastPreviewUrl = url;
+
+      if (this.state.compareActive) {
+        this.updateCompareImages();
+      }
     }
   },
 
@@ -3124,6 +3181,620 @@ const App = {
       }
     } catch (err) {
       this.toast("error", err.message);
+    }
+  },
+
+  // ============================================================
+  // Dock Box Controls (Position, Transparency, Minimized)
+  // ============================================================
+  initDockSettings() {
+    try {
+      const raw = localStorage.getItem("lazysd_dock");
+      const cfg = raw ? JSON.parse(raw) : {};
+      if (cfg.position) this.state.dockPosition = cfg.position;
+      if (cfg.opacity !== undefined) this.state.dockOpacity = cfg.opacity;
+      if (cfg.blur !== undefined) this.state.dockBlur = cfg.blur;
+      if (cfg.minimized !== undefined) this.state.dockMinimized = cfg.minimized;
+    } catch (_) {}
+
+    this.applyDockSettings();
+  },
+
+  applyDockSettings() {
+    const wrap = document.getElementById("gemini-dock-wrap");
+    if (!wrap) return;
+
+    wrap.classList.remove("dock-pos-left", "dock-pos-right", "dock-pos-bottom", "dock-pos-center", "dock-minimized");
+
+    if (this.state.dockPosition && this.state.dockPosition !== "center") {
+      wrap.classList.add(`dock-pos-${this.state.dockPosition}`);
+    }
+    if (this.state.dockMinimized) {
+      wrap.classList.add("dock-minimized");
+    }
+
+    const root = document.documentElement;
+    root.style.setProperty("--dock-opacity", this.state.dockOpacity);
+    root.style.setProperty("--dock-blur", `${this.state.dockBlur}px`);
+
+    const posSelect = document.getElementById("setting-dock-pos");
+    if (posSelect) posSelect.value = this.state.dockPosition || "center";
+
+    const opSlider = document.getElementById("setting-dock-opacity");
+    const opLabel = document.getElementById("setting-dock-opacity-val");
+    if (opSlider) opSlider.value = this.state.dockOpacity;
+    if (opLabel) opLabel.textContent = `${Math.round(this.state.dockOpacity * 100)}%`;
+
+    const blurSlider = document.getElementById("setting-dock-blur");
+    const blurLabel = document.getElementById("setting-dock-blur-val");
+    if (blurSlider) blurSlider.value = this.state.dockBlur;
+    if (blurLabel) blurLabel.textContent = `${this.state.dockBlur}px`;
+  },
+
+  saveDockSettings() {
+    try {
+      localStorage.setItem("lazysd_dock", JSON.stringify({
+        position: this.state.dockPosition,
+        opacity: this.state.dockOpacity,
+        blur: this.state.dockBlur,
+        minimized: this.state.dockMinimized,
+      }));
+    } catch (_) {}
+  },
+
+  setDockPosition(pos) {
+    this.state.dockPosition = pos;
+    this.applyDockSettings();
+    this.saveDockSettings();
+  },
+
+  cycleDockPosition() {
+    const order = ["center", "left", "right", "bottom"];
+    const curIdx = order.indexOf(this.state.dockPosition || "center");
+    const next = order[(curIdx + 1) % order.length];
+    this.setDockPosition(next);
+    this.toast("info", `Позиция коробки: ${next}`);
+  },
+
+  toggleDockMinimized() {
+    this.state.dockMinimized = !this.state.dockMinimized;
+    this.applyDockSettings();
+    this.saveDockSettings();
+  },
+
+  setDockOpacity(val) {
+    const num = parseFloat(val);
+    if (isNaN(num)) return;
+    this.state.dockOpacity = Math.max(0.2, Math.min(1.0, num));
+    this.applyDockSettings();
+    this.saveDockSettings();
+  },
+
+  setDockBlur(val) {
+    const num = parseInt(val, 10);
+    if (isNaN(num)) return;
+    this.state.dockBlur = Math.max(0, Math.min(40, num));
+    this.applyDockSettings();
+    this.saveDockSettings();
+  },
+
+  // ============================================================
+  // Compare Curtain / Slider (Шторка)
+  // ============================================================
+  toggleCompare() {
+    const container = document.getElementById("compare-container");
+    const mainImg = document.getElementById("preview-img");
+    const btn = document.getElementById("btn-compare-toggle");
+    if (!container || !mainImg) return;
+
+    if (this.state.compareActive) {
+      this.state.compareActive = false;
+      container.style.display = "none";
+      mainImg.style.display = "block";
+      if (btn) btn.classList.remove("active");
+      return;
+    }
+
+    const fgSrc = this.state.currentPreviewUrl || (mainImg.src && !mainImg.src.endsWith("#") ? mainImg.src : null);
+    const bgSrc = this.state.previousPreviewUrl || (this.state.img2imgRef?.url || null);
+
+    if (!fgSrc) {
+      this.toast("warning", "Нет изображения для сравнения. Сгенерируйте кадр.");
+      return;
+    }
+    if (!bgSrc) {
+      this.toast("warning", "Нет второго кадра для сравнения (требуется предыдущая генерация или референс).");
+      return;
+    }
+
+    this.state.compareActive = true;
+    container.style.display = "flex";
+    mainImg.style.display = "none";
+    if (btn) btn.classList.add("active");
+
+    const bgImg = document.getElementById("compare-bg-img");
+    const fgImg = document.getElementById("compare-fg-img");
+    if (bgImg) bgImg.src = bgSrc;
+    if (fgImg) fgImg.src = fgSrc;
+
+    const leftLabel = document.getElementById("compare-label-left");
+    if (leftLabel) {
+      leftLabel.textContent = this.state.previousPreviewUrl ? "Пред. кадр" : "Референс";
+    }
+
+    this.updateCompareSlider(this.state.comparePercentage || 50);
+  },
+
+  updateCompareImages() {
+    const bgImg = document.getElementById("compare-bg-img");
+    const fgImg = document.getElementById("compare-fg-img");
+    if (fgImg && this.state.currentPreviewUrl) fgImg.src = this.state.currentPreviewUrl;
+    if (bgImg && this.state.previousPreviewUrl) bgImg.src = this.state.previousPreviewUrl;
+  },
+
+  updateCompareSlider(pct) {
+    pct = Math.max(0, Math.min(100, pct));
+    this.state.comparePercentage = pct;
+    const clipEl = document.getElementById("compare-fg-clip");
+    const barEl = document.getElementById("compare-slider-bar");
+    if (clipEl) {
+      clipEl.style.clipPath = `inset(0 0 0 ${pct}%)`;
+    }
+    if (barEl) {
+      barEl.style.left = `${pct}%`;
+    }
+  },
+
+  initCompareEvents() {
+    const container = document.getElementById("compare-container");
+    if (!container) return;
+
+    let isDragging = false;
+    const onMove = (e) => {
+      if (!isDragging) return;
+      const rect = container.getBoundingClientRect();
+      if (!rect.width) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const x = clientX - rect.left;
+      const pct = (x / rect.width) * 100;
+      this.updateCompareSlider(pct);
+    };
+
+    container.addEventListener("pointerdown", (e) => {
+      isDragging = true;
+      try { container.setPointerCapture(e.pointerId); } catch (_) {}
+      const rect = container.getBoundingClientRect();
+      if (rect.width) {
+        this.updateCompareSlider(((e.clientX - rect.left) / rect.width) * 100);
+      }
+    });
+
+    container.addEventListener("pointermove", onMove);
+    const endDrag = (e) => {
+      if (isDragging) {
+        isDragging = false;
+        try { container.releasePointerCapture(e.pointerId); } catch (_) {}
+      }
+    };
+    container.addEventListener("pointerup", endDrag);
+    container.addEventListener("pointercancel", endDrag);
+  },
+
+  // ============================================================
+  // LoRA Management & Stacking
+  // ============================================================
+  async loadLoras() {
+    try {
+      const res = await this.apiGet("/api/loras");
+      this.state.loraLibrary = res.loras || [];
+      this.renderLoraUI();
+    } catch (e) {
+      console.warn("[lora] Failed to load loras:", e);
+    }
+  },
+
+  renderLoraUI() {
+    const count = this.state.activeLoras.length;
+    const pillText = document.getElementById("dock-lora-pill-text");
+    if (pillText) {
+      pillText.textContent = `LoRA (${count})`;
+    }
+    const dockCount = document.getElementById("dock-lora-count");
+    if (dockCount) {
+      dockCount.textContent = `${count} активных`;
+    }
+    const inspectorCount = document.getElementById("inspector-lora-count");
+    if (inspectorCount) {
+      inspectorCount.textContent = String(count);
+    }
+
+    const dockList = document.getElementById("dock-lora-list");
+    const dockEmpty = document.getElementById("dock-lora-empty");
+    if (dockList && dockEmpty) {
+      if (this.state.loraLibrary.length === 0) {
+        dockEmpty.style.display = "block";
+        dockList.innerHTML = "";
+      } else {
+        dockEmpty.style.display = "none";
+        dockList.innerHTML = this.state.loraLibrary.map(item => {
+          const activeItem = this.state.activeLoras.find(l => l.name === item.name);
+          const isActive = !!activeItem;
+          const strength = activeItem ? activeItem.strength : 1.0;
+          const family = item.family ? `<span class="lora-meta-tag">${escapeHtml(item.family)}</span>` : "";
+          const size = item.size_mb ? `<span class="lora-meta-tag">${item.size_mb} MB</span>` : "";
+          return `
+            <div class="lora-card-item ${isActive ? 'active' : ''}">
+              <div class="lora-card-header">
+                <div class="lora-title-group" onclick="App.toggleLora('${escapeHtml(item.name)}')" style="cursor: pointer;">
+                  <input type="checkbox" ${isActive ? 'checked' : ''} onclick="event.stopPropagation(); App.toggleLora('${escapeHtml(item.name)}')">
+                  <span class="lora-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                  ${family}
+                  ${size}
+                </div>
+                <button type="button" class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить файл LoRA">✕</button>
+              </div>
+              ${isActive ? `
+                <div class="lora-slider-row">
+                  <input type="range" min="-2.0" max="2.0" step="0.05" value="${strength}" oninput="App.setLoraStrength('${escapeHtml(item.name)}', this.value)">
+                  <span class="lora-weight-val" id="lora-weight-val-${escapeHtml(item.name)}">${strength.toFixed(2)}</span>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join("");
+      }
+    }
+
+    const inspectorList = document.getElementById("lora-inspector-list");
+    if (inspectorList) {
+      if (this.state.activeLoras.length === 0) {
+        inspectorList.innerHTML = '<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px 0;">Нет подключенных LoRA</div>';
+      } else {
+        inspectorList.innerHTML = this.state.activeLoras.map(item => {
+          return `
+            <div class="lora-card-item active">
+              <div class="lora-card-header">
+                <div class="lora-title-group">
+                  <span class="lora-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                </div>
+                <button type="button" class="dock-ctrl-btn" onclick="App.toggleLora('${escapeHtml(item.name)}')" title="Отключить">✕</button>
+              </div>
+              <div class="lora-slider-row">
+                <input type="range" min="-2.0" max="2.0" step="0.05" value="${item.strength}" oninput="App.setLoraStrength('${escapeHtml(item.name)}', this.value)">
+                <span class="lora-weight-val" id="lora-weight-insp-${escapeHtml(item.name)}">${item.strength.toFixed(2)}</span>
+              </div>
+            </div>
+          `;
+        }).join("");
+      }
+    }
+
+    const modalTotal = document.getElementById("lora-modal-total");
+    if (modalTotal) modalTotal.textContent = String(this.state.loraLibrary.length);
+    const modalWrap = document.getElementById("lora-modal-list-wrap");
+    if (modalWrap) {
+      if (this.state.loraLibrary.length === 0) {
+        modalWrap.innerHTML = '<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 12px;">В папке models/loras пока нет файлов.</div>';
+      } else {
+        modalWrap.innerHTML = this.state.loraLibrary.map(item => {
+          return `
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border);">
+              <div style="min-width: 0; flex: 1;">
+                <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item.name)}</div>
+                <div style="font-size: 10px; color: var(--text-dim);">${item.size_mb || 0} MB ${item.family ? '· ' + escapeHtml(item.family) : ''}</div>
+              </div>
+              <button type="button" class="dock-mini-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" style="color: #f87171;">Удалить</button>
+            </div>
+          `;
+        }).join("");
+      }
+    }
+  },
+
+  toggleLora(name) {
+    const idx = this.state.activeLoras.findIndex(l => l.name === name);
+    if (idx >= 0) {
+      this.state.activeLoras.splice(idx, 1);
+    } else {
+      const item = this.state.loraLibrary.find(l => l.name === name);
+      this.state.activeLoras.push({
+        name: name,
+        strength: 1.0,
+        info: item || {},
+      });
+    }
+    this.renderLoraUI();
+  },
+
+  setLoraStrength(name, val) {
+    const num = parseFloat(val);
+    if (isNaN(num)) return;
+    const item = this.state.activeLoras.find(l => l.name === name);
+    if (item) {
+      item.strength = Math.round(num * 100) / 100;
+      const el1 = document.getElementById(`lora-weight-val-${name}`);
+      const el2 = document.getElementById(`lora-weight-insp-${name}`);
+      if (el1) el1.textContent = item.strength.toFixed(2);
+      if (el2) el2.textContent = item.strength.toFixed(2);
+    }
+  },
+
+  openLoraModal() {
+    const modal = document.getElementById("lora-manage-modal");
+    if (modal) {
+      modal.style.display = "flex";
+      this.loadLoras();
+    }
+  },
+
+  closeLoraModal() {
+    const modal = document.getElementById("lora-manage-modal");
+    if (modal) modal.style.display = "none";
+  },
+
+  async onLoraFileSelected(input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+    const fd = new FormData();
+    fd.append("file", file);
+
+    this.toast("info", `Загрузка LoRA «${file.name}»...`);
+    try {
+      const res = await fetch("/api/loras/upload", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Upload failed");
+      }
+      this.toast("success", `✓ LoRA «${file.name}» загружена!`);
+      input.value = "";
+      await this.loadLoras();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  async importLocalLora() {
+    const input = document.getElementById("lora-local-path-input");
+    const path = input ? input.value.trim() : "";
+    if (!path) {
+      this.toast("warning", "Укажите путь к файлу LoRA на диске");
+      return;
+    }
+    try {
+      this.toast("info", "Импорт файла...");
+      const res = await this.apiPost("/api/loras/import", { path: path });
+      this.toast("success", `✓ LoRA импортирована: ${res.lora?.name || "OK"}`);
+      if (input) input.value = "";
+      await this.loadLoras();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  async downloadHfLora() {
+    const repoInput = document.getElementById("lora-hf-repo-input");
+    const fileInput = document.getElementById("lora-hf-file-input");
+    const repo = repoInput ? repoInput.value.trim() : "";
+    const filename = fileInput ? fileInput.value.trim() : "";
+    if (!repo) {
+      this.toast("warning", "Укажите HuggingFace repo (author/repo)");
+      return;
+    }
+
+    try {
+      this.toast("info", `Скачивание LoRA из ${repo}...`);
+      const res = await this.apiPost("/api/loras/download", {
+        repo_id: repo,
+        filename: filename || null,
+      });
+      this.toast("success", `✓ LoRA успешно скачана: ${res.lora?.name}`);
+      if (repoInput) repoInput.value = "";
+      if (fileInput) fileInput.value = "";
+      await this.loadLoras();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  async deleteLora(name) {
+    if (!confirm(`Удалить LoRA «${name}» с диска?`)) return;
+    try {
+      await fetch(`/api/loras/${encodeURIComponent(name)}`, { method: "DELETE" });
+      this.toast("info", `LoRA «${name}» удалена`);
+      const idx = this.state.activeLoras.findIndex(l => l.name === name);
+      if (idx >= 0) this.state.activeLoras.splice(idx, 1);
+      await this.loadLoras();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  // ============================================================
+  // Remote Sharing (Gradio-like without Gradio)
+  // ============================================================
+  async loadShareStatus() {
+    try {
+      const data = await this.apiGet("/api/share/status");
+      this.state.shareStatus = data;
+      this.renderShareUI();
+    } catch (_) {}
+  },
+
+  renderShareUI() {
+    const status = this.state.shareStatus;
+    if (!status) return;
+
+    const badge = document.getElementById("setting-share-status-badge");
+    const urlWrap = document.getElementById("setting-share-url-wrap");
+    const urlInput = document.getElementById("setting-share-url");
+    const toggleBtn = document.getElementById("btn-share-toggle");
+    const copyBtn = document.getElementById("btn-share-copy");
+    const tokenInput = document.getElementById("setting-share-token");
+    const autoCheck = document.getElementById("setting-share-autostart");
+
+    if (tokenInput && status.token) tokenInput.value = status.token;
+    if (autoCheck) autoCheck.checked = !!status.auto_start;
+
+    if (status.running && status.public_url) {
+      if (badge) {
+        badge.className = "state-badge installed";
+        badge.textContent = `✓ Активен (${status.provider})`;
+      }
+      if (urlWrap) urlWrap.style.display = "block";
+      if (urlInput) urlInput.value = status.share_url || status.public_url;
+      if (toggleBtn) toggleBtn.textContent = "Остановить туннель";
+      if (copyBtn) copyBtn.style.display = "inline-block";
+    } else {
+      if (badge) {
+        badge.className = "state-badge missing";
+        badge.textContent = "Остановлен";
+      }
+      if (urlWrap) urlWrap.style.display = "none";
+      if (toggleBtn) toggleBtn.textContent = "Запустить туннель";
+      if (copyBtn) copyBtn.style.display = "none";
+    }
+  },
+
+  async toggleShareTunnel() {
+    const isRunning = this.state.shareStatus?.running;
+    try {
+      if (isRunning) {
+        this.toast("info", "Остановка туннеля...");
+        await this.apiPost("/api/share/stop", {});
+        this.toast("info", "Туннель остановлен");
+      } else {
+        this.toast("info", "Запуск Cloudflare quick tunnel...");
+        await this.apiPost("/api/share/start", { provider: "cloudflared" });
+        this.toast("success", "✓ Туннель запущен!");
+      }
+      await this.loadShareStatus();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  copyShareUrl() {
+    const input = document.getElementById("setting-share-url");
+    if (!input || !input.value) return;
+    navigator.clipboard.writeText(input.value);
+    this.toast("success", "✓ Публичная ссылка скопирована в буфер обмена!");
+  },
+
+  generateShareToken() {
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+    const input = document.getElementById("setting-share-token");
+    if (input) input.value = token;
+  },
+
+  async saveShareToken() {
+    const input = document.getElementById("setting-share-token");
+    const val = input ? input.value.trim() : "";
+    try {
+      await this.apiPost("/api/share/token", { token: val || null });
+      this.toast("success", "✓ Токен гостя сохранён");
+      await this.loadShareStatus();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  async saveShareAutoStart(checked) {
+    try {
+      await this.apiPost("/api/settings", { share_auto_start: checked });
+      this.toast("info", `Автозапуск туннеля: ${checked ? "ВКЛ" : "ВЫКЛ"}`);
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  // ============================================================
+  // Extras & Engines (OrbitQuant & Nunchaku)
+  // ============================================================
+  async refreshExtrasStatus() {
+    try {
+      const data = await this.apiGet("/api/extras/status");
+      this.state.extrasStatus = data;
+      this.renderExtrasUI();
+    } catch (_) {}
+  },
+
+  renderExtrasUI() {
+    const data = this.state.extrasStatus;
+    if (!data) return;
+
+    const nunchakuBadge = document.getElementById("setting-nunchaku-status");
+    const orbitBadge = document.getElementById("setting-orbitquant-status");
+    const envDesc = document.getElementById("setting-extras-env-desc");
+
+    if (envDesc && data.env) {
+      const e = data.env;
+      envDesc.textContent = `${e.python || 'Python'} (Torch: ${e.torch_version || 'None'}, CUDA: ${e.cuda_available ? 'OK' : 'No'})`;
+    }
+
+    if (nunchakuBadge) {
+      if (data.nunchaku_ready) {
+        nunchakuBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.nunchaku_version || 'ready'})</span>`;
+      } else {
+        nunchakuBadge.innerHTML = '<span class="state-badge missing">Не установлен</span>';
+      }
+    }
+
+    if (orbitBadge) {
+      if (data.orbitquant_ready) {
+        orbitBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.orbitquant_version || 'ready'})</span>`;
+      } else {
+        orbitBadge.innerHTML = '<span class="state-badge missing">Не установлен</span>';
+      }
+    }
+  },
+
+  async installExtrasPackage(target) {
+    const btn = document.getElementById(`btn-install-${target}`);
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Установка...";
+    }
+    this.toast("info", `Запущена установка ${target}...`);
+
+    try {
+      const res = await this.apiPost("/api/extras/install", { target: target });
+      const jobId = res.job?.id;
+      if (!jobId) throw new Error("No job returned");
+
+      const poll = setInterval(async () => {
+        try {
+          const job = await this.apiGet(`/api/extras/jobs/${jobId}`);
+          if (btn) btn.textContent = `${job.stage || 'Установка'}...`;
+          if (job.status === "succeeded") {
+            clearInterval(poll);
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = `Установить ${target}`;
+            }
+            this.toast("success", `✓ Пакет ${target} успешно установлен!`);
+            await this.refreshExtrasStatus();
+          } else if (job.status === "failed") {
+            clearInterval(poll);
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = `Установить ${target}`;
+            }
+            this.toast("error", `Ошибка установки ${target}: ${job.error || "failed"}`);
+          }
+        } catch (_) {
+          clearInterval(poll);
+        }
+      }, 2000);
+    } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = `Установить ${target}`;
+      }
+      this.toast("error", e.message);
     }
   },
 };

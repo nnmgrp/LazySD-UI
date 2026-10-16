@@ -24,7 +24,13 @@ bin/
 *.dylib
 
 # Models cache & Heavy weights
+cache/
+envs/
 models/cache/
+models/loras/
+models/custom/
+models/presets/*.json
+!models/presets/.gitkeep
 *.safetensors
 *.gguf
 *.bin

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -285,12 +287,22 @@ def is_model_compatible(model_min_sm: int, gpu_sm: int) -> bool:
 _CACHED_NVSMI_EXE: Optional[str] = None
 
 
-def get_system_memory_stats() -> dict:
-    """Return live VRAM and System RAM consumption statistics."""
+def _cpu_percent() -> tuple[float, int]:
+    """Non-blocking system-wide CPU utilisation (%), logical core count."""
+    try:
+        import psutil
+        return float(psutil.cpu_percent(interval=None)), int(psutil.cpu_count(logical=True) or 0)
+    except Exception:
+        return 0.0, 0
+
+
+def _collect_system_stats() -> dict:
+    """Return live VRAM, System RAM, CPU and GPU load statistics."""
     global _CACHED_NVSMI_EXE
     import ctypes
     import sys
 
+    cpu_pct, cpu_cores = _cpu_percent()
     stats = {
         "vram_used_mb": 0,
         "vram_total_mb": 0,
@@ -298,6 +310,10 @@ def get_system_memory_stats() -> dict:
         "vram_total_gb": 0.0,
         "vram_percent": 0,
         "gpu_util": 0,
+        "gpu_temp_c": None,
+        "gpu_power_w": None,
+        "cpu_percent": round(cpu_pct, 1),
+        "cpu_cores": cpu_cores,
         "ram_used_mb": 0,
         "ram_total_mb": 0,
         "ram_used_gb": 0.0,
@@ -361,7 +377,7 @@ def get_system_memory_stats() -> dict:
             res = subprocess.run(
                 [
                     _CACHED_NVSMI_EXE,
-                    "--query-gpu=memory.used,memory.total,utilization.gpu",
+                    "--query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
                     "--format=csv,noheader,nounits",
                 ],
                 capture_output=True,
@@ -372,18 +388,50 @@ def get_system_memory_stats() -> dict:
             if res.returncode == 0 and res.stdout.strip():
                 line = res.stdout.strip().splitlines()[0]
                 parts = [p.strip() for p in line.split(",")]
+
+                def _num(i: int):
+                    # nvidia-smi prints "[N/A]" / "[Not Supported]" for unsupported fields
+                    try:
+                        return float(parts[i])
+                    except (IndexError, ValueError):
+                        return None
+
                 if len(parts) >= 2:
-                    v_used = int(float(parts[0])) if parts[0].replace(".", "", 1).isdigit() else 0
-                    v_tot = int(float(parts[1])) if parts[1].replace(".", "", 1).isdigit() else 0
-                    v_util = int(float(parts[2])) if (len(parts) >= 3 and parts[2].replace(".", "", 1).isdigit()) else 0
+                    v_used = int(_num(0) or 0)
+                    v_tot = int(_num(1) or 0)
+                    v_util = int(_num(2) or 0)
                     stats["vram_used_mb"] = v_used
                     stats["vram_total_mb"] = v_tot
                     stats["vram_used_gb"] = round(v_used / 1024.0, 1)
                     stats["vram_total_gb"] = round(v_tot / 1024.0, 1)
                     stats["vram_percent"] = int(round(v_used * 100 / max(1, v_tot))) if v_tot > 0 else 0
                     stats["gpu_util"] = v_util
+                    temp = _num(3)
+                    power = _num(4)
+                    stats["gpu_temp_c"] = int(temp) if temp is not None else None
+                    stats["gpu_power_w"] = round(power) if power is not None else None
         except Exception:
             pass
 
     return stats
+
+
+_STATS_CACHE: dict = {"t": 0.0, "value": None}
+_STATS_LOCK = threading.Lock()
+_STATS_TTL_SEC = 1.0
+
+
+def get_system_memory_stats() -> dict:
+    """Live VRAM / RAM / CPU / GPU stats (cached ~1s so many pollers stay cheap)."""
+    with _STATS_LOCK:
+        now = time.monotonic()
+        if _STATS_CACHE["value"] is not None and now - _STATS_CACHE["t"] < _STATS_TTL_SEC:
+            return dict(_STATS_CACHE["value"])
+        value = _collect_system_stats()
+        _STATS_CACHE.update(t=now, value=value)
+        return dict(value)
+
+
+# Prime psutil's CPU counter so the first real reading isn't a meaningless 0.0.
+_cpu_percent()
 

@@ -560,6 +560,92 @@ def test_controls_and_samplers():
         return False
 
 
+def test_lora_share_extras():
+    print("\n[9/9] Testing LoRA, Sharing, Extras & Live Indicators...")
+    try:
+        from backend.lora import (
+            sanitize_lora_filename,
+            lora_prompt_tags,
+            get_loras_dir,
+            resolve_lora_selection,
+            get_settings,
+        )
+        # 1. LoRA helpers
+        safe = sanitize_lora_filename("my:cool<lora>_v1.safetensors")
+        assert safe == "my_cool_lora__v1.safetensors", f"Sanitize error: {safe}"
+        p = Path("models/loras/test_lora.safetensors")
+        tags = lora_prompt_tags([p], [0.85])
+        assert tags == "<lora:test_lora:0.85>", f"Tags error: {tags}"
+        assert get_loras_dir().exists()
+        print("  ✓ LoRA helpers (sanitization, tags, loras dir) OK")
+
+        # 2. Live CPU/GPU/VRAM system stats
+        from backend.gpu import get_system_memory_stats
+        stats = get_system_memory_stats()
+        assert "cpu_percent" in stats, "Missing cpu_percent in stats"
+        assert "cpu_cores" in stats, "Missing cpu_cores in stats"
+        assert "vram_used_gb" in stats, "Missing vram_used_gb in stats"
+        assert "gpu_temp_c" in stats, "Missing gpu_temp_c in stats"
+        print(f"  ✓ Live system stats OK: CPU {stats['cpu_percent']}% ({stats['cpu_cores']} cores), VRAM {stats['vram_used_gb']}/{stats['vram_total_gb']} GB")
+
+        # 3. Share manager & Gradio-free remote sharing
+        from backend.share import get_share_manager, is_lan_exposed
+        sm = get_share_manager()
+        assert sm is not None
+        status = sm.status()
+        assert "tunnel" in status and "token" in status
+        print(f"  ✓ Share manager OK (tunnel_state={status['tunnel']['state']}, token_set={status['token_set']})")
+
+        # 4. Extras manager & wheel planner
+        from backend.extras import plan_nunchaku_wheel, is_nunchaku_ready, is_orbitquant_ready
+        wheel_plan = plan_nunchaku_wheel()
+        print(f"  ✓ Nunchaku wheel planner OK: candidate={wheel_plan.get('candidate_wheel') or 'none'}")
+
+        # 5. REST API routes
+        from app import create_app
+        from fastapi.testclient import TestClient
+        client = TestClient(create_app())
+
+        r_loras = client.get("/api/loras")
+        assert r_loras.status_code == 200 and "loras" in r_loras.json(), "GET /api/loras failed"
+        print("  ✓ GET /api/loras OK")
+
+        r_share = client.get("/api/share/status")
+        assert r_share.status_code == 200 and "running" in r_share.json(), "GET /api/share/status failed"
+        print("  ✓ GET /api/share/status OK")
+
+        r_extras = client.get("/api/extras/status")
+        assert r_extras.status_code == 200 and "nunchaku_ready" in r_extras.json(), "GET /api/extras/status failed"
+        print("  ✓ GET /api/extras/status OK")
+
+        r_models = client.get("/api/models")
+        assert r_models.status_code == 200
+        models_data = r_models.json()
+        model_list = models_data if isinstance(models_data, list) else models_data.get("models", [])
+        model_ids = [m["id"] for m in model_list]
+        assert "flux_2_klein_4b_orbitquant" in model_ids, "Missing OrbitQuant model in /api/models"
+        assert "flux_2_klein_4b_nunchaku" in model_ids, "Missing Nunchaku model in /api/models"
+        print("  ✓ OrbitQuant and Nunchaku models registered in /api/models")
+
+        # 6. Frontend markup validation
+        index_html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        assert 'id="compare-container"' in index_html, "Missing compare container in index.html"
+        assert 'id="btn-compare-toggle"' in index_html, "Missing compare toggle button in index.html"
+        assert 'id="dock-lora-pill"' in index_html, "Missing LoRA dock pill in index.html"
+        assert 'id="dock-popover-lora"' in index_html, "Missing LoRA popover in index.html"
+        assert 'id="cpu-stat-text"' in index_html, "Missing cpu-stat-text in index.html"
+        assert 'id="setting-dock-opacity"' in index_html, "Missing dock opacity setting in index.html"
+        assert 'id="setting-share-toggle"' in index_html or 'id="btn-share-toggle"' in index_html, "Missing share tunnel toggle in index.html"
+        print("  ✓ Frontend UI components (Compare curtain, LoRA popover, CPU indicator, Dock controls, Share controls) verified in index.html")
+
+        return True
+    except Exception as e:
+        print(f"  ✗ LoRA, Sharing & Extras test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     print("=" * 60)
     print("QuantFunc WebUI — Smoke Test")
@@ -574,6 +660,7 @@ def main():
         ("Engine auth (config.json)", test_engine_auth()),
         ("Engine status", test_engine_status()),
         ("Controls & samplers", test_controls_and_samplers()),
+        ("LoRA, Sharing, Extras & Indicators", test_lora_share_extras()),
     ]
 
     print("\n" + "=" * 60)

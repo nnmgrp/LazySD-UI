@@ -536,6 +536,16 @@ class SDCppWorker:
             cfg_val = req_cfg if req_cfg is not None else default_cfg
             cmd.extend(["--cfg-scale", str(cfg_val)])
 
+        # LoRA injection: append prompt tags <lora:stem:strength> and specify --lora-model-dir
+        lora_paths = getattr(request, "lora_paths", None) or []
+        lora_strengths = getattr(request, "lora_strengths", None) or []
+        if lora_paths:
+            from .lora import get_loras_dir, lora_prompt_tags
+            lora_tags = lora_prompt_tags(lora_paths, lora_strengths)
+            if lora_tags:
+                prompt = f"{prompt} {lora_tags}".strip()
+            cmd.extend(["--lora-model-dir", str(get_loras_dir())])
+
         # Prompt & Negative prompt
         cmd.extend(["-p", prompt])
         neg_str = (getattr(request, "negative_prompt", None) or "").strip()

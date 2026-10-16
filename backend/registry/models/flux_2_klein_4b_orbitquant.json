@@ -1,0 +1,60 @@
+{
+  "id": "flux_2_klein_4b_orbitquant",
+  "name": "Flux.2 Klein 4B (OrbitQuant W4A4)",
+  "family": "klein",
+  "pipeline": "text_to_image",
+  "engine": "orbitquant",
+  "engine_version": "orbitquant",
+  "key_protected": false,
+  "description": "FLUX.2 Klein 4B compressed with OrbitQuant W4A4 (Weight 4-bit, Activation 4-bit) with quantized rotation transforms by WaveCut. High quality 4-step generation with minimal memory footprint.",
+  "upstream": {
+    "model": "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "transformers": [
+    {
+      "id": "orbitquant-w4a4",
+      "path": "model.safetensors",
+      "tier": "universal",
+      "backend": "orbitquant",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.02,
+      "size_bytes": 2169000000,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090",
+        "RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090",
+        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+      ],
+      "note": "OrbitQuant W4A4 (~2.0 GB DiT weights + rotation codebooks)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 6,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler": "euler"
+    }
+  }
+}

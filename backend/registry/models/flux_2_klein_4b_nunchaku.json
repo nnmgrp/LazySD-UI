@@ -1,0 +1,75 @@
+{
+  "id": "flux_2_klein_4b_nunchaku",
+  "name": "Flux.2 Klein 4B (Nunchaku SVDQ)",
+  "family": "klein",
+  "pipeline": "text_to_image",
+  "engine": "nunchaku",
+  "engine_version": "nunchaku",
+  "key_protected": false,
+  "description": "FLUX.2 Klein 4B quantized with SVDQuant (4-bit weights and activations) running on Nunchaku engine. Supports both INT4 (r32) and FP4 (r32) for ultra-fast inference on RTX 30/40/50 GPUs.",
+  "upstream": {
+    "model": "tonera/FLUX.2-klein-4B-Nunchaku",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "tonera/FLUX.2-klein-4B-Nunchaku"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "transformers": [
+    {
+      "id": "svdq-int4-r32",
+      "path": "svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors",
+      "tier": "universal",
+      "backend": "nunchaku",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.45,
+      "size_bytes": 2630667468,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090",
+        "RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090",
+        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant INT4-r32 (~2.45 GB)"
+    },
+    {
+      "id": "svdq-fp4-r32",
+      "path": "svdq-fp4_r32-FLUX.2-klein-4B-Nunchaku.safetensors",
+      "tier": "50x-above",
+      "backend": "nunchaku",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 2.56,
+      "size_bytes": 2748779069,
+      "recommended": false,
+      "recommended_for_gpu": [
+        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant FP4-r32 (NVFP4 for Blackwell/RTX 50-series)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 6,
+    "vram_recommended_gb": 10,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler": "euler"
+    }
+  }
+}

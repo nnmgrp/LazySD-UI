@@ -1,0 +1,60 @@
+{
+  "id": "z_image_turbo_orbitquant",
+  "name": "Z-Image Turbo (OrbitQuant W4A4)",
+  "family": "z-image",
+  "pipeline": "text_to_image",
+  "engine": "orbitquant",
+  "engine_version": "orbitquant",
+  "key_protected": false,
+  "description": "Z-Image-Turbo compressed with OrbitQuant W4A4 with quantized rotation transforms by WaveCut. High speed generation (~3.1 GB weights).",
+  "upstream": {
+    "model": "WaveCut/Z-Image-Turbo-OrbitQuant-W4A4",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "WaveCut/Z-Image-Turbo-OrbitQuant-W4A4"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "transformers": [
+    {
+      "id": "z-image-orbitquant-w4a4",
+      "path": "model.safetensors",
+      "tier": "universal",
+      "backend": "orbitquant",
+      "steps": 8,
+      "prequant": false,
+      "size_gb": 3.10,
+      "size_bytes": 3328599654,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3060", "RTX 3080", "RTX 3090",
+        "RTX 4060 Ti", "RTX 4070", "RTX 4080", "RTX 4090",
+        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+      ],
+      "note": "OrbitQuant W4A4 (~3.1 GB)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler": "euler"
+    }
+  }
+}
