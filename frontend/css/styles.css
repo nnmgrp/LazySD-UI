@@ -145,6 +145,36 @@ textarea {
     "statusbar statusbar";
   grid-template-rows: var(--menubar-h) 1fr var(--statusbar-h);
   grid-template-columns: var(--rail-w) 1fr;
+  transition: grid-template-columns var(--t-fast);
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 56px 1fr;
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  padding: 16px 4px;
+  align-items: center;
+}
+
+.app-shell.sidebar-collapsed .nav-section-title {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 10px 0;
+  width: 44px;
+}
+
+.app-shell.sidebar-collapsed .nav-item .nav-label,
+.app-shell.sidebar-collapsed .nav-item .badge {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .nav-item .nav-icon {
+  font-size: 16px;
+  margin: 0;
 }
 
 /* ---------- Menubar ---------- */
@@ -334,8 +364,10 @@ textarea {
   align-items: center;
   justify-content: center;
   background: var(--bg-primary);
-  padding: 24px;
-  overflow: hidden;
+  padding: 20px;
+  overflow: auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 .preview-placeholder {
@@ -355,15 +387,30 @@ textarea {
   position: relative;
   max-width: 100%;
   max-height: 100%;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .preview-image-wrap img {
-  max-width: 100%;
-  max-height: 100%;
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
+  transition: max-width var(--t-fast), max-height var(--t-fast);
+}
+.preview-image-wrap.fit-mode img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.preview-image-wrap.original-mode img {
+  max-width: none;
+  max-height: none;
+  width: auto;
+  height: auto;
+  object-fit: none;
 }
 
 .preview-toolbar {
@@ -371,12 +418,40 @@ textarea {
   top: 12px;
   right: 12px;
   display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: rgba(15, 15, 18, 0.85);
+  gap: 6px;
+  padding: 6px;
+  background: rgba(15, 15, 18, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  z-index: 5;
+}
+
+.preview-tool-btn {
+  height: 28px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.preview-tool-btn:hover {
+  background: var(--bg-card);
+  border-color: var(--border-hover);
+  color: var(--text-bright);
+}
+.preview-tool-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
 }
 
 /* ---------- Progress overlay ---------- */
@@ -894,10 +969,10 @@ textarea {
 
 .setting-row {
   display: grid;
-  grid-template-columns: 200px 1fr auto;
-  gap: 12px;
+  grid-template-columns: minmax(180px, 240px) 1fr auto;
+  gap: 16px;
   align-items: center;
-  padding: 8px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--border);
 }
 .setting-row:last-child {
@@ -910,6 +985,65 @@ textarea {
 .setting-value {
   font-size: 13px;
   color: var(--text-primary);
+}
+
+.setting-btn {
+  height: 32px;
+  min-width: 32px;
+  width: auto;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.setting-btn:hover:not(:disabled) {
+  background: var(--bg-card);
+  border-color: var(--border-hover);
+  color: var(--text-bright);
+}
+.setting-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.setting-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* Grayed out disabled QuantFunc models */
+.model-card-qf-disabled {
+  opacity: 0.45 !important;
+  filter: grayscale(0.85);
+  border-style: dashed !important;
+  cursor: not-allowed !important;
+}
+.model-card-qf-disabled:hover {
+  border-color: var(--border) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.badge-unsupported {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
 }
 
 /* ============================================================

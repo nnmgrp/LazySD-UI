@@ -127,6 +127,10 @@ class Settings(BaseModel):
     # ---------- VAE Selection ----------
     qwen_vae_type: str = "texture_fix"    # "texture_fix" | "official"
 
+    # ---------- QuantFunc experimental toggle ----------
+    # Disabled by default due to corrupted/striped upstream weights.
+    enable_quantfunc_models: bool = False
+
     # ---------- State ----------
     first_run_completed: bool = False
 

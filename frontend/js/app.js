@@ -52,7 +52,10 @@ const App = {
 
   // ---------- Init ----------
   async init() {
-    console.log("[app] QuantFunc WebUI initializing...");
+    console.log("[app] LazySD UI initializing...");
+
+    // Initialize sidebar state
+    this.initSidebar();
 
     // Load i18n first
     await window.initI18n();
@@ -63,9 +66,45 @@ const App = {
     // Render initial UI
     this.renderGpuIndicator();
     this.renderModels();
+    this.updateEngineStatusUI();
     this.bindEvents();
 
     console.log("[app] Ready. GPU:", this.state.gpuInfo?.name || "not detected");
+  },
+
+  toggleSidebar() {
+    const shell = document.querySelector(".app-shell");
+    if (!shell) return;
+    const isCollapsed = shell.classList.toggle("sidebar-collapsed");
+    try {
+      localStorage.setItem("lazysd_sidebar_collapsed", isCollapsed ? "1" : "0");
+    } catch (_) {}
+  },
+
+  initSidebar() {
+    try {
+      const saved = localStorage.getItem("lazysd_sidebar_collapsed");
+      if (saved === "1") {
+        document.querySelector(".app-shell")?.classList.add("sidebar-collapsed");
+      }
+    } catch (_) {}
+  },
+
+  async toggleQuantFuncModels(checked) {
+    try {
+      await this.apiPatch("/api/settings", { enable_quantfunc_models: checked });
+      if (this.state.settings) {
+        this.state.settings.enable_quantfunc_models = checked;
+      }
+      this.toast("info", checked ? "Модели QuantFunc включены" : "Модели QuantFunc отключены");
+      await this.refreshConfig();
+      if (this.state.isModelPickerOpen) {
+        this.renderModelPickerModal();
+      }
+    } catch (err) {
+      console.error("[app] Failed to toggle QuantFunc models:", err);
+      this.toast("error", `Ошибка: ${err.message}`);
+    }
   },
 
   // ---------- API helpers ----------
@@ -188,6 +227,18 @@ const App = {
         ? `<span class="state-badge installed">✓ installed (${ver})</span>`
         : '<span class="state-badge missing">✗ missing</span>';
     }
+
+    const qfToggleEl = document.getElementById("setting-enable-quantfunc");
+    const qfBadgeEl = document.getElementById("setting-qf-toggle-badge");
+    const qfEnabled = !!(this.state.settings?.enable_quantfunc_models);
+    if (qfToggleEl) {
+      qfToggleEl.checked = qfEnabled;
+    }
+    if (qfBadgeEl) {
+      qfBadgeEl.innerHTML = qfEnabled
+        ? '<span class="state-badge installed">✓ Включено</span>'
+        : '<span class="state-badge missing">Отключено</span>';
+    }
   },
 
   // ---------- Renderers ----------
@@ -236,14 +287,20 @@ const App = {
     for (const model of compatible) {
       const opt = document.createElement("option");
       opt.value = model.id;
-      opt.textContent = `${model.name} (${model.family})`;
+      if (model.disabled) {
+        opt.disabled = true;
+        opt.textContent = `⛔ ${model.name} (${model.family}) [Отключено]`;
+      } else {
+        opt.textContent = `${model.name} (${model.family})`;
+      }
       select.appendChild(opt);
     }
 
-    // Auto-select first recommended
-    if (compatible[0]) {
-      select.value = compatible[0].id;
-      this.state.selectedModel = compatible[0].id;
+    // Auto-select first non-disabled model
+    const firstActive = compatible.find(m => !m.disabled) || compatible[0];
+    if (firstActive) {
+      select.value = firstActive.id;
+      this.state.selectedModel = firstActive.id;
       this.onModelChange();
     }
     this.updateModelTrigger();
@@ -276,15 +333,21 @@ const App = {
     const steps = document.getElementById("steps-input")?.value || current.transformers?.[0]?.steps || 4;
     
     if (subEl) {
-      const parts = [];
-      if (engineVer) parts.push(engineVer);
-      parts.push(`${steps} steps`);
-      if (variant) parts.push(variant.replace(/-(?:50x|40x|30x-below)(?:-base)?/g, ""));
-      subEl.textContent = parts.join(" · ");
+      if (current.disabled) {
+        subEl.innerHTML = `<span style="color: #f87171;">⚠️ Отключено (веса с дефектами)</span>`;
+      } else {
+        const parts = [];
+        if (engineVer) parts.push(engineVer);
+        parts.push(`${steps} steps`);
+        if (variant) parts.push(variant.replace(/-(?:50x|40x|30x-below)(?:-base)?/g, ""));
+        subEl.textContent = parts.join(" · ");
+      }
     }
 
     if (badgeEl) {
-      if (current.engine === "sd_cpp") {
+      if (current.disabled) {
+        badgeEl.textContent = "⛔ Отключено";
+      } else if (current.engine === "sd_cpp") {
         badgeEl.textContent = "⚡ SD.CPP";
       } else if (current.engine === "sdnq") {
         badgeEl.textContent = "⚡ SDNQ";
@@ -405,9 +468,10 @@ const App = {
     for (const model of filtered) {
       const isSelected = model.id === this.state.selectedModel;
       const isInstalled = model.installed === true;
+      const isDisabled = model.disabled === true;
 
       const card = document.createElement("div");
-      card.className = `model-picker-card ${isSelected ? "active" : ""}`;
+      card.className = `model-picker-card ${isSelected ? "active" : ""} ${isDisabled ? "model-card-qf-disabled" : ""}`;
 
       let engineBadge = "";
       if (model.is_custom) {
@@ -420,9 +484,14 @@ const App = {
         engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ Engine v${escapeHtml(model.engine_version)}</span>`;
       }
 
-      const statusBadge = isInstalled
-        ? `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`
-        : `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;
+      let statusBadge = "";
+      if (isDisabled) {
+        statusBadge = `<span class="badge-unsupported">⚠️ Не поддерживается</span>`;
+      } else if (isInstalled) {
+        statusBadge = `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`;
+      } else {
+        statusBadge = `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;
+      }
 
       const keyBadge = model.key_protected
         ? `<span class="model-badge key-protected" style="font-size: 10px; padding: 2px 6px;">🔑 Key Protected</span>`
@@ -437,7 +506,9 @@ const App = {
         deleteBtnHtml = `<button class="delete-custom-btn" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)" title="${t('custom_model.delete') || 'Delete'}">🗑 ${t('custom_model.delete') || 'Delete'}</button>`;
       }
 
-      if (isSelected) {
+      if (isDisabled) {
+        actionBtnHtml = `<button class="card-action-btn disabled" disabled title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ Отключено (веса с дефектами)</button>`;
+      } else if (isSelected) {
         actionBtnHtml = `<button class="card-action-btn active" disabled>✓ ${t("models.active_model")}</button>`;
       } else if (isInstalled) {
         actionBtnHtml = `<button class="card-action-btn primary" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">${t("models.select_model")}</button>`;
@@ -449,6 +520,10 @@ const App = {
       const teCount = model.text_encoders?.length || 0;
       const varInfo = varCount > 1 ? `<span>⚡ ${varCount} ${t("models.variants_count") || "variants"}</span>` : "";
       const teInfo = teCount > 0 ? `<span>📝 ${teCount} ${t("models.encoders_count") || "encoders"}</span>` : "";
+
+      const noticeHtml = isDisabled
+        ? `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 11px; color: #f87171;">⚠️ ${escapeHtml(model.disabled_reason || "Отключено из-за дефектов весов upstream. Включить можно в Настройках.")}</div>`
+        : "";
 
       card.innerHTML = `
         <div class="card-top">
@@ -464,6 +539,7 @@ const App = {
             </div>
           </div>
           <p class="card-desc">${escapeHtml(model.description || "")}</p>
+          ${noticeHtml}
           <div class="card-specs">
             <span>📼 ${t("models.vram_min")}: ${vramMin}</span>
             <span>⏱ ${t("models.steps")}: ${defaultSteps}</span>
@@ -478,12 +554,18 @@ const App = {
         </div>
       `;
 
-      // Allow clicking card to select if installed
-      if (!isSelected && isInstalled) {
+      // Allow clicking card to select if installed and not disabled
+      if (!isSelected && isInstalled && !isDisabled) {
         card.style.cursor = "pointer";
         card.addEventListener("click", (e) => {
           if (e.target.tagName === "BUTTON") return;
           this.selectModelFromModal(model.id);
+        });
+      } else if (isDisabled) {
+        card.style.cursor = "not-allowed";
+        card.addEventListener("click", (e) => {
+          if (e.target.tagName === "BUTTON") return;
+          this.toast("warning", model.disabled_reason || "Модели QuantFunc временно отключены.");
         });
       }
 
@@ -492,6 +574,12 @@ const App = {
   },
 
   async selectModelFromModal(modelId) {
+    const model = this.state.models.find(m => m.id === modelId);
+    if (model && model.disabled) {
+      this.toast("warning", model.disabled_reason || "Модели QuantFunc временно отключены. Включите их в Настройках.");
+      return;
+    }
+
     this.state.selectedModel = modelId;
 
     const select = document.getElementById("model-select");
@@ -523,8 +611,9 @@ const App = {
     grid.className = "models-grid";
 
     for (const model of this.state.models) {
+      const isDisabled = model.disabled === true;
       const card = document.createElement("div");
-      card.className = "model-card";
+      card.className = `model-card ${isDisabled ? "model-card-qf-disabled" : ""}`;
 
       const keyBadge = model.key_protected
         ? `<span class="model-badge key-protected">🔑 Key Protected</span>`
@@ -540,9 +629,16 @@ const App = {
       } else if (model.engine_version) {
         engineBadge = `<span class="badge-engine ${model.engine_version === '0.0.12' ? 'v12' : ''}">⚡ v${escapeHtml(model.engine_version)}</span>`;
       }
-      const installedBadge = model.installed
-        ? `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`
-        : `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;
+
+      let installedBadge = "";
+      if (isDisabled) {
+        installedBadge = `<span class="badge-unsupported">⚠️ Не поддерживается</span>`;
+      } else if (model.installed) {
+        installedBadge = `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`;
+      } else {
+        installedBadge = `<span class="badge-missing">⬇ ${t("models.status_download")}</span>`;
+      }
+
       const statusBadge = model.available === false || model.status === "coming_soon"
         ? `<span class="model-badge key-protected" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border-color: rgba(245, 158, 11, 0.4);">⏳ Coming Soon</span>`
         : "";
@@ -552,13 +648,16 @@ const App = {
       let variantsHtml = "";
       if (model.transformers && model.transformers.length) {
         for (const v of model.transformers) {
+          const btn = isDisabled
+            ? `<button class="setting-btn" disabled style="opacity: 0.6; cursor: not-allowed;" title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ Отключено</button>`
+            : `<button class="icon-btn" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)">⬇ Download</button>`;
           variantsHtml += `
             <div class="variant-item">
               <div class="variant-info">
                 <span class="variant-name">${escapeHtml(v.id)}</span>
                 <span class="variant-sub">${escapeHtml(v.backend)} · ${v.steps} steps · ${(v.size_gb || 0).toFixed(1)} GB</span>
               </div>
-              <button class="icon-btn" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)">⬇ Download</button>
+              ${btn}
             </div>
           `;
         }
@@ -567,9 +666,18 @@ const App = {
       }
 
       const isSelected = model.id === this.state.selectedModel;
-      const selectBtnHtml = isSelected
-        ? `<button class="card-action-btn active" style="margin-top: 12px; width: auto;" disabled>✓ ${t("models.active_model")}</button>`
-        : `<button class="card-action-btn primary" style="margin-top: 12px; width: auto;" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">⚡ ${t("models.select_model")}</button>`;
+      let selectBtnHtml = "";
+      if (isDisabled) {
+        selectBtnHtml = `<button class="card-action-btn disabled" style="margin-top: 12px; width: auto;" disabled title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ Модель отключена (веса с дефектами)</button>`;
+      } else if (isSelected) {
+        selectBtnHtml = `<button class="card-action-btn active" style="margin-top: 12px; width: auto;" disabled>✓ ${t("models.active_model")}</button>`;
+      } else {
+        selectBtnHtml = `<button class="card-action-btn primary" style="margin-top: 12px; width: auto;" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">⚡ ${t("models.select_model")}</button>`;
+      }
+
+      const noticeHtml = isDisabled
+        ? `<div style="margin-top: 10px; padding: 8px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 12px; color: #f87171;">⚠️ ${escapeHtml(model.disabled_reason || "Отключено из-за дефектов весов upstream. Включить можно в Настройках.")}</div>`
+        : "";
 
       card.innerHTML = `
         <div>
@@ -585,6 +693,7 @@ const App = {
             </div>
           </div>
           <p class="model-card-description" style="margin-top: 8px;">${escapeHtml(model.description || "")}</p>
+          ${noticeHtml}
           <div class="model-card-reqs" style="margin-top: 10px;">
             <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
             ${vramStr ? `<span>📼 ${vramStr}</span>` : ""}
@@ -604,6 +713,12 @@ const App = {
   },
 
   async downloadModelVariant(modelId, variantId, btnEl) {
+    const model = this.state.models.find(m => m.id === modelId);
+    if (model && model.disabled) {
+      this.toast("warning", model.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
+      return;
+    }
+
     this.state.selectedModel = modelId;
     if (variantId) {
       this.state.selectedVariant = variantId;
@@ -1145,7 +1260,8 @@ const App = {
   updateDownloadButton(showButton, modelState) {
     // Find or create a download button next to the variant select
     let dlBtn = document.getElementById("download-model-btn");
-    if (!showButton) {
+    const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
+    if (!showButton || (activeModelObj && activeModelObj.disabled)) {
       if (dlBtn) dlBtn.style.display = "none";
       return;
     }
@@ -1161,7 +1277,6 @@ const App = {
       container.appendChild(dlBtn);
     }
     dlBtn.style.display = "flex";
-    const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
     const activeVar = (modelState.transformers || []).find(v => v.id === this.state.selectedVariant) || (modelState.transformers || [])[0];
     const varSize = (activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted")) ? (activeVar.size_gb || 0) : 0;
     const teMissing = modelState?.text_encoders?.find(te => te.id === this.state.selectedTextEncoder && !te.installed);
@@ -1172,6 +1287,11 @@ const App = {
 
   async downloadModel() {
     if (!this.state.selectedModel) return;
+    const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
+    if (activeModel && activeModel.disabled) {
+      this.toast("warning", activeModel.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
+      return;
+    }
     const dlBtn = document.getElementById("download-model-btn");
     if (dlBtn) { dlBtn.disabled = true; dlBtn.textContent = "Downloading..."; }
 
@@ -1258,6 +1378,10 @@ const App = {
     }
 
     const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
+    if (activeModel && activeModel.disabled) {
+      this.toast("error", activeModel.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
+      return;
+    }
     const engineType = activeModel?.engine || "quantfunc";
     if (engineType === "quantfunc" && (!this.state.engineStatus || this.state.engineStatus.status === "missing")) {
       this.toast("error", t("errors.engine_not_installed"));

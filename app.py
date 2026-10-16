@@ -451,10 +451,13 @@ def create_app() -> FastAPI:
 
         # Convert models to JSON-serializable list
         models_list = []
+        qf_enabled = getattr(settings, "enable_quantfunc_models", False)
         for m in registry.list_all():
             repo_id = m.sources.primary.repo_id if m.sources else ""
             repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
             default_cfg = m.get_default_cfg()
+            is_qf = getattr(m, "engine", "quantfunc") == "quantfunc"
+            qf_disabled = is_qf and not qf_enabled
             models_list.append({
                 "id": m.id,
                 "name": m.name,
@@ -464,6 +467,8 @@ def create_app() -> FastAPI:
                 "engine_version": m.engine_version,
                 "is_custom": getattr(m, "is_custom", False),
                 "installed": _model_is_installed(m, cache, gpu_tier),
+                "disabled": qf_disabled,
+                "disabled_reason": "Временно не поддерживается (сырые веса upstream с полосами). Включите в Настройках." if qf_disabled else None,
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
                 "default_cfg": default_cfg,
@@ -515,6 +520,7 @@ def create_app() -> FastAPI:
                 "engine_platform": settings.engine_platform,
                 "cuda_version": settings.cuda_version,
                 "qwen_vae_type": getattr(settings, "qwen_vae_type", "texture_fix"),
+                "enable_quantfunc_models": qf_enabled,
             },
             "gpu": {
                 "name": STATE.gpu_info.name,
@@ -545,10 +551,14 @@ def create_app() -> FastAPI:
         cache = CacheManager()
         gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "unknown"
         models_out = []
+        settings = get_settings()
+        qf_enabled = getattr(settings, "enable_quantfunc_models", False)
         for m in registry.list_all():
             repo_id = m.sources.primary.repo_id if m.sources else ""
             repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
             default_cfg = m.get_default_cfg()
+            is_qf = getattr(m, "engine", "quantfunc") == "quantfunc"
+            qf_disabled = is_qf and not qf_enabled
             models_out.append({
                 "id": m.id,
                 "name": m.name,
@@ -558,6 +568,8 @@ def create_app() -> FastAPI:
                 "engine_version": m.engine_version,
                 "is_custom": getattr(m, "is_custom", False),
                 "installed": _model_is_installed(m, cache, gpu_tier),
+                "disabled": qf_disabled,
+                "disabled_reason": "Временно не поддерживается (сырые веса upstream с полосами). Включите в Настройках." if qf_disabled else None,
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
                 "default_cfg": default_cfg,
@@ -814,6 +826,10 @@ def create_app() -> FastAPI:
             model = registry.get(model_id)
         except KeyError:
             raise HTTPException(404, f"Model not found: {model_id}")
+
+        settings = get_settings()
+        if getattr(model, "engine", "quantfunc") == "quantfunc" and not getattr(settings, "enable_quantfunc_models", False):
+            raise HTTPException(400, "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках, если хотите протестировать.")
 
         # Determine which variant to download
         body = body or {}
@@ -1139,6 +1155,9 @@ def create_app() -> FastAPI:
             if not is_sdnq_installed():
                 raise HTTPException(400, "SDNQ runtime not installed. Go to Settings → Install/Verify SDNQ.")
         else:
+            settings = get_settings()
+            if not getattr(settings, "enable_quantfunc_models", False):
+                raise HTTPException(400, "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках, если хотите протестировать.")
             if not (is_engine_installed(model.engine_version) or is_engine_installed()):
                 raise HTTPException(400, "QuantFunc engine not installed. Go to Settings → Download engine.")
 
@@ -1274,6 +1293,7 @@ def create_app() -> FastAPI:
             "worker_restart_on_crash",
             "cuda_bin_path",
             "qwen_vae_type",
+            "enable_quantfunc_models",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if updates:

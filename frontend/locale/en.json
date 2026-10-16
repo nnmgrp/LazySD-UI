@@ -98,6 +98,7 @@
   "settings.section.network": "Network",
   "settings.section.advanced": "Advanced",
   "settings.section.templates": "Templates",
+  "settings.section.about": "About & AI Authors",
 
   "settings.vae.qwen_title": "Qwen-Image-2.1 VAE",
   "settings.vae.qwen_desc": "Choose VAE decoder. Texture-Fix eliminates 2px high-frequency checkerboard / carpet patterns.",

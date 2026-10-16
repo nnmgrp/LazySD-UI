@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QuantFunc WebUI</title>
+  <title>LazySD UI</title>
   <link rel="stylesheet" href="/css/styles.css">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EQ%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EL%3C/text%3E%3C/svg%3E">
 </head>
 <body>
   <div class="app-shell">
@@ -13,9 +13,9 @@
     <!-- ============== MENUBAR ============== -->
     <header class="menubar">
       <div class="menubar-left">
+        <button class="icon-btn" id="sidebar-toggle" title="Свернуть / Развернуть панель" onclick="App.toggleSidebar()" style="font-size: 16px;">☰</button>
         <div class="brand">
-          <div class="brand-logo">Q</div>
-          <span>QuantFunc WebUI</span>
+          <span>LazySD UI</span>
         </div>
         <div class="gpu-indicator" title="GPU status">
           <span class="gpu-dot" id="gpu-status"></span>
@@ -95,11 +95,11 @@
           <div class="preview-image-wrap" id="preview-image-wrap" style="display: none;">
             <img id="preview-img" alt="Generated image">
             <div class="preview-toolbar">
-              <button class="icon-btn" title="Fit" onclick="zoomFit()">⤢</button>
-              <button class="icon-btn" title="1:1" onclick="zoomOriginal()">1:1</button>
-              <button class="icon-btn" title="Download" onclick="downloadImage()">⬇</button>
-              <button class="icon-btn" title="Edit in Img2Img" onclick="sendCurrentPreviewToImg2Img()">🔄</button>
-              <button class="icon-btn" title="Open folder" onclick="openOutputDir()">📂</button>
+              <button class="preview-tool-btn active" id="btn-zoom-fit" title="Fit to screen (Вписать)" onclick="zoomFit()">⤢ Fit</button>
+              <button class="preview-tool-btn" id="btn-zoom-orig" title="Original 1:1 (Масштаб 100%)" onclick="zoomOriginal()">1:1</button>
+              <button class="preview-tool-btn" title="Download" onclick="downloadImage()">⬇</button>
+              <button class="preview-tool-btn" title="Edit in Img2Img" onclick="sendCurrentPreviewToImg2Img()">🔄</button>
+              <button class="preview-tool-btn" title="Open folder" onclick="openOutputDir()">📂</button>
             </div>
           </div>
 
@@ -287,11 +287,12 @@
             <div class="setting-label">
               <strong>QuantFunc v0.0.17</strong><br>
               <small style="color: var(--text-dim);" data-i18n="settings.engine.qf17_desc">Primary SVDQuant (Qwen-2.1)</small>
+              <small style="color: #f87171; display: block; margin-top: 4px;">⚠️ Не поддерживается пока (сырые веса с полосами)</small>
             </div>
             <div class="setting-value" id="setting-engine-qf17-status">—</div>
-            <div style="display: flex; gap: 6px;">
-              <button class="icon-btn" onclick="verifyEngine('0.0.17')" data-i18n="settings.verify_engine">Verify</button>
-              <button class="icon-btn" onclick="downloadEngine('0.0.17')" data-i18n="settings.download_engine">Download</button>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="verifyEngine('0.0.17')" data-i18n="settings.verify_engine">Verify</button>
+              <button class="setting-btn" onclick="downloadEngine('0.0.17')" data-i18n="settings.download_engine">Download</button>
             </div>
           </div>
 
@@ -300,11 +301,12 @@
             <div class="setting-label">
               <strong>QuantFunc v0.0.12</strong><br>
               <small style="color: var(--text-dim);" data-i18n="settings.engine.qf12_desc">Legacy NVFP4 (Klein FP4 / Z-Image)</small>
+              <small style="color: #f87171; display: block; margin-top: 4px;">⚠️ Не поддерживается пока (сырые веса с полосами)</small>
             </div>
             <div class="setting-value" id="setting-engine-qf12-status">—</div>
-            <div style="display: flex; gap: 6px;">
-              <button class="icon-btn" onclick="verifyEngine('0.0.12')" data-i18n="settings.verify_engine">Verify</button>
-              <button class="icon-btn" onclick="downloadEngine('0.0.12')" data-i18n="settings.download_engine">Download</button>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="verifyEngine('0.0.12')" data-i18n="settings.verify_engine">Verify</button>
+              <button class="setting-btn" onclick="downloadEngine('0.0.12')" data-i18n="settings.download_engine">Download</button>
             </div>
           </div>
 
@@ -315,8 +317,8 @@
               <small style="color: var(--text-dim);" data-i18n="settings.engine.sdcpp_desc">Standalone GGUF runner (Flux.1 Schnell, SDXL, Unsloth Q4)</small>
             </div>
             <div class="setting-value" id="setting-engine-sdcpp-status">—</div>
-            <div style="display: flex; gap: 6px;">
-              <button class="icon-btn" onclick="downloadSDCpp()" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="downloadSDCpp()" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
             </div>
           </div>
 
@@ -327,8 +329,23 @@
               <small style="color: var(--text-dim);" data-i18n="settings.engine.sdnq_desc">PyTorch + Triton quantization with Hadamard & SVD (Qwen-Image-2.1 Turbo INT8)</small>
             </div>
             <div class="setting-value" id="setting-engine-sdnq-status">—</div>
-            <div style="display: flex; gap: 6px;">
-              <button class="icon-btn" onclick="installSDNQ()" data-i18n="settings.engine.install_sdnq">Verify / Install</button>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="installSDNQ()" data-i18n="settings.engine.install_sdnq">Verify / Install</button>
+            </div>
+          </div>
+
+          <!-- QuantFunc models toggle -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Включить модели QuantFunc</strong><br>
+              <small style="color: var(--text-dim);">Разрешить выбор и скачивание моделей QuantFunc (содержат артефакты полос/сетки). По умолчанию отключено.</small>
+            </div>
+            <div class="setting-value" style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="setting-enable-quantfunc" onchange="App.toggleQuantFuncModels(this.checked)">
+              <label for="setting-enable-quantfunc" style="font-size: 12px; color: var(--text-muted); cursor: pointer;">Включить экспериментальные веса</label>
+            </div>
+            <div class="setting-actions" id="setting-qf-toggle-badge">
+              <span class="state-badge missing">Отключено</span>
             </div>
           </div>
 
@@ -341,7 +358,9 @@
           <div class="setting-row">
             <div class="setting-label">CUDA deps</div>
             <div class="setting-value" id="setting-cuda-status">—</div>
-            <button class="icon-btn" onclick="downloadCudaDeps()">Download</button>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="downloadCudaDeps()">Download</button>
+            </div>
           </div>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.qf_api_key">QuantFunc API key</div>
@@ -349,7 +368,9 @@
               <input type="password" id="setting-qf-apikey" placeholder="qf_... (empty = use bundled test key)"
                      style="width: 100%; font-family: monospace; font-size: 11px;">
             </div>
-            <button class="icon-btn" id="qf-apikey-status" title="—" onclick="restoreBundledKey()" data-i18n="settings.qf_api_key.restore">Restore test key</button>
+            <div class="setting-actions">
+              <button class="setting-btn" id="qf-apikey-status" title="—" onclick="restoreBundledKey()" data-i18n="settings.qf_api_key.restore">Restore test key</button>
+            </div>
           </div>
           <div class="setting-row">
             <div class="setting-label"></div>
@@ -541,6 +562,22 @@
           </div>
         </div>
 
+        <div class="settings-section">
+          <h3 data-i18n="settings.section.about">О проекте и авторы нейросети</h3>
+          <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+            <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">LazySD UI (Pre-Alpha)</div>
+            <div>Легковесный локальный веб-интерфейс для запуска квантованных диффузионных моделей (GGUF, SDNQ, QuantFunc).</div>
+            <div style="margin-top: 10px; padding: 12px 16px; background: var(--bg-primary); border-radius: var(--radius); border: 1px solid var(--border);">
+              <div style="font-weight: 600; color: var(--text-bright); margin-bottom: 6px;">Авторы нейросети (архитектура и вайб-код):</div>
+              <ul style="margin: 0; padding-left: 20px; color: var(--text-primary);">
+                <li><strong>Z.AI GLM 5.3 Flash</strong></li>
+                <li><strong>Gemini 3.8 Flash High (Antigravity)</strong></li>
+                <li><strong>Claude Opus</strong></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
         <div style="margin-top: 16px;">
           <button class="generate-btn" onclick="saveSettings()" data-i18n="common.save">Save</button>
         </div>
@@ -557,9 +594,9 @@
         <span id="status-message"></span>
       </div>
       <div class="statusbar-right">
-        <span>v0.1.0 Phase 2</span>
+        <span>LazySD UI v0.1.0 Pre-Alpha</span>
         <span>·</span>
-        <span>Z.ai · 2026</span>
+        <span title="Авторы нейросети: Z.AI GLM 5.3 Flash · Gemini 3.8 Flash High (Antigravity) · Claude Opus">AI Team: Z.AI GLM · Gemini · Claude Opus</span>
       </div>
     </footer>
 
@@ -807,29 +844,46 @@
 
     // ---------- Preview helpers ----------
     function zoomFit() {
+      const wrap = document.getElementById("preview-image-wrap");
       const img = document.getElementById("preview-img");
-      if (img) {
+      const area = document.querySelector(".preview-area");
+      if (wrap && img) {
+        wrap.classList.remove("original-mode");
+        wrap.classList.add("fit-mode");
         img.style.maxWidth = "100%";
         img.style.maxHeight = "100%";
         img.style.width = "auto";
         img.style.height = "auto";
+        img.style.objectFit = "contain";
       }
+      if (area) {
+        area.scrollLeft = 0;
+        area.scrollTop = 0;
+      }
+      document.getElementById("btn-zoom-fit")?.classList.add("active");
+      document.getElementById("btn-zoom-orig")?.classList.remove("active");
     }
     function zoomOriginal() {
+      const wrap = document.getElementById("preview-image-wrap");
       const img = document.getElementById("preview-img");
-      if (img) {
+      if (wrap && img) {
+        wrap.classList.remove("fit-mode");
+        wrap.classList.add("original-mode");
         img.style.maxWidth = "none";
         img.style.maxHeight = "none";
         img.style.width = "auto";
         img.style.height = "auto";
+        img.style.objectFit = "none";
       }
+      document.getElementById("btn-zoom-orig")?.classList.add("active");
+      document.getElementById("btn-zoom-fit")?.classList.remove("active");
     }
     function downloadImage() {
       const img = document.getElementById("preview-img");
       if (img && img.src) {
         const a = document.createElement("a");
         a.href = img.src;
-        a.download = "quantfunc_" + Date.now() + ".png";
+        a.download = "lazysd_" + Date.now() + ".png";
         a.click();
       }
     }
