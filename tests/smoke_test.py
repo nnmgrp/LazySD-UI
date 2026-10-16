@@ -515,9 +515,43 @@ def test_controls_and_samplers():
         assert "qwen_vae_type" in cfg_res["settings"], "qwen_vae_type missing in /api/config settings"
         print("  ✓ /api/config includes settings.qwen_vae_type")
 
+        # Verify 3-tier model sorting (disabled models at bottom, installed at top)
+        models_list = cfg_res["models"]
+        tiers = [2 if m.get("disabled") else (0 if m.get("installed") else 1) for m in models_list]
+        assert tiers == sorted(tiers), f"Models not sorted in 3-tier order: {tiers}"
+        print("  ✓ 3-tier model sorting (installed -> downloadable -> disabled) verified")
+
+        # Verify Presets CRUD API
+        presets_res = client.get("/api/presets")
+        assert presets_res.status_code == 200
+        presets_data = presets_res.json()["presets"]
+        assert len(presets_data) >= 5
+        create_res = client.post("/api/presets", json={
+            "title": "Smoke Test Preset",
+            "prompt": "high contrast manga lineart",
+            "steps": 12,
+            "cfg": 3.5,
+        })
+        assert create_res.status_code == 200
+        created_id = create_res.json()["preset"]["id"]
+        del_res = client.delete(f"/api/presets/{created_id}")
+        assert del_res.status_code == 200
+        print("  ✓ /api/presets (GET, POST, DELETE) CRUD verified")
+
+        # Verify custom_models file metadata detector
+        from backend.custom_models import detect_file_metadata
+        meta_q8 = detect_file_metadata("flux-2-klein-base-9B-Q8_0.gguf")
+        assert meta_q8["family"] == "flux" and meta_q8["quant"] == "Q8_0" and meta_q8["role"] == "diffusion_model"
+        meta_te = detect_file_metadata("Qwen3-VL-8B-Instruct-Q8_0.gguf")
+        assert meta_te["role"] == "text_encoder"
+        print("  ✓ detect_file_metadata auto-detects role, family, and quantization")
+
         html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
         assert 'id="sampler-select"' in html, "sampler-select missing in index.html"
-        print("  ✓ frontend/index.html includes #sampler-select")
+        assert 'id="gemini-dock-wrap"' in html, "gemini-dock-wrap missing in index.html"
+        assert 'id="topaz-inspector"' in html, "topaz-inspector missing in index.html"
+        assert 'id="tab-templates"' in html, "tab-templates missing in index.html"
+        print("  ✓ frontend/index.html includes #sampler-select, #gemini-dock-wrap, #topaz-inspector, #tab-templates")
         return True
     except Exception as e:
         print(f"  ✗ Controls & samplers test failed: {e}")

@@ -28,6 +28,12 @@
         </div>
       </div>
       <div class="menubar-right">
+        <button class="menubar-pill-btn" onclick="App.switchTab('templates')" title="Открыть менеджер шаблонов и пресетов">
+          📋 <span>Шаблоны</span>
+        </button>
+        <button class="menubar-pill-btn active" id="inspector-toggle-btn" onclick="App.toggleInspector()" title="Показать / скрыть правый инспектор параметров (Topaz-style)">
+          🎛️ <span>Инспектор</span>
+        </button>
         <div class="lang-toggle">
           <button class="lang-btn" data-lang="en">EN</button>
           <button class="lang-btn" data-lang="ru">RU</button>
@@ -71,10 +77,9 @@
           <span class="nav-icon">📦</span>
           <span class="nav-label" data-i18n="nav.models">Models</span>
         </button>
-        <button class="nav-item" data-tab="templates" disabled>
+        <button class="nav-item" data-tab="templates">
           <span class="nav-icon">📋</span>
           <span class="nav-label" data-i18n="nav.templates">Templates</span>
-          <span class="badge">soon</span>
         </button>
         <button class="nav-item" data-tab="history">
           <span class="nav-icon">🕐</span>
@@ -95,189 +100,424 @@
     <!-- ============== MAIN ============== -->
     <main class="main">
 
-      <!-- ===== Tab: Generate ===== -->
-      <section class="tab-panel" id="tab-generate" style="display: flex; flex-direction: column; height: 100%;">
-        <div class="preview-area">
-          <div class="preview-placeholder" id="preview-placeholder">
-            <div class="placeholder-icon">🖼</div>
-            <div class="placeholder-text" data-i18n="preview.placeholder">Generated image will appear here</div>
-          </div>
-          <div class="preview-image-wrap" id="preview-image-wrap" style="display: none;">
-            <img id="preview-img" alt="Generated image">
-            <div class="preview-toolbar">
-              <button class="preview-tool-btn active" id="btn-zoom-fit" title="Fit to screen (Вписать)" onclick="zoomFit()">⤢ Fit</button>
-              <button class="preview-tool-btn" id="btn-zoom-orig" title="Original 1:1 (Масштаб 100%)" onclick="zoomOriginal()">1:1</button>
-              <button class="preview-tool-btn" title="Download" onclick="downloadImage()">⬇</button>
-              <button class="preview-tool-btn" title="Edit in Img2Img" onclick="sendCurrentPreviewToImg2Img()">🔄</button>
-              <button class="preview-tool-btn" title="Open folder" onclick="openOutputDir()">📂</button>
+      <!-- ===== Tab: Generate (Canvas + Gemini Floating Dock + Topaz Right Inspector) ===== -->
+      <section class="tab-panel generate-workspace" id="tab-generate" style="display: flex; flex-direction: row; height: 100%; overflow: hidden; position: relative;">
+
+        <!-- CENTER STAGE: Pure Canvas + Floating Gemini Dock -->
+        <div class="canvas-stage" id="canvas-stage">
+          <div class="preview-area">
+            <div class="preview-placeholder" id="preview-placeholder">
+              <div class="placeholder-icon">🖼</div>
+              <div class="placeholder-text" data-i18n="preview.placeholder">Generated image will appear here</div>
+              <div style="margin-top: 8px; font-size: 11px; color: var(--text-dim);">Перетащите картинку сюда или нажмите <strong>➕ Img</strong> для режима ControlNet / Reference</div>
             </div>
+            <div class="preview-image-wrap" id="preview-image-wrap" style="display: none;">
+              <img id="preview-img" alt="Generated image">
+              <div class="preview-toolbar">
+                <button class="preview-tool-btn active" id="btn-zoom-fit" title="Fit to screen (Вписать)" onclick="zoomFit()">⤢ Fit</button>
+                <button class="preview-tool-btn" id="btn-zoom-orig" title="Original 1:1 (Масштаб 100%)" onclick="zoomOriginal()">1:1</button>
+                <button class="preview-tool-btn" title="Download" onclick="downloadImage()">⬇</button>
+                <button class="preview-tool-btn" title="Отправить в Референс / ControlNet" onclick="sendCurrentPreviewToImg2Img()">🔄</button>
+                <button class="preview-tool-btn" title="Open folder" onclick="openOutputDir()">📂</button>
+              </div>
+            </div>
+
+            <!-- Progress overlay -->
+            <div class="progress-overlay" id="progress-overlay" style="display: none;">
+              <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+              </div>
+              <div class="progress-text" id="progress-text">Starting...</div>
+              <button class="progress-cancel" id="progress-cancel" data-i18n="controls.cancel">Cancel</button>
+            </div>
+
+            <!-- Drop overlay for drag&drop -->
+            <div class="drop-overlay" id="drop-overlay"></div>
           </div>
 
-          <!-- Progress overlay -->
-          <div class="progress-overlay" id="progress-overlay" style="display: none;">
-            <div class="progress-bar">
-              <div class="progress-fill" id="progress-fill"></div>
+          <!-- GEMINI-STYLE FLOATING DOCK -->
+          <div class="gemini-dock-wrap" id="gemini-dock-wrap">
+            <!-- Floating Popovers above the dock -->
+            <!-- 1. Model & Quantization Popover -->
+            <div class="dock-popover" id="dock-popover-model" style="display: none;">
+              <div class="dock-popover-header">
+                <span>⚡ Модель, Квантизация и Энкодер</span>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="dock-mini-btn accent" onclick="App.openCustomModelModal(); App.closeAllDockPopovers();">+ Добавить</button>
+                  <button type="button" class="dock-mini-btn" onclick="App.openModelPickerModal(); App.closeAllDockPopovers();">📦 Все модели</button>
+                </div>
+              </div>
+              <div class="dock-popover-body">
+                <div class="dock-field">
+                  <label>Модель генерации</label>
+                  <select id="dock-model-quick-select" onchange="App.onDockModelSelect(this.value)"></select>
+                </div>
+                <div class="dock-field">
+                  <label>Квантизация / Вариант</label>
+                  <select id="dock-variant-quick-select" onchange="App.onDockVariantSelect(this.value)"></select>
+                </div>
+                <div class="dock-field" id="dock-te-quick-field" style="display: none;">
+                  <label>Text Encoder (--llm)</label>
+                  <select id="dock-te-quick-select" onchange="App.onDockTeSelect(this.value)"></select>
+                </div>
+              </div>
             </div>
-            <div class="progress-text" id="progress-text">Starting...</div>
-            <button class="progress-cancel" id="progress-cancel" data-i18n="controls.cancel">Cancel</button>
-          </div>
 
-          <!-- Drop overlay for drag&drop -->
-          <div class="drop-overlay" id="drop-overlay"></div>
+            <!-- 2. Resolution Popover -->
+            <div class="dock-popover" id="dock-popover-res" style="display: none; width: 320px;">
+              <div class="dock-popover-header">
+                <span>📐 Разрешение кадра</span>
+              </div>
+              <div class="dock-res-grid">
+                <button type="button" class="dock-res-chip active" data-res="1024x1024" onclick="App.selectResolutionChip('1024x1024')">1024 × 1024 <small>1:1</small></button>
+                <button type="button" class="dock-res-chip" data-res="1152x896" onclick="App.selectResolutionChip('1152x896')">1152 × 896 <small>4:3</small></button>
+                <button type="button" class="dock-res-chip" data-res="896x1152" onclick="App.selectResolutionChip('896x1152')">896 × 1152 <small>3:4</small></button>
+                <button type="button" class="dock-res-chip" data-res="1344x768" onclick="App.selectResolutionChip('1344x768')">1344 × 768 <small>16:9</small></button>
+                <button type="button" class="dock-res-chip" data-res="768x1344" onclick="App.selectResolutionChip('768x1344')">768 × 1344 <small>9:16</small></button>
+                <button type="button" class="dock-res-chip" data-res="1536x1536" onclick="App.selectResolutionChip('1536x1536')">1536 × 1536 <small>HD</small></button>
+                <button type="button" class="dock-res-chip" data-res="2048x2048" onclick="App.selectResolutionChip('2048x2048')">2048 × 2048 <small>UHD</small></button>
+              </div>
+            </div>
+
+            <!-- 3. Quick Parameters Popover (Steps, CFG, Sampler, Noise, Seed) -->
+            <div class="dock-popover" id="dock-popover-params" style="display: none; width: 360px;">
+              <div class="dock-popover-header">
+                <span>🎛️ Быстрые параметры</span>
+                <button type="button" class="dock-mini-btn" onclick="App.toggleInspector(); App.closeAllDockPopovers();">Правая панель ➔</button>
+              </div>
+              <div class="dock-popover-body">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div class="dock-field">
+                    <label>Сэмплер</label>
+                    <select id="dock-sampler-quick" onchange="App.syncFromDockParams('sampler', this.value)">
+                      <option value="euler">Euler</option>
+                      <option value="euler_a">Euler a (Noise)</option>
+                      <option value="heun">Heun</option>
+                      <option value="dpm++2m">DPM++ 2M</option>
+                      <option value="dpm++2m_sde">DPM++ 2M SDE</option>
+                      <option value="unipc">UniPC</option>
+                      <option value="lcm">LCM</option>
+                    </select>
+                  </div>
+                  <div class="dock-field">
+                    <label>Шаги (Steps)</label>
+                    <input type="number" id="dock-steps-quick" min="1" max="50" value="4" oninput="App.syncFromDockParams('steps', this.value)">
+                  </div>
+                </div>
+                <div class="dock-field">
+                  <div style="display:flex; justify-content:space-between; font-size:11px;">
+                    <span>CFG / Guidance</span>
+                    <span id="dock-cfg-val-label" style="font-family:monospace;">3.0</span>
+                  </div>
+                  <input type="range" id="dock-cfg-quick" min="1.0" max="20.0" step="0.1" value="3.0" oninput="App.syncFromDockParams('cfg', this.value)">
+                </div>
+                <div class="dock-field">
+                  <div style="display:flex; justify-content:space-between; font-size:11px;">
+                    <span>Шум (Noise / Eta)</span>
+                    <span id="dock-noise-val-label" style="font-family:monospace;">0.0</span>
+                  </div>
+                  <input type="range" id="dock-noise-quick" min="0.0" max="1.0" step="0.05" value="0.0" oninput="App.syncFromDockParams('noise', this.value)">
+                </div>
+                <div class="dock-field">
+                  <label>Seed (Сид)</label>
+                  <div style="display:flex; gap:6px;">
+                    <input type="text" id="dock-seed-quick" value="random" oninput="App.syncFromDockParams('seed', this.value)" style="flex:1;">
+                    <button type="button" class="dock-mini-btn" onclick="App.syncFromDockParams('seed', 'random')" title="Случайный сид">🎲</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Presets / Templates Popover -->
+            <div class="dock-popover" id="dock-popover-presets" style="display: none; width: 380px;">
+              <div class="dock-popover-header">
+                <span>📋 Шаблоны промптов и настроек</span>
+                <button type="button" class="dock-mini-btn accent" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();">+ Сохранить текущий</button>
+              </div>
+              <div class="dock-presets-list" id="dock-presets-list">
+                <!-- Populated by App.renderPresetsUI() -->
+              </div>
+            </div>
+
+            <!-- MAIN GEMINI FLOATING DOCK BOX -->
+            <div class="gemini-dock" id="gemini-dock">
+              <!-- Top Attachment Bar (44px compact horizontal bar inside dock) -->
+              <div class="dock-attachment-bar" id="img2img-container" style="display: none;">
+                <div class="dock-attachment-main">
+                  <div class="dock-ref-thumb-wrap">
+                    <img id="img2img-thumb" alt="Ref">
+                  </div>
+                  <span class="dock-ref-status-dot" id="img2img-status-dot" title="✓ Изоляция шагов активна: --init-img и --strength отключены. Модель выполнит 100% шагов с чистого листа, перенося лайн и скринтоны через нативный Reference / ControlNet."></span>
+                  <select id="img2img-mode" class="dock-ref-mode-select" onchange="App.onRefModeChange()">
+                    <option value="control_ref" selected>Ref: Native Control (Лайн + Скринтоны)</option>
+                    <option value="controlnet_canny">Ref: ControlNet Canny (Контуры туши)</option>
+                    <option value="img2img">Ref: Classic Img2Img (--init-img)</option>
+                  </select>
+                  <div class="dock-ref-slider-group" title="Сила контроля / референса">
+                    <span id="img2img-strength-val" class="dock-ref-strength-val">0.85</span>
+                    <input type="range" id="img2img-strength" min="0.05" max="1.00" step="0.05" value="0.85" oninput="updateStrengthLabel(this.value)">
+                  </div>
+                  <button type="button" class="dock-mini-btn" onclick="App.toggleControlNetInput(event)" title="Указать внешний файл ControlNet (.gguf)">+ ControlNet</button>
+                  <button type="button" class="dock-ref-close-btn" onclick="clearImg2ImgRef()" title="Удалить референс">✕</button>
+                </div>
+                <input type="text" id="controlnet-custom-path" class="dock-cn-path-input" placeholder="Опционально: путь к внешнему ControlNet .gguf (для Flux/Qwen нативный режим работает автоматически)" style="display: none;">
+              </div>
+
+              <!-- Middle Prompt Input (Auto-expanding 2 to 6 lines) -->
+              <div class="dock-prompt-area">
+                <textarea id="prompt-input"
+                          rows="2"
+                          oninput="App.autoResizePrompt(this)"
+                          data-i18n-placeholder="prompt.placeholder"
+                          placeholder="Describe the image to generate..."></textarea>
+                <div class="prompt-resize-handle" id="prompt-resize-handle" title="Потяните для изменения высоты" style="display: none;"></div>
+              </div>
+
+              <!-- Collapsible Negative Prompt Drawer inside Dock -->
+              <div class="dock-negative-drawer" id="negative-prompt-content" style="display: none;">
+                <div class="dock-negative-inner">
+                  <span class="dock-neg-tag">🚫 Negative:</span>
+                  <textarea id="negative-prompt-input"
+                            rows="1"
+                            data-i18n-placeholder="prompt.negative_placeholder"
+                            placeholder="What to avoid (e.g. blurry, deformed, low quality)..."></textarea>
+                </div>
+              </div>
+
+              <!-- Bottom Row: Quick Pills & Generate Button -->
+              <div class="dock-bottom-bar">
+                <input type="file" id="dock-ref-file-input" accept="image/png,image/jpeg,image/webp" style="display: none;" onchange="App.onDockFileSelected(this)">
+                <div class="dock-pills-left">
+                  <button type="button" class="dock-pill" onclick="document.getElementById('dock-ref-file-input').click()" title="Прикрепить референс / ControlNet изображение">
+                    <span>➕</span> <span>Img</span>
+                  </button>
+                  <button type="button" class="dock-pill primary-pill" id="dock-model-pill" onclick="App.toggleDockPopover('model', event)" title="Выбрать модель, квантизацию и энкодер">
+                    <span>⚡</span> <span id="dock-model-pill-text">Flux.2 Klein</span> <span class="pill-caret">▾</span>
+                  </button>
+                  <button type="button" class="dock-pill" id="dock-res-pill" onclick="App.toggleDockPopover('res', event)" title="Выбрать разрешение">
+                    <span>📐</span> <span id="dock-res-pill-text">1024×1024</span> <span class="pill-caret">▾</span>
+                  </button>
+                  <button type="button" class="dock-pill" id="dock-neg-pill" onclick="App.toggleNegativePrompt()" title="Негативный промпт">
+                    <span>🚫</span> <span>Neg</span>
+                    <span class="negative-prompt-dot" id="negative-prompt-dot" style="display: none;"></span>
+                  </button>
+                  <button type="button" class="dock-pill" id="dock-params-pill" onclick="App.toggleDockPopover('params', event)" title="Быстрые настройки: Сэмплер, Шаги, CFG, Сид">
+                    <span>🎛️</span> <span id="dock-params-pill-text">Euler · 20 · CFG 3.5</span> <span class="pill-caret">▾</span>
+                  </button>
+                  <button type="button" class="dock-pill" id="dock-presets-pill" onclick="App.toggleDockPopover('presets', event)" title="Шаблоны промптов и параметров">
+                    <span>📋</span> <span id="dock-presets-pill-text">Шаблоны</span> <span class="pill-caret">▾</span>
+                  </button>
+                </div>
+                <div class="dock-actions-right" id="dock-actions-right">
+                  <button class="generate-btn dock-generate-btn" id="generate-btn">✨ <span data-i18n="controls.generate">Generate</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="prompt-panel">
-          <!-- Reference / ControlNet Image Container -->
-          <div class="img2img-container" id="img2img-container" style="display: none; margin-bottom: 12px; padding: 10px 12px; background: var(--bg-card); border: 1px dashed var(--accent); border-radius: 6px; align-items: flex-start; gap: 12px; position: relative;">
-            <div style="position: relative; width: 68px; height: 68px; flex-shrink: 0; background: var(--bg-hover); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
-              <img id="img2img-thumb" style="width: 100%; height: 100%; object-fit: cover;" alt="Reference preview">
-            </div>
-            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                  <span style="font-weight: 600; font-size: 12.5px;" data-i18n="img2img.title">Референс / ControlNet</span>
-                  <select id="img2img-mode" onchange="App.onRefModeChange()" style="font-size: 11px; padding: 2px 8px; height: 24px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">
-                    <option value="control_ref" selected>🎯 Native Control / Reference (Лайн + Скринтоны, 100% шагов с нуля)</option>
-                    <option value="controlnet_canny">✒️ ControlNet Canny / Lineart (Контуры туши, 100% шагов)</option>
-                    <option value="img2img">🌫️ Классический Img2Img (Через зашумление --init-img)</option>
+        <!-- RIGHT SIDEBAR: TOPAZ PHOTO AI-STYLE INSPECTOR -->
+        <aside class="topaz-inspector" id="topaz-inspector">
+          <div class="inspector-header">
+            <span class="inspector-title">🎛️ Инспектор параметров</span>
+            <button type="button" class="icon-btn" onclick="App.toggleInspector()" title="Свернуть инспектор" style="width: 24px; height: 24px; font-size: 12px;">✕</button>
+          </div>
+
+          <div class="inspector-scroll">
+            <!-- Accordion 1: Model & Backend -->
+            <details class="inspector-accordion" open>
+              <summary class="inspector-summary">
+                <span>📦 Model & Backend</span>
+                <span class="summary-chevron">▾</span>
+              </summary>
+              <div class="inspector-section-body controls-row">
+                <div class="control-group" style="width: 100%;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label data-i18n="controls.model">Model</label>
+                    <a href="javascript:void(0)" onclick="App.openCustomModelModal()" style="font-size: 11px; color: var(--accent); text-decoration: none; font-weight: 600;">+ Добавить модель</a>
+                  </div>
+                  <div class="model-picker-trigger-wrap">
+                    <button type="button" class="model-picker-trigger" id="model-picker-trigger">
+                      <div class="model-trigger-info">
+                        <span class="model-trigger-name" id="model-trigger-name">—</span>
+                        <span class="model-trigger-sub" id="model-trigger-sub">—</span>
+                      </div>
+                      <span class="model-trigger-badge" id="model-trigger-badge">⚡</span>
+                    </button>
+                  </div>
+                  <select id="model-select" style="display: none;"></select>
+                </div>
+
+                <div class="control-group" id="backend-group" style="width: 100%;">
+                  <label id="backend-label" data-i18n="controls.variant_backend">Quantization / Backend</label>
+                  <select id="variant-select">
+                    <option value="lighting" data-i18n="backend.lighting">Lighting (4 steps)</option>
+                    <option value="svdq" data-i18n="backend.svdq">SVDQ (4 steps)</option>
                   </select>
                 </div>
-                <button class="icon-btn danger" onclick="clearImg2ImgRef()" title="Remove image" style="padding: 2px 8px; font-size: 11px; width: auto; height: 24px;">✕ <span data-i18n="img2img.remove">Удалить</span></button>
-              </div>
-              <div id="img2img-mode-hint" style="font-size: 11px; color: var(--success, #22c55e); line-height: 1.35;">
-                ✓ Изоляция шагов активна: <code>--init-img</code> и <code>--strength</code> отключены. Модель выполнит 100% шагов с чистого листа, перенося лайн и скринтоны через нативный Reference / ControlNet.
-              </div>
-              <div style="display: flex; align-items: center; gap: 10px;">
-                <label id="img2img-strength-label" style="font-size: 11px; color: var(--text-dim); white-space: nowrap;" data-i18n="img2img.strength">Сила контроля:</label>
-                <input type="range" id="img2img-strength" min="0.05" max="1.00" step="0.05" value="0.85" oninput="updateStrengthLabel(this.value)" style="flex: 1; accent-color: var(--accent);">
-                <span id="img2img-strength-val" style="font-size: 11px; font-family: monospace; width: 36px; text-align: right;">0.85</span>
-                <a href="javascript:void(0)" onclick="App.toggleControlNetInput(event)" style="font-size: 11px; color: var(--accent); text-decoration: none; white-space: nowrap;" title="Опциональный внешний файл модели ControlNet (.gguf / .safetensors)">+ ControlNet GGUF</a>
-              </div>
-              <input type="text" id="controlnet-custom-path" placeholder="Опционально: путь к внешнему ControlNet .gguf (для Flux/Qwen нативный режим работает автоматически без внешнего файла)" style="display: none; font-size: 11px; padding: 4px 8px;">
-            </div>
-          </div>
 
-          <div class="prompt-row">
-            <div class="prompt-textarea-wrap" id="prompt-textarea-wrap">
-              <textarea id="prompt-input"
-                        data-i18n-placeholder="prompt.placeholder"
-                        placeholder="Describe the image to generate..."></textarea>
-              <div class="prompt-resize-handle" id="prompt-resize-handle" title="Потяните вниз для расширения окна промпта"></div>
-            </div>
-            <div class="negative-prompt-drawer" id="negative-prompt-drawer">
-              <button type="button" class="negative-prompt-toggle" id="negative-prompt-toggle" onclick="App.toggleNegativePrompt()">
-                <span class="negative-prompt-arrow" id="negative-prompt-arrow">▶</span>
-                <span data-i18n="prompt.negative_label">Negative Prompt</span>
-                <span class="negative-prompt-dot" id="negative-prompt-dot" style="display: none;"></span>
-              </button>
-              <div class="negative-prompt-content" id="negative-prompt-content" style="display: none;">
-                <textarea id="negative-prompt-input"
-                          data-i18n-placeholder="prompt.negative_placeholder"
-                          placeholder="What to avoid (e.g. blurry, deformed, low quality)..."></textarea>
-              </div>
-            </div>
-          </div>
-          <div class="controls-row">
-            <div class="control-group">
-              <label data-i18n="controls.model">Model</label>
-              <div class="model-picker-trigger-wrap">
-                <button type="button" class="model-picker-trigger" id="model-picker-trigger">
-                  <div class="model-trigger-info">
-                    <span class="model-trigger-name" id="model-trigger-name">—</span>
-                    <span class="model-trigger-sub" id="model-trigger-sub">—</span>
+                <div class="control-group" id="text-encoder-group" style="display: none; width: 100%;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label data-i18n="controls.text_encoder">Text Encoder</label>
+                    <a href="javascript:void(0)" id="toggle-custom-te-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomTeInput(event)" data-i18n="controls.custom_path">Custom path</a>
                   </div>
-                  <span class="model-trigger-badge" id="model-trigger-badge">⚡</span>
+                  <select id="text-encoder-select" onchange="App.onTextEncoderChange()"></select>
+                  <input type="text" id="custom-text-encoder-input" placeholder="e.g. D:/ComfyUI/models/text_encoders/qwen3vl_8b_bf16.safetensors" data-i18n-placeholder="controls.custom_te_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
+                </div>
+
+                <div class="control-group" id="vae-group" style="display: none; width: 100%;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label data-i18n="controls.vae">VAE</label>
+                    <a href="javascript:void(0)" id="toggle-custom-vae-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomVaeInput(event)" data-i18n="controls.custom_path">Custom path</a>
+                  </div>
+                  <select id="vae-select" onchange="App.onVaeChange()">
+                    <option value="texture_fix">Texture-Fix VAE (Recommended)</option>
+                    <option value="official">Official Wan / Qwen VAE</option>
+                  </select>
+                  <input type="text" id="custom-vae-input" placeholder="e.g. D:/ComfyUI/models/vae/texture_fix_vae.safetensors" data-i18n-placeholder="controls.custom_vae_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
+                </div>
+              </div>
+            </details>
+
+            <!-- Accordion 2: Reference / ControlNet -->
+            <details class="inspector-accordion" open>
+              <summary class="inspector-summary">
+                <span>🖼️ Reference / ControlNet</span>
+                <span class="summary-chevron">▾</span>
+              </summary>
+              <div class="inspector-section-body">
+                <div id="img2img-mode-hint" style="font-size: 11px; color: var(--success, #22c55e); line-height: 1.4; margin-bottom: 8px;">
+                  ✓ Изоляция шагов активна: <code>--init-img</code> и <code>--strength</code> отключены. Модель выполнит 100% шагов с чистого листа.
+                </div>
+                <button type="button" class="history-action-btn" onclick="document.getElementById('dock-ref-file-input').click()" style="height: 32px; font-size: 11.5px;">
+                  ➕ Загрузить референс / лайн-арт
                 </button>
               </div>
-              <select id="model-select" style="display: none;"></select>
-            </div>
-            <div class="control-group" id="backend-group">
-              <label id="backend-label" data-i18n="controls.variant_backend">Quantization / Backend</label>
-              <select id="variant-select">
-                <option value="lighting" data-i18n="backend.lighting">Lighting (4 steps)</option>
-                <option value="svdq" data-i18n="backend.svdq">SVDQ (4 steps)</option>
-              </select>
-            </div>
-            <div class="control-group" id="text-encoder-group" style="display: none;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label data-i18n="controls.text_encoder">Text Encoder</label>
-                <a href="javascript:void(0)" id="toggle-custom-te-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomTeInput(event)" data-i18n="controls.custom_path">Custom path</a>
+            </details>
+
+            <!-- Accordion 3: Generation Settings -->
+            <details class="inspector-accordion" open>
+              <summary class="inspector-summary">
+                <span>⚙️ Generation Settings</span>
+                <span class="summary-chevron">▾</span>
+              </summary>
+              <div class="inspector-section-body">
+                <div class="control-group" style="width: 100%;">
+                  <label data-i18n="controls.resolution">Resolution</label>
+                  <select id="resolution-select" onchange="App.updateDockPills()">
+                    <option value="1024x1024" data-i18n="controls.resolution.1024">1024 × 1024 (1:1)</option>
+                    <option value="1152x896" data-i18n="controls.resolution.1152_896">1152 × 896 (4:3)</option>
+                    <option value="896x1152" data-i18n="controls.resolution.896_1152">896 × 1152 (3:4)</option>
+                    <option value="1344x768" data-i18n="controls.resolution.1344_768">1344 × 768 (16:9)</option>
+                    <option value="768x1344" data-i18n="controls.resolution.768_1344">768 × 1344 (9:16)</option>
+                    <option value="1536x1536" data-i18n="controls.resolution.1536">1536 × 1536 (1:1 HD)</option>
+                    <option value="2048x2048" data-i18n="controls.resolution.2048">2048 × 2048 (1:1 Ultra HD)</option>
+                  </select>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 84px; gap: 8px; width: 100%;">
+                  <div class="control-group" id="sampler-group" style="min-width: 0;">
+                    <label data-i18n="controls.sampler">Sampler</label>
+                    <select id="sampler-select" onchange="App.updateDockPills()">
+                      <option value="euler">Euler (Default)</option>
+                      <option value="euler_a">Euler a (Noise)</option>
+                      <option value="heun">Heun (2nd Order)</option>
+                      <option value="dpm++2m">DPM++ 2M</option>
+                      <option value="dpm++2m_sde">DPM++ 2M SDE</option>
+                      <option value="unipc">UniPC</option>
+                      <option value="lcm">LCM</option>
+                    </select>
+                  </div>
+                  <div class="control-group" style="min-width: 0;">
+                    <label data-i18n="controls.steps">Steps</label>
+                    <input type="number" id="steps-input" value="4" min="1" max="50">
+                  </div>
+                </div>
+
+                <div class="control-group" id="cfg-group" style="width: 100%;">
+                  <div class="control-label-row">
+                    <label data-i18n="controls.cfg">CFG</label>
+                    <span class="control-rec-badge" id="cfg-rec-badge" title="Recommended for this model">(Rec: 3.0)</span>
+                  </div>
+                  <div class="slider-input-row">
+                    <input type="range" id="cfg-slider" min="1.0" max="20.0" step="0.1" value="3.0">
+                    <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1">
+                  </div>
+                </div>
+
+                <div class="control-group" id="noise-group" style="width: 100%;">
+                  <div class="control-label-row">
+                    <label data-i18n="controls.noise">Noise</label>
+                    <span class="control-rec-badge" id="noise-rec-badge" title="Recommended for this model">(Rec: 0.0)</span>
+                  </div>
+                  <div class="slider-input-row">
+                    <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0">
+                    <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05">
+                  </div>
+                </div>
+
+                <div class="control-group" style="width: 100%;">
+                  <label data-i18n="controls.seed">Seed</label>
+                  <div style="display: flex; gap: 6px;">
+                    <input type="text" id="seed-input" value="random" data-i18n-placeholder="controls.seed.random" style="flex: 1;">
+                    <button type="button" class="icon-btn" onclick="document.getElementById('seed-input').value='random'; App.updateDockPills();" title="Сбросить на случайный сид">🎲</button>
+                  </div>
+                </div>
               </div>
-              <select id="text-encoder-select" onchange="App.onTextEncoderChange()"></select>
-              <input type="text" id="custom-text-encoder-input" placeholder="e.g. D:/ComfyUI/models/text_encoders/qwen3vl_8b_bf16.safetensors" data-i18n-placeholder="controls.custom_te_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
-            </div>
-            <div class="control-group" id="vae-group" style="display: none;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label data-i18n="controls.vae">VAE</label>
-                <a href="javascript:void(0)" id="toggle-custom-vae-link" style="font-size: 11px; color: var(--accent); text-decoration: none;" onclick="App.toggleCustomVaeInput(event)" data-i18n="controls.custom_path">Custom path</a>
+            </details>
+
+            <!-- Accordion 4: Quick Templates -->
+            <details class="inspector-accordion">
+              <summary class="inspector-summary">
+                <span>📋 Шаблоны (Presets)</span>
+                <span class="summary-chevron">▾</span>
+              </summary>
+              <div class="inspector-section-body">
+                <button type="button" class="history-action-btn" onclick="App.openSavePresetModal()" style="height: 32px; font-size: 11.5px; margin-bottom: 6px;">
+                  ⭐ Сохранить текущие настройки
+                </button>
+                <button type="button" class="history-action-btn" onclick="App.switchTab('templates')" style="height: 32px; font-size: 11.5px;">
+                  📂 Открыть все шаблоны
+                </button>
               </div>
-              <select id="vae-select" onchange="App.onVaeChange()">
-                <option value="texture_fix">Texture-Fix VAE (Recommended)</option>
-                <option value="official">Official Wan / Qwen VAE</option>
-              </select>
-              <input type="text" id="custom-vae-input" placeholder="e.g. D:/ComfyUI/models/vae/texture_fix_vae.safetensors" data-i18n-placeholder="controls.custom_vae_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
-            </div>
-            <div class="control-group" id="sampler-group">
-              <label data-i18n="controls.sampler">Sampler</label>
-              <select id="sampler-select">
-                <option value="euler">Euler (Default)</option>
-                <option value="euler_a">Euler a (Stochastic / Noise)</option>
-                <option value="heun">Heun (2nd Order)</option>
-                <option value="dpm++2m">DPM++ 2M</option>
-                <option value="dpm++2m_sde">DPM++ 2M SDE (Stochastic)</option>
-                <option value="unipc">UniPC</option>
-                <option value="lcm">LCM</option>
-              </select>
-            </div>
-            <div class="control-group">
-              <label data-i18n="controls.steps">Steps</label>
-              <input type="number" id="steps-input" value="4" min="1" max="50">
-            </div>
-            <div class="control-group" id="cfg-group">
-              <div class="control-label-row">
-                <label data-i18n="controls.cfg">CFG</label>
-                <span class="control-rec-badge" id="cfg-rec-badge" title="Recommended for this model">(Rec: 3.0)</span>
-              </div>
-              <div class="slider-input-row">
-                <input type="range" id="cfg-slider" min="1.0" max="20.0" step="0.1" value="3.0">
-                <input type="number" id="cfg-input" value="3.0" min="1.0" max="20.0" step="0.1">
-              </div>
-            </div>
-            <div class="control-group" id="noise-group">
-              <div class="control-label-row">
-                <label data-i18n="controls.noise">Noise</label>
-                <span class="control-rec-badge" id="noise-rec-badge" title="Recommended for this model">(Rec: 0.0)</span>
-              </div>
-              <div class="slider-input-row">
-                <input type="range" id="noise-slider" min="0.0" max="1.0" step="0.05" value="0.0">
-                <input type="number" id="noise-input" value="0.0" min="0.0" max="1.0" step="0.05">
-              </div>
-            </div>
-            <div class="control-group">
-              <label data-i18n="controls.seed">Seed</label>
-              <input type="text" id="seed-input" value="random" data-i18n-placeholder="controls.seed.random">
-            </div>
-            <div class="control-group">
-              <label data-i18n="controls.resolution">Resolution</label>
-              <select id="resolution-select">
-                <option value="1024x1024" data-i18n="controls.resolution.1024">1024 × 1024 (1:1)</option>
-                <option value="1152x896" data-i18n="controls.resolution.1152_896">1152 × 896 (4:3)</option>
-                <option value="896x1152" data-i18n="controls.resolution.896_1152">896 × 1152 (3:4)</option>
-                <option value="1344x768" data-i18n="controls.resolution.1344_768">1344 × 768 (16:9)</option>
-                <option value="768x1344" data-i18n="controls.resolution.768_1344">768 × 1344 (9:16)</option>
-                <option value="1536x1536" data-i18n="controls.resolution.1536">1536 × 1536 (1:1 HD)</option>
-                <option value="2048x2048" data-i18n="controls.resolution.2048">2048 × 2048 (1:1 Ultra HD)</option>
-              </select>
-            </div>
-            <button class="generate-btn" id="generate-btn" data-i18n="controls.generate">Generate</button>
+            </details>
           </div>
-        </div>
+        </aside>
       </section>
 
       <!-- ===== Tab: Models ===== -->
       <section class="tab-panel" id="tab-models" style="display: none; padding: 24px; overflow-y: auto;">
-        <h2 data-i18n="nav.models">Models</h2>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;">
+          <div>
+            <h2 data-i18n="nav.models" style="margin: 0;">Models</h2>
+            <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-dim);">Установленные модели отображаются сверху · Доступные к загрузке — ниже · Отключенные — внизу</p>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <button type="button" class="generate-btn" style="height: 36px; padding: 0 18px; font-size: 12.5px;" onclick="App.openCustomModelModal('local')">
+              ➕ Добавить локальную модель
+            </button>
+            <button type="button" class="generate-btn" style="height: 36px; padding: 0 18px; font-size: 12.5px; background: #6366f1;" onclick="App.openCustomModelModal('hf')">
+              🤗 Поиск на Hugging Face
+            </button>
+          </div>
+        </div>
         <div id="models-list"></div>
+      </section>
+
+      <!-- ===== Tab: Templates / Presets ===== -->
+      <section class="tab-panel" id="tab-templates" style="display: none; padding: 24px; overflow-y: auto;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;">
+          <div>
+            <h2 style="margin: 0;">📋 Шаблоны промптов и настроек</h2>
+            <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-dim);">Готовые пресеты для реставрации манги/скринтонов, аниме и фотореализма, а также ваши собственные шаблоны</p>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <button type="button" class="generate-btn" style="height: 36px; padding: 0 18px; font-size: 12.5px;" onclick="App.openSavePresetModal()">
+              ⭐ Сохранить текущие настройки как шаблон
+            </button>
+          </div>
+        </div>
+        <div class="models-grid" id="templates-grid"></div>
       </section>
 
       <!-- ===== Tab: History ===== -->
@@ -1036,8 +1276,11 @@
             <div class="model-picker-search-wrap" style="flex: 1;">
               <input type="text" id="model-picker-search" class="model-picker-search-input" placeholder="Search models by name or family..." data-i18n-placeholder="models.search_placeholder" oninput="App.onModelPickerSearch(this.value)">
             </div>
-            <button type="button" class="generate-btn" style="height: 36px; padding: 0 16px; font-size: 12px; background: #6366f1;" onclick="App.openCustomModelModal()">
-              <span>+</span> <span data-i18n="models.add_custom">Import Model</span>
+            <button type="button" class="generate-btn" style="height: 36px; padding: 0 14px; font-size: 12px;" onclick="App.openCustomModelModal('local')">
+              <span>➕</span> <span data-i18n="models.add_custom">Локальная модель</span>
+            </button>
+            <button type="button" class="generate-btn" style="height: 36px; padding: 0 14px; font-size: 12px; background: #6366f1;" onclick="App.openCustomModelModal('hf')">
+              <span>🤗</span> <span>Hugging Face</span>
             </button>
           </div>
           <div class="model-picker-filters" id="model-picker-filters">
@@ -1060,38 +1303,49 @@
     </div>
   </div>
 
-  <!-- Modal: Import Custom Model -->
+  <!-- Modal: Universal Model Importer (Local File Wizard + Hugging Face Explorer) -->
   <div id="custom-model-modal" class="modal-overlay" style="display: none; z-index: 10001;">
-    <div class="modal-content" style="max-width: 600px; padding: 24px;">
+    <div class="modal-content" style="max-width: 680px; padding: 24px; max-height: 88vh; display: flex; flex-direction: column;">
       <button class="modal-close" onclick="App.closeCustomModelModal()">✕</button>
-      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-        <span style="font-size: 24px;">🎨</span>
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+        <span style="font-size: 24px;">📦</span>
         <div>
-          <h2 style="margin: 0; font-size: 18px;" data-i18n="custom_model.title">Import Custom Model</h2>
-          <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-dim);" data-i18n="custom_model.subtitle">Load local GGUF or Safetensors files with SD.CPP or QuantFunc</p>
+          <h2 style="margin: 0; font-size: 18px;" data-i18n="custom_model.title">Мастер добавления моделей</h2>
+          <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-dim);">Подключение локальных весов (.gguf / .safetensors) или прямой импорт из Hugging Face Hub</p>
         </div>
       </div>
 
-      <div style="display: flex; flex-direction: column; gap: 14px;">
+      <!-- Mode Tabs -->
+      <div class="importer-tabs">
+        <button type="button" class="importer-tab-btn active" id="importer-tab-btn-local" onclick="App.switchCustomModelTab('local')">
+          📁 Локальный файл / Редактор
+        </button>
+        <button type="button" class="importer-tab-btn" id="importer-tab-btn-hf" onclick="App.switchCustomModelTab('hf')">
+          🤗 Поиск и импорт с Hugging Face
+        </button>
+      </div>
+
+      <!-- TAB 1: LOCAL FILE WIZARD -->
+      <div id="custom-model-pane-local" style="display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px;">
         <div class="control-group">
-          <label data-i18n="custom_model.name">Model Name</label>
-          <input type="text" id="custom-model-name" placeholder="e.g. My Flux Dev Q4 or SDXL Turbo" class="form-input">
+          <label data-i18n="custom_model.name">Название модели</label>
+          <input type="text" id="custom-model-name" placeholder="например: My Flux Dev Q8 или Anime Illustrious" class="form-input">
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <div class="control-group">
-            <label data-i18n="custom_model.engine">Target Runtime Engine</label>
+            <label data-i18n="custom_model.engine">Движок запуска</label>
             <select id="custom-model-engine" onchange="App.onCustomEngineChange()">
               <option value="sd_cpp">stable-diffusion.cpp (SD.CPP / GGUF)</option>
               <option value="quantfunc">QuantFunc v0.0.17 (Safetensors)</option>
             </select>
           </div>
           <div class="control-group">
-            <label data-i18n="custom_model.family">Architecture Family</label>
+            <label data-i18n="custom_model.family">Семейство архитектуры</label>
             <select id="custom-model-family" onchange="App.onCustomFamilyChange()">
-              <option value="flux">Flux.1 (DiT GGUF / Schnell / Dev)</option>
+              <option value="flux">Flux (DiT GGUF / Klein / Schnell / Dev)</option>
               <option value="qwen">Qwen-Image-2.1 (DiT GGUF)</option>
-              <option value="sdxl">SDXL / Turbo (GGUF Checkpoint)</option>
+              <option value="sdxl">SDXL / Turbo / Pony (Checkpoint)</option>
               <option value="sd15">SD 1.5 / Checkpoint</option>
               <option value="custom">Other / Custom</option>
             </select>
@@ -1099,53 +1353,144 @@
         </div>
 
         <div class="control-group">
-          <label data-i18n="custom_model.model_file">Model Weights File (.gguf / .safetensors)</label>
+          <label data-i18n="custom_model.model_file">Файл весов модели (.gguf / .safetensors)</label>
           <select id="custom-model-file-select" onchange="App.onCustomFileSelectChange('model')">
-            <option value="">— Select file from models/custom/ —</option>
-            <option value="__custom__">Custom path on PC...</option>
+            <option value="">— Выберите файл из models/custom/ —</option>
+            <option value="__custom__">Указать произвольный путь на ПК...</option>
           </select>
-          <input type="text" id="custom-model-file-input" placeholder="e.g. D:/AI/models/flux1-dev-q4_k_m.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
+          <input type="text" id="custom-model-file-input" placeholder="например: D:/AI/models/flux1-dev-q8_0.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
         </div>
 
         <div class="control-group" id="custom-te-group">
-          <label data-i18n="custom_model.te_file">Text Encoder / LLM File (Optional for Modular DiT)</label>
+          <label data-i18n="custom_model.te_file">Text Encoder / LLM файл (для модульных DiT)</label>
           <select id="custom-te-file-select" onchange="App.onCustomFileSelectChange('te')">
-            <option value="">— None / Bundled in model —</option>
-            <option value="__custom__">Custom path on PC...</option>
+            <option value="">— Не требуется / Встроен в модель —</option>
+            <option value="__custom__">Указать произвольный путь на ПК...</option>
           </select>
-          <input type="text" id="custom-te-file-input" placeholder="e.g. D:/AI/models/t5xxl-q4_k.gguf or Qwen3-VL-8B-Q4_K_M.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
+          <input type="text" id="custom-te-file-input" placeholder="например: D:/AI/models/Qwen3-8B-Q8_0.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
         </div>
 
         <div class="control-group" id="custom-vae-group">
-          <label data-i18n="custom_model.vae_file">VAE File (Optional)</label>
+          <label data-i18n="custom_model.vae_file">VAE файл (опционально)</label>
           <select id="custom-vae-file-select" onchange="App.onCustomFileSelectChange('vae')">
-            <option value="">— None / Bundled in model —</option>
-            <option value="__custom__">Custom path on PC...</option>
+            <option value="">— Автоматический / Встроен в модель —</option>
+            <option value="__custom__">Указать произвольный путь на ПК...</option>
           </select>
-          <input type="text" id="custom-vae-file-input" placeholder="e.g. D:/AI/models/ae.safetensors" style="display: none; margin-top: 4px; font-size: 12px;">
+          <input type="text" id="custom-vae-file-input" placeholder="например: D:/AI/models/flux2-vae.safetensors" style="display: none; margin-top: 4px; font-size: 12px;">
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <div class="control-group">
-            <label data-i18n="custom_model.default_steps">Default Steps</label>
+            <label data-i18n="custom_model.default_steps">Шагов по умолчанию (Steps)</label>
             <input type="number" id="custom-model-steps" value="20" min="1" max="100">
           </div>
           <div class="control-group">
-            <label data-i18n="custom_model.default_cfg">Default CFG / Guidance</label>
+            <label data-i18n="custom_model.default_cfg">CFG / Guidance по умолчанию</label>
             <input type="number" id="custom-model-cfg" value="3.5" min="0" max="20" step="0.5">
           </div>
         </div>
 
         <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.1); border-radius: 6px; padding: 10px; font-size: 11px; color: var(--text-dim);">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span>📁 <span data-i18n="custom_model.folder_hint">Drop files into folder to auto-detect:</span></span>
+            <span>📁 Положите файлы в эту папку для автоопределения параметров:</span>
             <code id="custom-models-dir-path" style="font-size: 10px; color: var(--accent);">models/custom</code>
           </div>
         </div>
 
-        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
-          <button type="button" class="icon-btn" onclick="App.closeCustomModelModal()" data-i18n="common.cancel">Cancel</button>
-          <button type="button" class="generate-btn" onclick="App.saveCustomModel()" style="background: var(--accent);" data-i18n="custom_model.save">Save & Activate</button>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;">
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeCustomModelModal()">Отмена</button>
+          <button type="button" class="generate-btn" onclick="App.saveCustomModel()" style="background: var(--accent);">✓ Сохранить и активировать</button>
+        </div>
+      </div>
+
+      <!-- TAB 2: HUGGING FACE HUB EXPLORER -->
+      <div id="custom-model-pane-hf" style="display: none; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px;">
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="hf-search-input" placeholder="Поиск по Hugging Face (например: flux gguf, klein gguf) или author/repo..." style="flex: 1;" onkeydown="if(event.key==='Enter') App.onHfSearchOrInspect()">
+          <button type="button" class="generate-btn" style="height: 36px; padding: 0 16px; font-size: 12px;" onclick="App.onHfSearchOrInspect()">🔍 Найти / Открыть</button>
+        </div>
+
+        <div id="hf-search-results" class="hf-results-box">
+          <div style="font-size: 12px; color: var(--text-dim); text-align: center; padding: 14px;">
+            Введите запрос (например <code>flux gguf</code>) или прямой путь репозитория (например <code>unsloth/FLUX.2-klein-base-9B-GGUF</code>)
+          </div>
+        </div>
+
+        <div id="hf-repo-inspector" style="display: none; flex-direction: column; gap: 10px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong id="hf-inspected-repo-title" style="font-size: 13px; color: var(--text-bright);">—</strong>
+            <span id="hf-inspected-repo-badge" class="badge-installed" style="font-size: 10px;">GGUF Repo</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 110px 90px 90px; gap: 8px;">
+            <div class="control-group" style="min-width: 0;">
+              <label>Название в LazySD UI</label>
+              <input type="text" id="hf-import-name" placeholder="Название модели">
+            </div>
+            <div class="control-group" style="min-width: 0;">
+              <label>Семейство</label>
+              <select id="hf-import-family">
+                <option value="flux">Flux</option>
+                <option value="qwen">Qwen-Image</option>
+                <option value="sdxl">SDXL</option>
+              </select>
+            </div>
+            <div class="control-group" style="min-width: 0;">
+              <label>Steps</label>
+              <input type="number" id="hf-import-steps" value="20" min="1" max="100">
+            </div>
+            <div class="control-group" style="min-width: 0;">
+              <label>CFG</label>
+              <input type="number" id="hf-import-cfg" value="3.5" min="0" max="20" step="0.5">
+            </div>
+          </div>
+          <div style="font-size: 11px; color: var(--text-dim);">Выберите файлы квантизации (.gguf / .safetensors) для добавления в карточку модели:</div>
+          <div id="hf-repo-files-list" class="hf-files-checklist"></div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">
+            <button type="button" class="generate-btn" style="background: #6366f1;" onclick="App.registerHfModel()">
+              🤗 Импортировать модель в реестр
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Save Current Settings as Template / Preset -->
+  <div id="save-preset-modal" class="modal-overlay" style="display: none; z-index: 10002;">
+    <div class="modal-content" style="max-width: 500px; padding: 24px;">
+      <button class="modal-close" onclick="App.closeSavePresetModal()">✕</button>
+      <h3 style="margin: 0 0 6px; font-size: 17px;">⭐ Сохранить шаблон (Preset)</h3>
+      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);">Сохраняет промпт, негативный промпт, выбранную модель, разрешение, шаги, CFG и настройки референса</p>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: grid; grid-template-columns: 70px 1fr; gap: 10px;">
+          <div class="control-group" style="min-width: 0;">
+            <label>Иконка</label>
+            <input type="text" id="preset-save-icon" value="⭐" style="text-align: center; font-size: 16px;">
+          </div>
+          <div class="control-group" style="min-width: 0;">
+            <label>Название шаблона</label>
+            <input type="text" id="preset-save-name" placeholder="например: Моя настройка для манги Q8">
+          </div>
+        </div>
+        <div class="control-group">
+          <label>Категория</label>
+          <input type="text" id="preset-save-category" value="Пользовательские" placeholder="Manga / Anime / Photo">
+        </div>
+        <div class="control-group">
+          <label>Описание (опционально)</label>
+          <input type="text" id="preset-save-desc" placeholder="Краткая заметка о назначении шаблона">
+        </div>
+        <div class="control-group">
+          <label>Шаблон промпта (можно использовать <code>{prompt}</code> для подстановки)</label>
+          <textarea id="preset-save-prompt" rows="3" style="font-size: 12px;"></textarea>
+        </div>
+        <div class="control-group">
+          <label>Негативный промпт</label>
+          <textarea id="preset-save-neg" rows="2" style="font-size: 12px;"></textarea>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;">
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeSavePresetModal()">Отмена</button>
+          <button type="button" class="generate-btn" onclick="App.saveCurrentAsPreset()">💾 Сохранить шаблон</button>
         </div>
       </div>
     </div>

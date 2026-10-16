@@ -353,7 +353,8 @@ def create_app() -> FastAPI:
 
     def _model_is_installed(model, cache: CacheManager, gpu_tier: str) -> bool:
         try:
-            if getattr(model, "is_custom", False):
+            has_hf_source = bool(model.sources and model.sources.primary and model.sources.primary.repo_id)
+            if getattr(model, "is_custom", False) and not has_hf_source:
                 from backend.custom_models import get_custom_models_dir
                 custom_dir = get_custom_models_dir()
                 ckpt_rel = model.engine_args.get("checkpoint") if getattr(model, "engine_args", None) else None
@@ -503,6 +504,12 @@ def create_app() -> FastAPI:
                 ],
             })
 
+        models_list.sort(key=lambda item: (
+            1 if item.get("disabled") else 0,
+            0 if item.get("installed") else 1,
+            (item.get("name") or "").lower(),
+        ))
+
         installed_engines = list_installed_engine_versions()
         if is_sd_cpp_installed():
             installed_engines.append("sd_cpp")
@@ -608,6 +615,11 @@ def create_app() -> FastAPI:
                     for t in m.transformers
                 ],
             })
+        models_out.sort(key=lambda item: (
+            1 if item.get("disabled") else 0,
+            0 if item.get("installed") else 1,
+            (item.get("name") or "").lower(),
+        ))
         return models_out
 
     @app.get("/api/models/{model_id}/state")
@@ -635,7 +647,8 @@ def create_app() -> FastAPI:
             gpu_tier = "unknown"
             transformers_for_gpu = model.transformers
 
-        if getattr(model, "is_custom", False):
+        has_hf_source = bool(model.sources and model.sources.primary and model.sources.primary.repo_id)
+        if getattr(model, "is_custom", False) and not has_hf_source:
             from backend.custom_models import get_custom_models_dir
             custom_dir = get_custom_models_dir()
             result = []
@@ -816,6 +829,63 @@ def create_app() -> FastAPI:
             return {"ok": True}
         except Exception as e:
             raise HTTPException(400, str(e))
+
+    # ---------- API: Hugging Face Hub Search & Import ----------
+    @app.get("/api/hf/search")
+    async def api_hf_search(q: str = "flux gguf", limit: int = 12):
+        """Search Hugging Face Hub for GGUF / diffusion models."""
+        from backend.custom_models import search_hf_models
+        try:
+            results = search_hf_models(q, limit=limit)
+            return {"ok": True, "results": results}
+        except Exception as e:
+            raise HTTPException(400, f"Ошибка поиска Hugging Face: {e}")
+
+    @app.get("/api/hf/repo-tree")
+    async def api_hf_repo_tree(repo_id: str):
+        """Inspect weight files (.gguf / .safetensors) in a Hugging Face repository."""
+        from backend.custom_models import inspect_hf_repo
+        try:
+            info = inspect_hf_repo(repo_id)
+            return {"ok": True, **info}
+        except Exception as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/hf/register")
+    async def api_hf_register_model(body: dict):
+        """Register a downloadable model profile from a Hugging Face repository."""
+        from backend.custom_models import register_hf_custom_model
+        try:
+            manifest = register_hf_custom_model(body)
+            return {"ok": True, "model": manifest}
+        except Exception as e:
+            raise HTTPException(400, str(e))
+
+    # ---------- API: Presets & Templates ----------
+    @app.get("/api/presets")
+    async def api_list_presets():
+        """Return factory and user generation presets."""
+        from backend.presets import list_presets
+        return {"presets": list_presets()}
+
+    @app.post("/api/presets")
+    async def api_save_preset(body: dict):
+        """Save a new or updated user preset."""
+        from backend.presets import save_user_preset
+        try:
+            preset = save_user_preset(body)
+            return {"ok": True, "preset": preset}
+        except Exception as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/presets/{preset_id}")
+    async def api_delete_preset(preset_id: str):
+        """Delete a user preset by ID."""
+        from backend.presets import delete_user_preset
+        ok = delete_user_preset(preset_id)
+        if not ok:
+            raise HTTPException(404, "Шаблон не найден или является системным")
+        return {"ok": True}
 
     @app.post("/api/models/{model_id}/download")
     async def api_model_download(model_id: str, body: Optional[dict] = None):

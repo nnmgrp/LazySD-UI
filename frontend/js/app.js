@@ -34,6 +34,7 @@ const App = {
     gpuInfo: null,
     engineStatus: null,
     models: [],
+    presets: [],
     currentTab: "generate",
     currentJob: null,
     pollInterval: null,
@@ -48,20 +49,40 @@ const App = {
     modelPickerFilter: "all",
     isModelPickerOpen: false,
     selectedVae: "texture_fix",
+    activeDockPopover: null,
+    hfInspectedRepo: null,
+  },
+
+  // ---------- 3-Tier Model Sorting ----------
+  sortModelsList(models) {
+    if (!Array.isArray(models)) return [];
+    const tierScore = (m) => {
+      if (m.disabled === true) return 2;
+      if (m.installed === true) return 0;
+      return 1;
+    };
+    return [...models].sort((a, b) => {
+      const ta = tierScore(a);
+      const tb = tierScore(b);
+      if (ta !== tb) return ta - tb;
+      return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+    });
   },
 
   // ---------- Init ----------
   async init() {
     console.log("[app] LazySD UI initializing...");
 
-    // Initialize sidebar state
+    // Initialize sidebar & Topaz inspector states
     this.initSidebar();
+    this.initInspector();
 
     // Load i18n first
     await window.initI18n();
 
-    // Load initial config from backend
+    // Load initial config & presets from backend
     await this.loadConfig();
+    await this.loadPresets();
 
     // Render initial UI
     this.renderGpuIndicator();
@@ -69,6 +90,7 @@ const App = {
     this.startStatsPolling();
     this.renderModels();
     this.updateEngineStatusUI();
+    this.updateDockPills();
     this.bindEvents();
 
     console.log("[app] Ready. GPU:", this.state.gpuInfo?.name || "not detected");
@@ -89,6 +111,29 @@ const App = {
       if (saved === "1") {
         document.querySelector(".app-shell")?.classList.add("sidebar-collapsed");
       }
+    } catch (_) {}
+  },
+
+  toggleInspector() {
+    const inspector = document.getElementById("topaz-inspector");
+    const btn = document.getElementById("inspector-toggle-btn");
+    if (!inspector) return;
+    const isCollapsed = inspector.classList.toggle("collapsed");
+    if (btn) btn.classList.toggle("active", !isCollapsed);
+    try {
+      localStorage.setItem("lazysd_inspector_collapsed", isCollapsed ? "1" : "0");
+    } catch (_) {}
+  },
+
+  initInspector() {
+    const inspector = document.getElementById("topaz-inspector");
+    const btn = document.getElementById("inspector-toggle-btn");
+    if (!inspector) return;
+    try {
+      const saved = localStorage.getItem("lazysd_inspector_collapsed");
+      const isCollapsed = saved === "1";
+      inspector.classList.toggle("collapsed", isCollapsed);
+      if (btn) btn.classList.toggle("active", !isCollapsed);
     } catch (_) {}
   },
 
@@ -154,7 +199,7 @@ const App = {
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
-      this.state.models = config.models || [];
+      this.state.models = this.sortModelsList(config.models || []);
       if (config.settings?.qwen_vae_type) {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
@@ -174,7 +219,7 @@ const App = {
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
-      this.state.models = config.models || [];
+      this.state.models = this.sortModelsList(config.models || []);
       if (config.settings?.qwen_vae_type) {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
@@ -183,6 +228,7 @@ const App = {
       this.renderSystemStats(config.system_stats);
       this.renderModels();
       this.updateEngineStatusUI();
+      this.updateDockPills();
     } catch (e) {
       console.error("[app] Failed to refresh config:", e);
     }
@@ -302,6 +348,8 @@ const App = {
     const select = document.getElementById("model-select");
     if (!select) return;
 
+    this.state.models = this.sortModelsList(this.state.models || []);
+
     select.innerHTML = "";
     if (!this.state.models.length) {
       select.innerHTML = `<option value="">${t("common.loading")}</option>`;
@@ -319,6 +367,8 @@ const App = {
       compatible = this.state.models;
     }
 
+    compatible = this.sortModelsList(compatible);
+
     if (!compatible.length) {
       select.innerHTML = `<option value="">No models available</option>`;
       return;
@@ -331,13 +381,15 @@ const App = {
         opt.disabled = true;
         opt.textContent = `⛔ ${model.name} (${model.family}) [Отключено]`;
       } else {
-        opt.textContent = `${model.name} (${model.family})`;
+        const instMark = model.installed ? "✓ " : "⬇ ";
+        opt.textContent = `${instMark}${model.name} (${model.family})`;
       }
       select.appendChild(opt);
     }
 
-    // Auto-select first non-disabled model
-    const firstActive = compatible.find(m => !m.disabled) || compatible[0];
+    // Auto-select first non-disabled model (or preserve existing selection)
+    const existing = this.state.selectedModel && compatible.find(m => m.id === this.state.selectedModel && !m.disabled);
+    const firstActive = existing || compatible.find(m => !m.disabled) || compatible[0];
     if (firstActive) {
       select.value = firstActive.id;
       this.state.selectedModel = firstActive.id;
@@ -351,16 +403,16 @@ const App = {
     const nameEl = document.getElementById("model-trigger-name");
     const subEl = document.getElementById("model-trigger-sub");
     const badgeEl = document.getElementById("model-trigger-badge");
-    if (!nameEl) return;
 
     const current = this.state.models.find(m => m.id === this.state.selectedModel);
     if (!current) {
-      nameEl.textContent = "—";
+      if (nameEl) nameEl.textContent = "—";
       if (subEl) subEl.textContent = "—";
+      this.updateDockPills();
       return;
     }
 
-    nameEl.textContent = current.name;
+    if (nameEl) nameEl.textContent = current.name;
     const variant = this.state.selectedVariant || current.transformers?.[0]?.id || "default";
     let engineVer = "";
     if (current.engine === "sd_cpp") {
@@ -423,6 +475,8 @@ const App = {
       const recLabel = t("controls.rec") || "Реком.";
       noiseBadge.textContent = `(${recLabel}: 0.0)`;
     }
+
+    this.updateDockPills();
   },
 
   // ---------- Model Hub Modal ----------
@@ -468,11 +522,10 @@ const App = {
       return;
     }
 
-    const gpuSm = this.state.gpuInfo?.sm || 0;
     const query = this.state.modelPickerSearch || "";
     const filter = this.state.modelPickerFilter || "all";
 
-    const filtered = this.state.models.filter(m => {
+    const filtered = this.sortModelsList(this.state.models).filter(m => {
       // Search query
       if (query) {
         const matchesName = m.name?.toLowerCase().includes(query);
@@ -650,7 +703,7 @@ const App = {
     const grid = document.createElement("div");
     grid.className = "models-grid";
 
-    for (const model of this.state.models) {
+    for (const model of this.sortModelsList(this.state.models)) {
       const isDisabled = model.disabled === true;
       const card = document.createElement("div");
       card.className = `model-card ${isDisabled ? "model-card-qf-disabled" : ""}`;
@@ -662,7 +715,9 @@ const App = {
       const pipelineBadge = `<span class="model-badge pipeline">${escapeHtml(model.pipeline)}</span>`;
       const familyBadge = `<span class="model-badge family">${escapeHtml(model.family)}</span>`;
       let engineBadge = "";
-      if (model.engine === "sd_cpp") {
+      if (model.is_custom) {
+        engineBadge = `<span class="badge-custom">🎨 Custom</span>`;
+      } else if (model.engine === "sd_cpp") {
         engineBadge = `<span class="badge-engine sd-cpp" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">⚡ SD.CPP</span>`;
       } else if (model.engine === "sdnq") {
         engineBadge = `<span class="badge-engine sdnq" style="background: rgba(139, 92, 246, 0.18); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.35);">⚡ SDNQ</span>`;
@@ -715,6 +770,10 @@ const App = {
         selectBtnHtml = `<button class="card-action-btn primary" style="margin-top: 12px; width: auto;" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">⚡ ${t("models.select_model")}</button>`;
       }
 
+      const deleteCustomBtn = model.is_custom
+        ? `<button class="delete-custom-btn" style="margin-top: 12px; margin-left: 8px;" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)">🗑 Удалить</button>`
+        : "";
+
       const noticeHtml = isDisabled
         ? `<div style="margin-top: 10px; padding: 8px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 12px; color: #f87171;">⚠️ ${escapeHtml(model.disabled_reason || "Отключено из-за дефектов весов upstream. Включить можно в Настройках.")}</div>`
         : "";
@@ -740,8 +799,9 @@ const App = {
           </div>
           <div class="model-variants-title">Transformers (${model.transformers?.length || 0})</div>
           <div class="model-variants-list">${variantsHtml}</div>
-          <div style="margin-top: 8px;">
+          <div style="margin-top: 8px; display: flex; align-items: center;">
             ${selectBtnHtml}
+            ${deleteCustomBtn}
           </div>
         </div>
       `;
@@ -780,6 +840,9 @@ const App = {
 
   // ---------- Event handlers ----------
   bindEvents() {
+    if (this._eventsBound) return;
+    this._eventsBound = true;
+
     // Sidebar navigation
     document.querySelectorAll(".nav-item").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -825,10 +888,22 @@ const App = {
       });
     }
 
-    // Steps input
+    // Steps, Sampler, Resolution, Seed sync with Dock pills
     const stepsInput = document.getElementById("steps-input");
     if (stepsInput) {
       stepsInput.addEventListener("input", () => this.updateModelTrigger());
+    }
+    const samplerSelect = document.getElementById("sampler-select");
+    if (samplerSelect) {
+      samplerSelect.addEventListener("change", () => this.updateDockPills());
+    }
+    const resSelect = document.getElementById("resolution-select");
+    if (resSelect) {
+      resSelect.addEventListener("change", () => this.updateDockPills());
+    }
+    const seedInput = document.getElementById("seed-input");
+    if (seedInput) {
+      seedInput.addEventListener("input", () => this.updateDockPills());
     }
 
     // CFG slider & input sync
@@ -837,9 +912,11 @@ const App = {
     if (cfgSlider && cfgInput) {
       cfgSlider.addEventListener("input", () => {
         cfgInput.value = cfgSlider.value;
+        this.updateDockPills();
       });
       cfgInput.addEventListener("input", () => {
         cfgSlider.value = cfgInput.value;
+        this.updateDockPills();
       });
     }
 
@@ -848,10 +925,11 @@ const App = {
     const noiseInput = document.getElementById("noise-input");
     const autoSyncStochasticSampler = (valStr) => {
       const n = parseFloat(valStr);
-      const samplerSelect = document.getElementById("sampler-select");
-      if (!isNaN(n) && n > 0 && samplerSelect && samplerSelect.value === "euler") {
-        samplerSelect.value = "euler_a";
+      const sSel = document.getElementById("sampler-select");
+      if (!isNaN(n) && n > 0 && sSel && sSel.value === "euler") {
+        sSel.value = "euler_a";
       }
+      this.updateDockPills();
     };
     if (noiseSlider && noiseInput) {
       noiseSlider.addEventListener("input", () => {
@@ -864,12 +942,14 @@ const App = {
       });
     }
 
-    // Negative prompt input dot indicator
+    // Negative prompt input dot indicator & dock pill highlight
     const negInput = document.getElementById("negative-prompt-input");
     const negDot = document.getElementById("negative-prompt-dot");
-    if (negInput && negDot) {
+    if (negInput) {
       negInput.addEventListener("input", () => {
-        negDot.style.display = negInput.value.trim().length > 0 ? "inline-block" : "none";
+        const hasNeg = negInput.value.trim().length > 0;
+        if (negDot) negDot.style.display = hasNeg ? "inline-block" : "none";
+        this.updateDockPills();
       });
     }
 
@@ -879,15 +959,26 @@ const App = {
       genBtn.addEventListener("click", () => this.onGenerate());
     }
 
+    // Close dock popovers on outside click
+    document.addEventListener("click", (e) => {
+      if (!this.state.activeDockPopover) return;
+      const dockWrap = document.getElementById("gemini-dock-wrap");
+      if (dockWrap && !dockWrap.contains(e.target)) {
+        this.closeAllDockPopovers();
+      }
+    });
+
     // Keyboard shortcut: Ctrl/Cmd+Enter
     document.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         this.onGenerate();
       }
-      // ESC: close modals first, then cancel generation
+      // ESC: close popovers/modals first, then cancel generation
       if (e.key === "Escape") {
-        if (this.state.isModelPickerOpen) {
+        if (this.state.activeDockPopover) {
+          this.closeAllDockPopovers();
+        } else if (this.state.isModelPickerOpen) {
           this.closeModelPickerModal();
         } else if (this.state.selectedHistoryItem) {
           this.closeHistoryModal();
@@ -960,7 +1051,6 @@ const App = {
       isDragging = true;
       startY = e.clientY;
       startHeight = textarea.offsetHeight;
-      // Lock preview-area height so expanding prompt-input pushes downward instead of upward
       if (previewArea && !previewArea.dataset.lockedHeight) {
         const h = Math.max(180, previewArea.offsetHeight);
         previewArea.style.minHeight = `${h}px`;
@@ -1013,27 +1103,24 @@ const App = {
       activePanel.style.display = (targetId === "tab-generate") ? "flex" : "block";
     }
 
-    // Auto-load history or models tab
+    // Auto-load history, models, or templates tab
     if (tabName === "history") {
       this.loadHistory();
     } else if (tabName === "models") {
       this.renderModelsTab();
+    } else if (tabName === "templates") {
+      this.renderPresetsUI();
     }
   },
 
   toggleNegativePrompt() {
-    const drawer = document.getElementById("negative-prompt-drawer");
     const content = document.getElementById("negative-prompt-content");
-    const arrow = document.getElementById("negative-prompt-arrow");
     const input = document.getElementById("negative-prompt-input");
-    if (!content || !arrow) return;
+    const pill = document.getElementById("dock-neg-pill");
+    if (!content) return;
     const isHidden = content.style.display === "none";
     content.style.display = isHidden ? "block" : "none";
-    arrow.textContent = isHidden ? "▼" : "▶";
-    if (drawer) {
-      if (isHidden) drawer.classList.add("open");
-      else drawer.classList.remove("open");
-    }
+    if (pill) pill.classList.toggle("active", isHidden);
     if (isHidden && input) {
       input.focus();
     }
@@ -1283,6 +1370,7 @@ const App = {
                       || (activeTe && !activeTe.installed && teSelect.value !== "custom");
       this.updateDownloadButton(hasMissing, this.state.modelState);
     }
+    this.updateDockPills();
   },
 
   toggleCustomTeInput(e) {
@@ -1334,7 +1422,7 @@ const App = {
   },
 
   updateDownloadButton(showButton, modelState) {
-    // Find or create a download button next to the variant select
+    // Place download button inside Gemini Dock right actions (next to Generate)
     let dlBtn = document.getElementById("download-model-btn");
     const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
     if (!showButton || (activeModelObj && activeModelObj.disabled)) {
@@ -1342,23 +1430,23 @@ const App = {
       return;
     }
     if (!dlBtn) {
-      const container = document.querySelector(".controls-row");
+      const container = document.getElementById("dock-actions-right") || document.querySelector(".controls-row");
       if (!container) return;
       dlBtn = document.createElement("button");
       dlBtn.id = "download-model-btn";
-      dlBtn.className = "generate-btn";
-      dlBtn.style.cssText = "background: var(--info); height: 36px; padding: 0 16px; font-size: 12px;";
+      dlBtn.className = "dock-generate-btn";
+      dlBtn.style.cssText = "background: var(--info); height: 34px; padding: 0 14px; font-size: 12px; border-radius: 999px;";
       dlBtn.textContent = "⬇ Download model";
       dlBtn.addEventListener("click", () => this.downloadModel());
-      container.appendChild(dlBtn);
+      container.insertBefore(dlBtn, container.firstChild);
     }
-    dlBtn.style.display = "flex";
+    dlBtn.style.display = "inline-flex";
     const activeVar = (modelState.transformers || []).find(v => v.id === this.state.selectedVariant) || (modelState.transformers || [])[0];
     const varSize = (activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted")) ? (activeVar.size_gb || 0) : 0;
     const teMissing = modelState?.text_encoders?.find(te => te.id === this.state.selectedTextEncoder && !te.installed);
     const teSize = teMissing ? (teMissing.size_gb || 0) : 0;
     const baseSize = (!modelState.base_model_installed && activeModelObj?.engine === "sdnq") ? 0.65 : 0;
-    dlBtn.textContent = `⬇ Download (~${(varSize + teSize + baseSize).toFixed(1)} GB)`;
+    dlBtn.textContent = `⬇ Скачать (~${(varSize + teSize + baseSize).toFixed(1)} GB)`;
   },
 
   async downloadModel() {
@@ -2028,47 +2116,88 @@ const App = {
   },
 
   // ---------- Img2Img / Native ControlNet Reference ----------
-  onRefModeChange() {
+  onRefModeChange(preserveStrength = false) {
     const mode = document.getElementById("img2img-mode")?.value || "control_ref";
     const hintEl = document.getElementById("img2img-mode-hint");
+    const statusDot = document.getElementById("img2img-status-dot");
     const strengthLabel = document.getElementById("img2img-strength-label");
     const strengthSlider = document.getElementById("img2img-strength");
     const strengthVal = document.getElementById("img2img-strength-val");
 
     if (mode === "control_ref") {
+      const tipText = "✓ Изоляция шагов активна: --init-img и --strength отключены. Модель выполнит 100% шагов с чистого листа, перенося лайн и скринтоны через нативный Reference / ControlNet.";
       if (hintEl) {
         hintEl.style.color = "var(--success, #22c55e)";
         hintEl.innerHTML = "✓ Изоляция шагов активна: <code>--init-img</code> и <code>--strength</code> отключены. Модель выполнит 100% шагов с чистого листа, перенося лайн и скринтоны через нативный Reference / ControlNet.";
       }
-      if (strengthLabel) strengthLabel.textContent = "Сила контроля:";
-      if (strengthSlider) { strengthSlider.max = "1.00"; strengthSlider.value = "0.85"; }
-      if (strengthVal) strengthVal.textContent = "0.85";
+      if (statusDot) {
+        statusDot.style.background = "#10B981";
+        statusDot.title = tipText;
+      }
+      if (strengthLabel) strengthLabel.textContent = "Сила:";
+      if (strengthSlider) {
+        strengthSlider.max = "1.00";
+        if (!preserveStrength) strengthSlider.value = "0.85";
+      }
+      if (strengthVal && !preserveStrength) strengthVal.textContent = "0.85";
     } else if (mode === "controlnet_canny") {
+      const tipText = "✒️ Canny / Lineart препроцессор: выделяет контуры туши и передает в ControlNet / Reference при 100% шагов с чистого белого шума.";
       if (hintEl) {
         hintEl.style.color = "var(--info, #38bdf8)";
-        hintEl.innerHTML = "✒️ Canny / Lineart препроцессор: выделяет контуры туши и передает в ControlNet / Reference при 100% шагов с чистого белого шума.";
+        hintEl.innerHTML = tipText;
       }
-      if (strengthLabel) strengthLabel.textContent = "Сила контура:";
-      if (strengthSlider) { strengthSlider.max = "1.00"; strengthSlider.value = "0.90"; }
-      if (strengthVal) strengthVal.textContent = "0.90";
+      if (statusDot) {
+        statusDot.style.background = "#38bdf8";
+        statusDot.title = tipText;
+      }
+      if (strengthLabel) strengthLabel.textContent = "Контур:";
+      if (strengthSlider) {
+        strengthSlider.max = "1.00";
+        if (!preserveStrength) strengthSlider.value = "0.90";
+      }
+      if (strengthVal && !preserveStrength) strengthVal.textContent = "0.90";
     } else {
+      const tipText = "⚠️ Классический Img2Img (зашумление исходника через --init-img + --strength). Может размывать белый фон и тонкие скринтоны.";
       if (hintEl) {
         hintEl.style.color = "var(--warning, #fbbf24)";
         hintEl.innerHTML = "⚠️ Классический Img2Img (зашумление исходника через <code>--init-img</code> + <code>--strength</code>). Может размывать белый фон и тонкие скринтоны.";
       }
-      if (strengthLabel) strengthLabel.textContent = "Сила шума:";
-      if (strengthSlider) { strengthSlider.max = "0.95"; strengthSlider.value = "0.70"; }
-      if (strengthVal) strengthVal.textContent = "0.70";
+      if (statusDot) {
+        statusDot.style.background = "#F59E0B";
+        statusDot.title = tipText;
+      }
+      if (strengthLabel) strengthLabel.textContent = "Шум:";
+      if (strengthSlider) {
+        strengthSlider.max = "0.95";
+        if (!preserveStrength) strengthSlider.value = "0.70";
+      }
+      if (strengthVal && !preserveStrength) strengthVal.textContent = "0.70";
     }
   },
 
   toggleControlNetInput(e) {
     if (e) e.preventDefault();
+    const wrap = document.getElementById("controlnet-custom-wrap");
     const input = document.getElementById("controlnet-custom-path");
     if (!input) return;
-    const isHidden = input.style.display === "none";
-    input.style.display = isHidden ? "block" : "none";
-    if (isHidden) input.focus();
+    if (wrap) {
+      const isHidden = wrap.style.display === "none";
+      wrap.style.display = isHidden ? "block" : "none";
+      input.style.display = isHidden ? "block" : "none";
+      if (isHidden) input.focus();
+    } else {
+      const isHidden = input.style.display === "none";
+      input.style.display = isHidden ? "block" : "none";
+      if (isHidden) input.focus();
+    }
+  },
+
+  onDockFileSelected(inputEl) {
+    const file = inputEl?.files?.[0];
+    if (file) {
+      this.uploadImg2ImgFile(file);
+      inputEl.value = "";
+    }
   },
 
   async uploadImg2ImgFile(file) {
@@ -2121,7 +2250,7 @@ const App = {
     if (refData && refData.url) {
       if (thumb) thumb.src = refData.url;
       if (container) container.style.display = "flex";
-      this.onRefModeChange();
+      this.onRefModeChange(true);
       this.switchTab("generate");
     } else {
       if (container) container.style.display = "none";
@@ -2169,10 +2298,456 @@ const App = {
     this.toast("success", t("img2img.send_to") + " ✓");
   },
 
-  // ---------- Custom Model Modal ----------
-  async openCustomModelModal() {
+  // ---------- Gemini Floating Dock & Popovers ----------
+  autoResizePrompt(textarea) {
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextH = Math.max(46, Math.min(150, textarea.scrollHeight));
+    textarea.style.height = `${nextH}px`;
+  },
+
+  updateDockPills() {
+    // 1. Model Pill Text
+    const modelPillText = document.getElementById("dock-model-pill-text");
+    const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
+    if (modelPillText) {
+      if (activeModel) {
+        const shortVar = (this.state.selectedVariant || "")
+          .replace(/^(flux2_klein_|flux3_klein_|qwen_image_2_1_)/i, "")
+          .replace(/-(?:50x|40x|30x-below)(?:-base)?/g, "");
+        modelPillText.textContent = shortVar ? `${activeModel.name} (${shortVar})` : activeModel.name;
+      } else {
+        modelPillText.textContent = "Модель";
+      }
+    }
+
+    // 2. Resolution Pill Text & Chips
+    const resVal = document.getElementById("resolution-select")?.value || "1024x1024";
+    const resPillText = document.getElementById("dock-res-pill-text");
+    if (resPillText) {
+      resPillText.textContent = resVal.replace("x", "×");
+    }
+    document.querySelectorAll("#dock-res-grid .dock-res-chip").forEach(chip => {
+      chip.classList.toggle("active", chip.dataset.res === resVal);
+    });
+
+    // 3. Params Pill Text
+    const samplerVal = document.getElementById("sampler-select")?.value || "euler";
+    const stepsVal = document.getElementById("steps-input")?.value || "4";
+    const cfgVal = document.getElementById("cfg-input")?.value || "1.0";
+    const noiseVal = document.getElementById("noise-input")?.value || "0.0";
+    const seedVal = document.getElementById("seed-input")?.value || "";
+    const paramsPillText = document.getElementById("dock-params-pill-text");
+    if (paramsPillText) {
+      const sLabel = samplerVal === "euler_a" ? "Euler A" : (samplerVal === "heun" ? "Heun" : "Euler");
+      paramsPillText.textContent = `${sLabel} · ${stepsVal} · CFG ${parseFloat(cfgVal || 1).toFixed(1)}`;
+    }
+
+    // 4. Negative Prompt Pill State
+    const negVal = document.getElementById("negative-prompt-input")?.value?.trim() || "";
+    const negPill = document.getElementById("dock-neg-pill");
+    if (negPill) {
+      negPill.classList.toggle("has-neg", negVal.length > 0);
+    }
+
+    // 5. Sync Quick Popover Selects with Inspector Controls
+    const mainModelSel = document.getElementById("model-select");
+    const dockModelSel = document.getElementById("dock-model-quick-select");
+    if (mainModelSel && dockModelSel) {
+      dockModelSel.innerHTML = mainModelSel.innerHTML;
+      dockModelSel.value = mainModelSel.value;
+    }
+
+    const mainVarSel = document.getElementById("variant-select");
+    const dockVarSel = document.getElementById("dock-variant-quick-select");
+    if (mainVarSel && dockVarSel) {
+      dockVarSel.innerHTML = mainVarSel.innerHTML;
+      dockVarSel.value = mainVarSel.value;
+    }
+
+    const mainTeGroup = document.getElementById("text-encoder-group");
+    const mainTeSel = document.getElementById("text-encoder-select");
+    const dockTeRow = document.getElementById("dock-te-quick-field") || document.getElementById("dock-te-quick-row");
+    const dockTeSel = document.getElementById("dock-te-quick-select");
+    if (mainTeGroup && mainTeSel && dockTeRow && dockTeSel) {
+      const visible = mainTeGroup.style.display !== "none";
+      dockTeRow.style.display = visible ? "flex" : "none";
+      if (visible) {
+        dockTeSel.innerHTML = mainTeSel.innerHTML;
+        dockTeSel.value = mainTeSel.value;
+        dockTeSel.disabled = mainTeSel.disabled;
+      }
+    }
+
+    const dockSampler = document.getElementById("dock-sampler-quick");
+    if (dockSampler) dockSampler.value = samplerVal;
+    const dockSteps = document.getElementById("dock-steps-quick");
+    if (dockSteps) dockSteps.value = stepsVal;
+    const dockCfg = document.getElementById("dock-cfg-quick");
+    if (dockCfg) dockCfg.value = cfgVal;
+    const dockCfgLbl = document.getElementById("dock-cfg-val-label");
+    if (dockCfgLbl) dockCfgLbl.textContent = cfgVal;
+    const dockNoise = document.getElementById("dock-noise-quick");
+    if (dockNoise) dockNoise.value = noiseVal;
+    const dockNoiseLbl = document.getElementById("dock-noise-val-label");
+    if (dockNoiseLbl) dockNoiseLbl.textContent = noiseVal;
+    const dockSeed = document.getElementById("dock-seed-quick");
+    if (dockSeed) dockSeed.value = seedVal;
+  },
+
+  toggleDockPopover(name, event) {
+    if (event) event.stopPropagation();
+    const map = {
+      model: "dock-popover-model",
+      res: "dock-popover-res",
+      params: "dock-popover-params",
+      presets: "dock-popover-presets",
+    };
+    const targetId = map[name];
+    if (!targetId) return;
+
+    if (this.state.activeDockPopover === name) {
+      this.closeAllDockPopovers();
+      return;
+    }
+
+    this.closeAllDockPopovers();
+    const el = document.getElementById(targetId);
+    if (el) {
+      this.updateDockPills();
+      if (name === "presets") this.renderPresetsUI();
+      el.style.display = "block";
+      this.state.activeDockPopover = name;
+    }
+  },
+
+  closeAllDockPopovers() {
+    ["dock-popover-model", "dock-popover-res", "dock-popover-params", "dock-popover-presets"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+    this.state.activeDockPopover = null;
+  },
+
+  async onDockModelSelect(modelId) {
+    const mainModelSel = document.getElementById("model-select");
+    if (mainModelSel) {
+      mainModelSel.value = modelId;
+      await this.onModelChange();
+    }
+  },
+
+  onDockVariantSelect(variantId) {
+    const mainVarSel = document.getElementById("variant-select");
+    if (mainVarSel) {
+      mainVarSel.value = variantId;
+      mainVarSel.dispatchEvent(new Event("change"));
+    }
+  },
+
+  onDockTeSelect(teId) {
+    const mainTeSel = document.getElementById("text-encoder-select");
+    if (mainTeSel) {
+      mainTeSel.value = teId;
+      this.onTextEncoderChange();
+    }
+  },
+
+  selectResolutionChip(resValue) {
+    const resSel = document.getElementById("resolution-select");
+    if (resSel) {
+      resSel.value = resValue;
+      this.updateDockPills();
+    }
+    this.closeAllDockPopovers();
+  },
+
+  syncFromDockParams(field, val) {
+    if (field === "sampler") {
+      const el = document.getElementById("sampler-select");
+      if (el) el.value = val;
+    } else if (field === "steps") {
+      const el = document.getElementById("steps-input");
+      if (el) el.value = val;
+    } else if (field === "cfg") {
+      const inp = document.getElementById("cfg-input");
+      const sld = document.getElementById("cfg-slider");
+      const lbl = document.getElementById("dock-cfg-val-label");
+      if (inp) inp.value = val;
+      if (sld) sld.value = val;
+      if (lbl) lbl.textContent = val;
+    } else if (field === "noise") {
+      const inp = document.getElementById("noise-input");
+      const sld = document.getElementById("noise-slider");
+      const lbl = document.getElementById("dock-noise-val-label");
+      if (inp) inp.value = val;
+      if (sld) sld.value = val;
+      if (lbl) lbl.textContent = val;
+      const n = parseFloat(val);
+      const sSel = document.getElementById("sampler-select");
+      if (!isNaN(n) && n > 0 && sSel && sSel.value === "euler") {
+        sSel.value = "euler_a";
+      }
+    } else if (field === "seed") {
+      const el = document.getElementById("seed-input");
+      if (el) el.value = val;
+    }
+    this.updateModelTrigger();
+  },
+
+  // ---------- Presets / Templates System ----------
+  async loadPresets() {
+    try {
+      const res = await this.apiGet("/api/presets");
+      this.state.presets = res.presets || [];
+      this.renderPresetsUI();
+    } catch (e) {
+      console.warn("[app] Failed to load presets:", e);
+    }
+  },
+
+  renderPresetsUI() {
+    const presets = this.state.presets || [];
+
+    // 1. Render inside Gemini Dock Popover (#dock-presets-list)
+    const dockList = document.getElementById("dock-presets-list");
+    if (dockList) {
+      dockList.innerHTML = "";
+      for (const p of presets) {
+        const row = document.createElement("div");
+        row.className = "dock-preset-item";
+        const delBtn = !p.builtin
+          ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)" title="Удалить шаблон">🗑</button>`
+          : `<span style="font-size: 10px; color: var(--text-dim);">Preset</span>`;
+        row.innerHTML = `
+          <div class="dock-preset-info">
+            <span class="dock-preset-icon">${escapeHtml(p.icon || "✨")}</span>
+            <div style="min-width: 0;">
+              <div class="dock-preset-title">${escapeHtml(p.title)}</div>
+              <div class="dock-preset-sub">${escapeHtml(p.description || "")}</div>
+            </div>
+          </div>
+          ${delBtn}
+        `;
+        row.addEventListener("click", (e) => {
+          if (e.target.tagName === "BUTTON") return;
+          this.applyPreset(p.id);
+          this.closeAllDockPopovers();
+        });
+        dockList.appendChild(row);
+      }
+    }
+
+    // 2. Render inside Templates Tab (#templates-grid)
+    const grid = document.getElementById("templates-grid");
+    if (grid) {
+      grid.innerHTML = "";
+      for (const p of presets) {
+        const card = document.createElement("div");
+        card.className = "model-card";
+        const badge = p.builtin
+          ? `<span class="badge-installed">★ Базовый</span>`
+          : `<span class="badge-custom">👤 Пользовательский</span>`;
+        const delBtn = !p.builtin
+          ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)">🗑 Удалить</button>`
+          : "";
+        card.innerHTML = `
+          <div>
+            <div class="model-card-header">
+              <span class="model-card-title">${escapeHtml(p.icon || "✨")} ${escapeHtml(p.title)}</span>
+              <div class="model-card-badges">${badge}</div>
+            </div>
+            <p class="model-card-description" style="margin-top: 8px;">${escapeHtml(p.description || "")}</p>
+            <div class="model-card-reqs" style="margin-top: 10px;">
+              <span>📐 ${escapeHtml(p.resolution || "1024x1024")}</span>
+              <span>⏱ ${p.steps || 20} steps</span>
+              <span>🎛️ CFG ${p.cfg ?? 3.5}</span>
+              <span>🖼️ ${escapeHtml(p.ref_mode || "control_ref")}</span>
+            </div>
+            ${p.prompt ? `<div style="margin-top: 10px; padding: 8px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; color: var(--text-muted); max-height: 64px; overflow: hidden;">${escapeHtml(p.prompt)}</div>` : ""}
+            <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center;">
+              <button class="card-action-btn primary" style="width: auto;" onclick="App.applyPreset('${escapeHtml(p.id)}')">⚡ Применить шаблон</button>
+              ${delBtn}
+            </div>
+          </div>
+        `;
+        grid.appendChild(card);
+      }
+    }
+  },
+
+  async applyPreset(presetId) {
+    const preset = (this.state.presets || []).find(p => p.id === presetId);
+    if (!preset) return;
+
+    // 1. Model & Variant (if specified and available)
+    if (preset.model_id) {
+      const targetModel = this.state.models.find(m => m.id === preset.model_id && !m.disabled);
+      if (targetModel) {
+        const modelSel = document.getElementById("model-select");
+        if (modelSel) {
+          modelSel.value = targetModel.id;
+          await this.onModelChange(preset.variant_id || null);
+        }
+      }
+    }
+
+    // 2. Prompt & Negative Prompt
+    const promptInput = document.getElementById("prompt-input");
+    if (promptInput && preset.prompt) {
+      const cur = promptInput.value.trim();
+      if (preset.prompt_mode === "append" && cur) {
+        promptInput.value = `${cur}, ${preset.prompt}`;
+      } else {
+        promptInput.value = preset.prompt;
+      }
+      this.autoResizePrompt(promptInput);
+    }
+
+    const negInput = document.getElementById("negative-prompt-input");
+    const negDot = document.getElementById("negative-prompt-dot");
+    if (negInput && preset.negative_prompt !== undefined) {
+      negInput.value = preset.negative_prompt || "";
+      if (negDot) {
+        negDot.style.display = negInput.value.trim().length > 0 ? "inline-block" : "none";
+      }
+    }
+
+    // 3. Resolution, Steps, CFG, Sampler, Noise
+    if (preset.resolution) {
+      const resSel = document.getElementById("resolution-select");
+      if (resSel && resSel.querySelector(`option[value="${preset.resolution}"]`)) {
+        resSel.value = preset.resolution;
+      }
+    }
+    if (preset.steps) {
+      const stepsEl = document.getElementById("steps-input");
+      if (stepsEl) stepsEl.value = preset.steps;
+    }
+    if (preset.cfg !== undefined && preset.cfg !== null) {
+      const cfgInp = document.getElementById("cfg-input");
+      const cfgSld = document.getElementById("cfg-slider");
+      if (cfgInp) cfgInp.value = preset.cfg;
+      if (cfgSld) cfgSld.value = preset.cfg;
+    }
+    if (preset.sampler) {
+      const sampEl = document.getElementById("sampler-select");
+      if (sampEl && sampEl.querySelector(`option[value="${preset.sampler}"]`)) {
+        sampEl.value = preset.sampler;
+      }
+    }
+    if (preset.noise !== undefined && preset.noise !== null) {
+      const nInp = document.getElementById("noise-input");
+      const nSld = document.getElementById("noise-slider");
+      if (nInp) nInp.value = preset.noise;
+      if (nSld) nSld.value = preset.noise;
+    }
+
+    // 4. Reference / ControlNet mode & strength
+    if (preset.ref_mode) {
+      const modeEl = document.getElementById("img2img-mode");
+      if (modeEl && modeEl.querySelector(`option[value="${preset.ref_mode}"]`)) {
+        modeEl.value = preset.ref_mode;
+        this.onRefModeChange(true);
+      }
+    }
+    if (preset.strength !== undefined && preset.strength !== null) {
+      const strSld = document.getElementById("img2img-strength");
+      const strVal = document.getElementById("img2img-strength-val");
+      if (strSld) strSld.value = preset.strength;
+      if (strVal) strVal.textContent = Number(preset.strength).toFixed(2);
+    }
+
+    this.updateModelTrigger();
+    if (this.state.currentTab !== "generate") {
+      this.switchTab("generate");
+    }
+    this.toast("success", `Шаблон «${preset.title}» применён ✓`);
+  },
+
+  openSavePresetModal() {
+    this.closeAllDockPopovers();
+    const modal = document.getElementById("save-preset-modal");
+    if (modal) modal.style.display = "flex";
+    const titleInput = document.getElementById("preset-save-name") || document.getElementById("preset-save-title");
+    if (titleInput) {
+      titleInput.value = "";
+      titleInput.focus();
+    }
+    const promptPre = document.getElementById("preset-save-prompt");
+    if (promptPre) promptPre.value = document.getElementById("prompt-input")?.value || "";
+    const negPre = document.getElementById("preset-save-neg");
+    if (negPre) negPre.value = document.getElementById("negative-prompt-input")?.value || "";
+  },
+
+  closeSavePresetModal() {
+    const modal = document.getElementById("save-preset-modal");
+    if (modal) modal.style.display = "none";
+  },
+
+  async saveCurrentAsPreset() {
+    const titleEl = document.getElementById("preset-save-name") || document.getElementById("preset-save-title");
+    const title = titleEl?.value?.trim();
+    if (!title) {
+      this.toast("warning", "Введите название шаблона");
+      return;
+    }
+    const promptVal = document.getElementById("preset-save-prompt")?.value?.trim()
+      ?? document.getElementById("prompt-input")?.value?.trim()
+      ?? "";
+    const negVal = document.getElementById("preset-save-neg")?.value?.trim()
+      ?? document.getElementById("negative-prompt-input")?.value?.trim()
+      ?? "";
+    const payload = {
+      title: title,
+      icon: document.getElementById("preset-save-icon")?.value?.trim() || "✨",
+      category: document.getElementById("preset-save-category")?.value || "custom",
+      description: document.getElementById("preset-save-desc")?.value?.trim() || "",
+      prompt: promptVal,
+      negative_prompt: negVal,
+      model_id: this.state.selectedModel || null,
+      variant_id: document.getElementById("variant-select")?.value || this.state.selectedVariant || null,
+      ref_mode: document.getElementById("img2img-mode")?.value || "control_ref",
+      strength: parseFloat(document.getElementById("img2img-strength")?.value || "0.85"),
+      resolution: document.getElementById("resolution-select")?.value || "1024x1024",
+      steps: parseInt(document.getElementById("steps-input")?.value || "20", 10),
+      cfg: parseFloat(document.getElementById("cfg-input")?.value || "3.5"),
+      sampler: document.getElementById("sampler-select")?.value || "euler",
+      noise: parseFloat(document.getElementById("noise-input")?.value || "0.0"),
+    };
+
+    try {
+      await this.apiPost("/api/presets", payload);
+      this.closeSavePresetModal();
+      await this.loadPresets();
+      this.toast("success", `Шаблон «${title}» сохранён ✓`);
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  async deletePreset(presetId, event) {
+    if (event) event.stopPropagation();
+    if (!confirm("Удалить этот пользовательский шаблон?")) return;
+    try {
+      const res = await fetch(`/api/presets/${encodeURIComponent(presetId)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      await this.loadPresets();
+      this.toast("info", "Шаблон удалён");
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  // ---------- Universal Custom Model Importer (Local + Hugging Face Hub) ----------
+  async openCustomModelModal(tab = "local") {
     const modal = document.getElementById("custom-model-modal");
     if (!modal) return;
+
+    this.switchCustomModelTab(tab);
 
     try {
       const res = await fetch("/api/custom-models/files");
@@ -2189,6 +2764,22 @@ const App = {
     }
 
     modal.style.display = "flex";
+    if (tab === "hf") {
+      document.getElementById("hf-search-input")?.focus();
+    }
+  },
+
+  switchCustomModelTab(tab) {
+    const isHf = tab === "hf";
+    const tabLocal = document.getElementById("importer-tab-btn-local") || document.getElementById("custom-tab-local");
+    const tabHf = document.getElementById("importer-tab-btn-hf") || document.getElementById("custom-tab-hf");
+    const paneLocal = document.getElementById("custom-model-pane-local");
+    const paneHf = document.getElementById("custom-model-pane-hf");
+
+    if (tabLocal) tabLocal.classList.toggle("active", !isHf);
+    if (tabHf) tabHf.classList.toggle("active", isHf);
+    if (paneLocal) paneLocal.style.display = !isHf ? "block" : "none";
+    if (paneHf) paneHf.style.display = isHf ? "block" : "none";
   },
 
   closeCustomModelModal() {
@@ -2202,17 +2793,18 @@ const App = {
     const vaeSel = document.getElementById("custom-vae-file-select");
 
     if (modelSel) {
-      modelSel.innerHTML = `<option value="">— Select file from models/custom/ —</option><option value="__custom__">Custom path on PC...</option>`;
+      modelSel.innerHTML = `<option value="">— Выберите файл из models/custom/ —</option><option value="__custom__">Указать полный путь на ПК...</option>`;
       for (const f of files) {
         const opt = document.createElement("option");
         opt.value = f.rel_path;
-        opt.textContent = `${f.name} (${f.size_gb} GB, ${f.ext.toUpperCase()})`;
+        const roleTag = f.role === "text_encoder" ? " [Encoder]" : (f.role === "vae" ? " [VAE]" : "");
+        opt.textContent = `${f.name} (${f.size_gb} GB, ${f.quant || f.ext.toUpperCase()})${roleTag}`;
         modelSel.appendChild(opt);
       }
     }
 
     if (teSel) {
-      teSel.innerHTML = `<option value="">— None / Bundled in model —</option><option value="__custom__">Custom path on PC...</option>`;
+      teSel.innerHTML = `<option value="">— Auto / Встроен в модель —</option><option value="__custom__">Указать полный путь на ПК...</option>`;
       for (const f of files) {
         const opt = document.createElement("option");
         opt.value = f.rel_path;
@@ -2222,7 +2814,7 @@ const App = {
     }
 
     if (vaeSel) {
-      vaeSel.innerHTML = `<option value="">— None / Bundled in model —</option><option value="__custom__">Custom path on PC...</option>`;
+      vaeSel.innerHTML = `<option value="">— Auto / Встроен в модель —</option><option value="__custom__">Указать полный путь на ПК...</option>`;
       for (const f of files) {
         const opt = document.createElement("option");
         opt.value = f.rel_path;
@@ -2244,12 +2836,21 @@ const App = {
       input.style.display = "none";
     }
 
-    // Auto-fill model name if empty and a file was selected
+    // Smart auto-detection of family, steps, CFG, and name when a model file is chosen
     if (type === "model" && sel.value && sel.value !== "__custom__") {
       const nameInput = document.getElementById("custom-model-name");
       if (nameInput && !nameInput.value.trim()) {
         const stem = sel.value.split(/[\\/]/).pop().replace(/\.[^/.]+$/, "");
         nameInput.value = stem.replace(/[-_]/g, " ");
+      }
+      const fileMeta = (this._customFilesData?.files || []).find(f => f.rel_path === sel.value);
+      if (fileMeta) {
+        const familySel = document.getElementById("custom-model-family");
+        const stepsInput = document.getElementById("custom-model-steps");
+        const cfgInput = document.getElementById("custom-model-cfg");
+        if (familySel && fileMeta.family) familySel.value = fileMeta.family;
+        if (stepsInput && fileMeta.steps) stepsInput.value = fileMeta.steps;
+        if (cfgInput && fileMeta.cfg !== undefined) cfgInput.value = fileMeta.cfg;
       }
     }
   },
@@ -2266,17 +2867,17 @@ const App = {
 
     const fam = familySel.value;
     if (fam === "sdxl") {
-      stepsInput.value = "1";
-      cfgInput.value = "1.0";
-    } else if (fam === "flux") {
-      stepsInput.value = "4";
-      cfgInput.value = "3.5";
-    } else if (fam === "qwen") {
-      stepsInput.value = "20";
-      cfgInput.value = "3.5";
-    } else {
       stepsInput.value = "20";
       cfgInput.value = "7.0";
+    } else if (fam === "flux") {
+      stepsInput.value = "4";
+      cfgInput.value = "1.0";
+    } else if (fam === "qwen") {
+      stepsInput.value = "20";
+      cfgInput.value = "3.0";
+    } else {
+      stepsInput.value = "8";
+      cfgInput.value = "2.5";
     }
   },
 
@@ -2295,7 +2896,7 @@ const App = {
 
     const name = nameInput ? nameInput.value.trim() : "";
     if (!name) {
-      this.toast("error", t("custom_model.error_name") || "Please enter a model name");
+      this.toast("error", t("custom_model.error_name") || "Введите название модели");
       return;
     }
 
@@ -2304,7 +2905,7 @@ const App = {
       modelFile = modelInput ? modelInput.value.trim() : "";
     }
     if (!modelFile) {
-      this.toast("error", t("custom_model.error_file") || "Please select or specify a model file");
+      this.toast("error", t("custom_model.error_file") || "Выберите или укажите файл модели");
       return;
     }
 
@@ -2340,11 +2941,10 @@ const App = {
         throw new Error(data.detail || "Failed to register custom model");
       }
 
-      this.toast("success", `✓ ${name} registered!`);
+      this.toast("success", `✓ Модель «${name}» добавлена!`);
       this.closeCustomModelModal();
 
-      // Refresh models
-      await this.init();
+      await this.refreshConfig();
       if (data.model && data.model.id) {
         await this.selectModelFromModal(data.model.id);
       }
@@ -2353,9 +2953,161 @@ const App = {
     }
   },
 
+  async onHfSearchOrInspect() {
+    const raw = document.getElementById("hf-search-input")?.value?.trim() || "";
+    if (!raw) {
+      this.toast("warning", "Введите поисковый запрос или ссылку на Hugging Face");
+      return;
+    }
+
+    // Direct repo link or owner/repo format -> inspect directly
+    const cleanRepo = raw
+      .replace(/^https?:\/\/huggingface\.co\//i, "")
+      .replace(/\/(tree|blob)\/.*$/i, "")
+      .replace(/^\/+|\/+$/g, "");
+
+    if (cleanRepo.includes("/") && !cleanRepo.includes(" ") && cleanRepo.split("/").length === 2) {
+      await this.inspectHfRepo(cleanRepo);
+      return;
+    }
+
+    const resultsEl = document.getElementById("hf-search-results");
+    if (resultsEl) {
+      resultsEl.style.display = "flex";
+      resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-muted);">🔎 Поиск на Hugging Face...</div>`;
+    }
+
+    try {
+      const data = await this.apiGet(`/api/hf/search?q=${encodeURIComponent(raw)}`);
+      const results = data.results || [];
+      if (!resultsEl) return;
+
+      if (!results.length) {
+        resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-dim);">Ничего не найдено. Попробуйте вставить прямую ссылку <code>author/repo</code>.</div>`;
+        return;
+      }
+
+      resultsEl.innerHTML = "";
+      for (const item of results) {
+        const div = document.createElement("div");
+        div.className = "hf-result-item";
+        div.innerHTML = `
+          <div style="min-width: 0;">
+            <div style="font-size: 12.5px; font-weight: 600; color: var(--text-bright);">${escapeHtml(item.repo_id)}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">⬇ ${item.downloads || 0} скачиваний · ❤️ ${item.likes || 0}</div>
+          </div>
+          <button class="setting-btn" style="height: 26px; font-size: 11px;">Открыть файлы →</button>
+        `;
+        div.addEventListener("click", () => this.inspectHfRepo(item.repo_id));
+        resultsEl.appendChild(div);
+      }
+    } catch (e) {
+      if (resultsEl) {
+        resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: #f87171;">Ошибка: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+  },
+
+  async inspectHfRepo(repoId) {
+    const inspectorEl = document.getElementById("hf-repo-inspector");
+    const filesListEl = document.getElementById("hf-repo-files-list") || document.getElementById("hf-files-checklist");
+    const titleEl = document.getElementById("hf-inspected-repo-title") || document.getElementById("hf-repo-title");
+    if (inspectorEl) inspectorEl.style.display = "block";
+    if (titleEl) titleEl.textContent = `📦 Загрузка списка файлов ${repoId}...`;
+    if (filesListEl) filesListEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted);">Запрос метаданных репозитория...</div>`;
+
+    try {
+      const info = await this.apiGet(`/api/hf/repo-tree?repo=${encodeURIComponent(repoId)}`);
+      this.state.hfInspectedRepo = info;
+
+      if (titleEl) titleEl.textContent = `📦 ${info.repo_id}`;
+      const nameInp = document.getElementById("hf-import-name") || document.getElementById("hf-custom-name");
+      if (nameInp) nameInp.value = `${info.name} (HF)`;
+      const famSel = document.getElementById("hf-import-family") || document.getElementById("hf-custom-family");
+      if (famSel && info.family) famSel.value = info.family;
+      const stepsInp = document.getElementById("hf-import-steps") || document.getElementById("hf-custom-steps");
+      if (stepsInp && info.steps) stepsInp.value = info.steps;
+      const cfgInp = document.getElementById("hf-import-cfg") || document.getElementById("hf-custom-cfg");
+      if (cfgInp && info.cfg !== undefined) cfgInp.value = info.cfg;
+
+      if (filesListEl) {
+        filesListEl.innerHTML = "";
+        const diffFiles = info.diffusion_files || [];
+        if (!diffFiles.length) {
+          filesListEl.innerHTML = `<div style="font-size: 12px; color: #f87171;">В репозитории не найдено файлов .gguf или .safetensors.</div>`;
+        } else {
+          diffFiles.forEach((f, idx) => {
+            const isRec = f.quant === "Q8_0" || f.quant === "Q4_K_M" || idx === 0;
+            const row = document.createElement("label");
+            row.className = "hf-file-row";
+            row.innerHTML = `
+              <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                <input type="checkbox" class="hf-diff-checkbox" data-path="${escapeHtml(f.path)}" data-quant="${escapeHtml(f.quant || '')}" data-size="${f.size_gb || 0}" ${isRec ? "checked" : ""}>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(f.name)}</span>
+              </span>
+              <span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">${escapeHtml(f.quant || f.ext.toUpperCase())} · ${f.size_gb} GB</span>
+            `;
+            filesListEl.appendChild(row);
+          });
+        }
+      }
+    } catch (e) {
+      if (titleEl) titleEl.textContent = `❌ Ошибка загрузки ${repoId}`;
+      if (filesListEl) filesListEl.innerHTML = `<div style="font-size: 12px; color: #f87171;">${escapeHtml(e.message)}</div>`;
+    }
+  },
+
+  async registerHfModel() {
+    const info = this.state.hfInspectedRepo;
+    if (!info || !info.repo_id) {
+      this.toast("warning", "Сначала выберите репозиторий Hugging Face");
+      return;
+    }
+
+    const checkedBoxes = Array.from(document.querySelectorAll(".hf-diff-checkbox:checked"));
+    if (!checkedBoxes.length) {
+      this.toast("warning", "Отметьте хотя бы один файл модели (.gguf / .safetensors)");
+      return;
+    }
+
+    const stepsEl = document.getElementById("hf-import-steps") || document.getElementById("hf-custom-steps");
+    const nameEl = document.getElementById("hf-import-name") || document.getElementById("hf-custom-name");
+    const famEl = document.getElementById("hf-import-family") || document.getElementById("hf-custom-family");
+    const cfgEl = document.getElementById("hf-import-cfg") || document.getElementById("hf-custom-cfg");
+
+    const selectedFiles = checkedBoxes.map(cb => ({
+      path: cb.dataset.path,
+      quant: cb.dataset.quant,
+      size_gb: parseFloat(cb.dataset.size || "0"),
+      steps: parseInt(stepsEl?.value || "20", 10),
+    }));
+
+    const payload = {
+      repo_id: info.repo_id,
+      name: nameEl?.value?.trim() || `${info.name} (HF)`,
+      family: famEl?.value || info.family || "flux",
+      steps: parseInt(stepsEl?.value || "20", 10),
+      cfg: parseFloat(cfgEl?.value || "3.5"),
+      selected_files: selectedFiles,
+      text_encoder_files: (info.text_encoder_files || []).slice(0, 2),
+    };
+
+    try {
+      const res = await this.apiPost("/api/hf/register", payload);
+      this.toast("success", `✓ Модель «${payload.name}» добавлена в Model Hub!`);
+      this.closeCustomModelModal();
+      await this.refreshConfig();
+      if (res.model && res.model.id) {
+        await this.selectModelFromModal(res.model.id);
+      }
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
   async deleteCustomModel(modelId, event) {
     if (event) event.stopPropagation();
-    if (!confirm(`Delete custom model ${modelId}?`)) return;
+    if (!confirm(`Удалить пользовательскую модель ${modelId}?`)) return;
 
     try {
       const res = await fetch(`/api/custom-models/${encodeURIComponent(modelId)}`, {
@@ -2365,9 +3117,11 @@ const App = {
         const data = await res.json();
         throw new Error(data.detail || "Failed to delete");
       }
-      this.toast("info", `Model ${modelId} removed`);
-      await this.init();
-      this.renderModelPickerModal();
+      this.toast("info", `Модель ${modelId} удалена`);
+      await this.refreshConfig();
+      if (this.state.isModelPickerOpen) {
+        this.renderModelPickerModal();
+      }
     } catch (err) {
       this.toast("error", err.message);
     }
@@ -2388,3 +3142,4 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // Export for inline scripts
 window.App = App;
+
