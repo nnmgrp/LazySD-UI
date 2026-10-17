@@ -3707,19 +3707,37 @@ const App = {
 
   async toggleShareTunnel() {
     const isRunning = this.state.shareStatus?.running;
+    const btn = document.getElementById("btn-share-toggle");
     try {
       if (isRunning) {
+        if (btn) btn.textContent = "Остановка...";
         this.toast("info", "Остановка туннеля...");
         await this.apiPost("/api/share/stop", {});
         this.toast("info", "Туннель остановлен");
+        await this.loadShareStatus();
       } else {
+        if (btn) btn.textContent = "Запуск Cloudflare...";
         this.toast("info", "Запуск Cloudflare quick tunnel...");
         await this.apiPost("/api/share/start", { provider: "cloudflared" });
-        this.toast("success", "✓ Туннель запущен!");
+
+        // Poll for public trycloudflare URL (takes ~1-3s to establish)
+        for (let i = 0; i < 8; i++) {
+          await new Promise((r) => setTimeout(r, 1200));
+          await this.loadShareStatus();
+          const st = this.state.shareStatus;
+          if (st && st.running && st.public_url) {
+            this.toast("success", "✓ Туннель активен: " + st.public_url);
+            return;
+          }
+          if (st && st.error) {
+            throw new Error(st.error);
+          }
+        }
+        this.toast("info", "Туннель запущен, ссылка формируется...");
       }
-      await this.loadShareStatus();
     } catch (e) {
       this.toast("error", e.message);
+      await this.loadShareStatus();
     }
   },
 
@@ -3761,12 +3779,23 @@ const App = {
   // ============================================================
   // Extras & Engines (OrbitQuant & Nunchaku)
   // ============================================================
-  async refreshExtrasStatus() {
+  async refreshExtrasStatus(showToast = false) {
     try {
-      const data = await this.apiGet("/api/extras/status");
+      const data = await this.apiGet("/api/extras/status?refresh=true");
       this.state.extrasStatus = data;
       this.renderExtrasUI();
-    } catch (_) {}
+      if (showToast) {
+        const isReady = data.env?.ready;
+        const msg = isReady
+          ? `✓ Окружение Extras готово: Python ${data.env?.python || ''}, PyTorch ${data.env?.torch || ''}`
+          : `Окружение Extras: ${data.env?.summary || 'требуется установка компонентов'}`;
+        this.toast(isReady ? "success" : "info", msg);
+      }
+    } catch (e) {
+      if (showToast) {
+        this.toast("error", "Не удалось опросить статус Extras: " + e.message);
+      }
+    }
   },
 
   renderExtrasUI() {
@@ -3776,15 +3805,28 @@ const App = {
     const nunchakuBadge = document.getElementById("setting-nunchaku-status");
     const orbitBadge = document.getElementById("setting-orbitquant-status");
     const envDesc = document.getElementById("setting-extras-env-desc");
+    const customPyInput = document.getElementById("setting-extras-custom-py");
+
+    if (customPyInput && data.env?.python_path) {
+      if (!customPyInput.value && !data.env.managed) {
+        customPyInput.value = data.env.python_path;
+      }
+    }
 
     if (envDesc && data.env) {
       const e = data.env;
-      envDesc.textContent = `${e.python || 'Python'} (Torch: ${e.torch_version || 'None'}, CUDA: ${e.cuda_available ? 'OK' : 'No'})`;
+      if (e.ready) {
+        envDesc.innerHTML = `<span style="color: #4ade80; font-weight: 600;">✓ Готово к работе:</span> Python ${e.python || '3.12'} · Torch ${e.torch || 'OK'} · CUDA ${e.cuda || 'OK'} (${e.device || 'GPU'}) · Diffusers ${e.diffusers || 'OK'}`;
+      } else if (e.python_path || e.venv_exists) {
+        envDesc.innerHTML = `<span style="color: #fbbf24; font-weight: 600;">⚠️ Настраивается:</span> ${e.error || e.summary || 'Окружение создано, ожидается установка PyTorch и Diffusers'}`;
+      } else {
+        envDesc.innerHTML = `<span style="color: var(--text-dim);">ℹ️ ${e.summary || 'Изолированное окружение (envs/extras) пока не создано. Создаётся автоматически при установке Nunchaku или OrbitQuant.'}</span>`;
+      }
     }
 
     if (nunchakuBadge) {
       if (data.nunchaku_ready) {
-        nunchakuBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.nunchaku_version || 'ready'})</span>`;
+        nunchakuBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.nunchaku || 'ready'})</span>`;
       } else {
         nunchakuBadge.innerHTML = '<span class="state-badge missing">Не установлен</span>';
       }
@@ -3792,43 +3834,61 @@ const App = {
 
     if (orbitBadge) {
       if (data.orbitquant_ready) {
-        orbitBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.orbitquant_version || 'ready'})</span>`;
+        orbitBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.orbitquant || 'ready'})</span>`;
       } else {
         orbitBadge.innerHTML = '<span class="state-badge missing">Не установлен</span>';
       }
     }
   },
 
+  async saveExtrasPythonPath() {
+    const input = document.getElementById("setting-extras-custom-py");
+    const val = input ? input.value.trim() : "";
+    try {
+      this.toast("info", "Сохранение пути к Python...");
+      const res = await this.apiPost("/api/extras/python", { path: val });
+      this.toast("success", "✓ Путь к Extras Python обновлён");
+      await this.refreshExtrasStatus(false);
+    } catch (e) {
+      this.toast("error", "Ошибка: " + e.message);
+    }
+  },
+
   async installExtrasPackage(target) {
     const btn = document.getElementById(`btn-install-${target}`);
+    const origText = btn ? btn.textContent : `Установить ${target}`;
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Установка...";
     }
-    this.toast("info", `Запущена установка ${target}...`);
+    const labelTarget = target === "runtime" ? "базового окружения" : target;
+    this.toast("info", `Запущена установка ${labelTarget}...`);
 
     try {
-      const res = await this.apiPost("/api/extras/install", { target: target });
-      const jobId = res.job?.id;
-      if (!jobId) throw new Error("No job returned");
+      const res = await this.apiPost("/api/extras/install", { component: target, target: target });
+      const jobId = res.job?.id || res.id;
+      if (!jobId) throw new Error(res.error || "Не удалось получить ID задачи установки");
 
       const poll = setInterval(async () => {
         try {
           const job = await this.apiGet(`/api/extras/jobs/${jobId}`);
-          if (btn) btn.textContent = `${job.stage || 'Установка'}...`;
-          if (job.status === "succeeded") {
+          const state = job.state || job.status;
+          const label = job.step_label || job.stage || 'Установка';
+          if (btn) btn.textContent = `${label}...`;
+
+          if (state === "done" || state === "succeeded") {
             clearInterval(poll);
             if (btn) {
               btn.disabled = false;
-              btn.textContent = `Установить ${target}`;
+              btn.textContent = origText;
             }
-            this.toast("success", `✓ Пакет ${target} успешно установлен!`);
-            await this.refreshExtrasStatus();
-          } else if (job.status === "failed") {
+            this.toast("success", `✓ Установка ${labelTarget} завершена!`);
+            await this.refreshExtrasStatus(false);
+          } else if (state === "error" || state === "failed" || state === "cancelled") {
             clearInterval(poll);
             if (btn) {
               btn.disabled = false;
-              btn.textContent = `Установить ${target}`;
+              btn.textContent = origText;
             }
             this.toast("error", `Ошибка установки ${target}: ${job.error || "failed"}`);
           }
@@ -3839,7 +3899,7 @@ const App = {
     } catch (e) {
       if (btn) {
         btn.disabled = false;
-        btn.textContent = `Установить ${target}`;
+        btn.textContent = origText;
       }
       this.toast("error", e.message);
     }

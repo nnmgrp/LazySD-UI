@@ -354,7 +354,11 @@ class ShareManager:
             provider = self._provider()
             exe = provider.executable()
             if not exe:
-                raise RuntimeError(f"{provider.label} is not installed. Use 'Install' first.")
+                try:
+                    self._log.append(f"Auto-downloading {provider.label} binary from official release...")
+                    exe = provider.install(progress=lambda msg: self._log.append(msg))
+                except Exception as e:
+                    raise RuntimeError(f"Не удалось автоматически загрузить {provider.label}: {e}")
             ensure_token()
             port = int(port or _BIND["port"])
             self._state, self._url, self._error = "starting", None, None

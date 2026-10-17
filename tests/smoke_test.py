@@ -612,11 +612,15 @@ def test_lora_share_extras():
 
         r_share = client.get("/api/share/status")
         assert r_share.status_code == 200 and "running" in r_share.json(), "GET /api/share/status failed"
-        print("  ✓ GET /api/share/status OK")
+        r_share_install = client.post("/api/share/install")
+        assert r_share_install.status_code == 200, "POST /api/share/install failed"
+        print("  ✓ GET /api/share/status & POST /api/share/install OK")
 
         r_extras = client.get("/api/extras/status")
         assert r_extras.status_code == 200 and "nunchaku_ready" in r_extras.json(), "GET /api/extras/status failed"
-        print("  ✓ GET /api/extras/status OK")
+        r_extras_val = client.post("/api/extras/install", json={"target": "nonexistent_comp"})
+        assert r_extras_val.status_code == 400, "POST /api/extras/install validation failed"
+        print("  ✓ GET /api/extras/status & POST /api/extras/install (target validation) OK")
 
         r_models = client.get("/api/models")
         assert r_models.status_code == 200

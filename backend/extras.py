@@ -114,13 +114,26 @@ def inspect_env(force: bool = False) -> dict:
         "managed": not bool((get_settings().extras_python or "").strip()),
         "venv_exists": venv_python().is_file(),
         "ready": False,
-        "torch": None, "cuda": None, "cuda_available": False, "device": None,
-        "diffusers": None, "has_flux2_klein": False, "has_zimage": False,
-        "nunchaku": None, "nunchaku_precision": None, "orbitquant": None,
-        "py_tag": None, "error": None,
+        "python": None,
+        "python_version": None,
+        "torch": None,
+        "torch_version": None,
+        "cuda": None,
+        "cuda_available": False,
+        "device": None,
+        "diffusers": None,
+        "has_flux2_klein": False,
+        "has_zimage": False,
+        "nunchaku": None,
+        "nunchaku_precision": None,
+        "orbitquant": None,
+        "py_tag": None,
+        "error": None,
+        "summary": "Изолированное окружение (envs/extras) пока не создано",
     }
     if not py:
         base["error"] = "Extras environment not installed"
+        base["summary"] = "Изолированное окружение (envs/extras) пока не создано. Создаётся автоматически при установке Nunchaku или OrbitQuant."
         return base
 
     key = str(py)
@@ -134,15 +147,22 @@ def inspect_env(force: bool = False) -> dict:
         line = next((l for l in res.stdout.splitlines() if l.startswith("__PROBE__")), None)
         if not line:
             base["error"] = (res.stderr or res.stdout or "probe produced no output").strip()[-300:]
+            base["summary"] = f"Ошибка опроса: {base['error']}"
         else:
             data = json.loads(line[len("__PROBE__"):])
             base.update({k: v for k, v in data.items() if v is not None or k in base})
+            base["torch_version"] = base.get("torch")
+            base["python_version"] = base.get("python")
             base["ready"] = bool(data.get("torch") and data.get("diffusers") and data.get("cuda_available"))
             if not base["ready"]:
                 base["error"] = data.get("torch_error") or (
                     "CUDA is not available in this environment" if data.get("torch") else "torch/diffusers missing")
+                base["summary"] = f"Окружение не готово: {base['error']}"
+            else:
+                base["summary"] = f"Готово: Python {base.get('python')} · PyTorch {base.get('torch')} · CUDA {base.get('cuda')} ({base.get('device', 'GPU')})"
     except Exception as e:
         base["error"] = f"{type(e).__name__}: {e}"
+        base["summary"] = f"Ошибка окружения: {base['error']}"
 
     _probe_cache.update(key=key, t=time.time(), value=dict(base))
     return base
@@ -306,9 +326,16 @@ def _ensure_runtime(job: dict, plan: dict) -> Path:
 
     env = inspect_env(force=True)
     if not env.get("torch") or not env.get("cuda_available"):
-        _step(job, f"Installing PyTorch {plan['torch_pin']} ({plan['cuda_tag']})")
-        _pip(job, py, "install", f"torch=={plan['torch_pin']}.*", "torchvision",
-             "--index-url", f"https://download.pytorch.org/whl/{plan['cuda_tag']}")
+        pin = plan.get('torch_pin')
+        cu = plan.get('cuda_tag') or "cu128"
+        _step(job, f"Installing PyTorch ({pin}, {cu})")
+        idx = f"https://download.pytorch.org/whl/{cu}"
+        code = _run(job, [str(py), "-m", "pip", "install", f"torch=={pin}.*", "torchvision", "--index-url", idx])
+        if code != 0:
+            _log(job, f"Exact torch=={pin}.* not found in {idx}; attempting latest compatible PyTorch with {cu}...")
+            code2 = _run(job, [str(py), "-m", "pip", "install", "torch", "torchvision", "--index-url", idx])
+            if code2 != 0:
+                _run(job, [str(py), "-m", "pip", "install", "torch", "torchvision"])
     if not env.get("diffusers"):
         _step(job, "Installing diffusers / transformers / accelerate / peft")
         _pip(job, py, "install", "diffusers", "transformers", "accelerate", "safetensors",
@@ -393,18 +420,19 @@ def _public(job: dict) -> dict:
 
 
 def start_install(component: str) -> dict:
-    if component not in ("runtime", "nunchaku", "orbitquant"):
-        raise ValueError("component must be runtime | nunchaku | orbitquant")
+    comp = str(component or "").lower().strip()
+    if comp not in ("runtime", "nunchaku", "orbitquant"):
+        raise ValueError(f"Неизвестный компонент '{comp}'. Допустимы: runtime | nunchaku | orbitquant")
     with _JOBS_LOCK:
         if any(j["state"] in ("queued", "running") for j in _JOBS.values()):
-            raise RuntimeError("Another install is already running")
+            raise RuntimeError("Другая установка уже выполняется в фоне")
         job = {
-            "id": uuid.uuid4().hex[:8], "component": component, "state": "queued", "step": 0,
+            "id": uuid.uuid4().hex[:8], "component": comp, "state": "queued", "step": 0,
             "steps_total": 1, "step_label": "Queued", "log": [], "error": None,
             "started": time.time(), "ended": None, "plan": None, "cancel": threading.Event(),
         }
         _JOBS[job["id"]] = job
-    threading.Thread(target=_job_main, args=(job, component), daemon=True).start()
+    threading.Thread(target=_job_main, args=(job, comp), daemon=True).start()
     return _public(job)
 
 
@@ -454,9 +482,14 @@ def register_extras_routes(app) -> None:
         }
 
     @app.post("/api/extras/install")
-    async def extras_install(body: dict):
+    async def extras_install(body: dict = None):
+        body = body or {}
+        comp = str(body.get("component") or body.get("target") or body.get("pkg") or "").strip().lower()
+        if not comp:
+            raise HTTPException(400, "Параметр 'component' или 'target' обязателен (runtime | nunchaku | orbitquant)")
         try:
-            return start_install(str((body or {}).get("component", "")))
+            job = start_install(comp)
+            return {"status": "ok", "job": job, "id": job["id"], "state": job["state"], **job}
         except ValueError as e:
             raise HTTPException(400, str(e))
         except RuntimeError as e:
@@ -467,7 +500,7 @@ def register_extras_routes(app) -> None:
         j = get_job(job_id)
         if not j:
             raise HTTPException(404, "Job not found")
-        return j
+        return {"job": j, "id": j["id"], "state": j["state"], "status": j["state"], **j}
 
     @app.post("/api/extras/jobs/{job_id}/cancel")
     async def extras_job_cancel(job_id: str):

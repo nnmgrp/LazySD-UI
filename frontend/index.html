@@ -1013,13 +1013,21 @@
           <div class="setting-row">
             <div class="setting-label">
               <strong>Окружение Extras Python</strong><br>
-              <small style="color: var(--text-dim);">Интерпретатор Python для изолированного запуска дополнительных движков</small>
+              <small style="color: var(--text-dim); line-height: 1.4; display: block; margin-top: 4px;">
+                Изолированная среда Python в папке <code>envs/extras</code> для запуска движков Nunchaku (vitoom) и OrbitQuant без конфликтов с основным WebUI и SD.Next.<br>
+                <em>Создаётся автоматически при первой установке Nunchaku или OrbitQuant.</em>
+              </small>
             </div>
             <div class="setting-value">
-              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted);">Проверка...</div>
+              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted); line-height: 1.5; padding: 6px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border);">Проверка...</div>
+              <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="setting-extras-custom-py" placeholder="Кастомный путь к python.exe (опционально, напр. D:\...)" style="flex: 1; font-size: 11px; height: 30px;">
+                <button type="button" class="history-action-btn" onclick="App.saveExtrasPythonPath()" style="height: 30px; font-size: 11px; width: auto;">Применить путь</button>
+              </div>
             </div>
-            <div class="setting-actions">
-              <button class="setting-btn" onclick="App.refreshExtrasStatus()">Проверить</button>
+            <div class="setting-actions" style="display: flex; flex-direction: column; gap: 6px;">
+              <button class="setting-btn" onclick="App.refreshExtrasStatus(true)">🔍 Проверить</button>
+              <button class="setting-btn" id="btn-install-runtime" onclick="App.installExtrasPackage('runtime')">⚡ Создать окружение</button>
             </div>
           </div>
         </div>
