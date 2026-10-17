@@ -662,6 +662,146 @@ def test_lora_share_extras():
         return False
 
 
+def test_accounts_and_guest_security():
+    print("\n[10/10] Testing Accounts, Guest Isolation & HF Token UI...")
+    try:
+        import tempfile
+        from backend.accounts import AccountsManager
+        from app import create_app, print_compact_engine_fleet_cli
+        from fastapi.testclient import TestClient
+
+        # 1. AccountsManager file storage and CRUD
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            acc_file = Path(tmp_dir) / "accounts.json"
+            mgr = AccountsManager(storage_path=acc_file)
+
+            # Create
+            acc1 = mgr.create_guest_account("Алексей")
+            assert acc1["username"] == "Алексей"
+            assert acc1["token"].startswith("gst_")
+            assert acc1["id"].startswith("guest_")
+
+            # Find by token
+            found = mgr.find_by_token(acc1["token"])
+            assert found is not None
+            assert found["id"] == acc1["id"]
+
+            # Rename
+            renamed = mgr.rename_guest_account(acc1["id"], "Алексей (Друг)")
+            assert renamed["username"] == "Алексей (Друг)"
+            assert mgr.get_account(acc1["id"])["username"] == "Алексей (Друг)"
+
+            # Regenerate token
+            old_token = acc1["token"]
+            new_token = mgr.regenerate_guest_token(acc1["id"])
+            assert new_token != old_token
+            assert mgr.find_by_token(old_token) is None
+            assert mgr.find_by_token(new_token)["id"] == acc1["id"]
+
+            # Delete
+            assert mgr.delete_guest_account(acc1["id"]) is True
+            assert len(mgr.list_accounts()) == 0
+
+            print("  ✓ AccountsManager local disk storage CRUD verified")
+
+        # 2. Compact CLI engine fleet printer
+        print_compact_engine_fleet_cli()
+        print("  ✓ print_compact_engine_fleet_cli executed cleanly")
+
+        # 3. TestClient API tests
+        app = create_app()
+        client = TestClient(app)
+
+        # GET /api/config for host (loopback client)
+        r_conf = client.get("/api/config")
+        assert r_conf.status_code == 200
+        conf_data = r_conf.json()
+        assert conf_data.get("account", {}).get("role") == "host"
+        assert conf_data["settings"]["models_dir"] != "[Скрыто]"
+        print("  ✓ Host GET /api/config returns full paths and role='host'")
+
+        # Create guest account via API
+        r_create = client.post("/api/accounts", json={"username": "Тестовый Гость"})
+        assert r_create.status_code == 200
+        acc_created = r_create.json()["account"]
+        guest_id = acc_created["id"]
+        guest_token = acc_created["token"]
+
+        # List accounts
+        r_list = client.get("/api/accounts")
+        assert r_list.status_code == 200
+        assert any(a["id"] == guest_id for a in r_list.json()["accounts"])
+        print("  ✓ Host POST & GET /api/accounts CRUD OK")
+
+        # Remote guest simulation with token
+        guest_headers = {
+            "x-forwarded-for": "198.51.100.1",
+            "x-access-token": guest_token,
+        }
+        r_guest_conf = client.get("/api/config", headers=guest_headers)
+        assert r_guest_conf.status_code == 200
+        g_data = r_guest_conf.json()
+        assert g_data.get("account", {}).get("is_guest") is True
+        assert g_data.get("account", {}).get("username") == "Тестовый Гость"
+        assert g_data["settings"]["models_dir"] == "[Скрыто]"
+        assert "huggingface_token" not in g_data["settings"]
+        assert "quantfunc_api_key" not in g_data["settings"]
+        print("  ✓ Remote guest GET /api/config masks paths and omits secrets")
+
+        # Remote guest cannot modify system settings
+        r_patch_bad = client.patch("/api/settings", json={"download_source_priority": "ms_first"}, headers=guest_headers)
+        assert r_patch_bad.status_code == 403, "Guest must not be allowed to change system settings"
+        print("  ✓ Remote guest PATCH /api/settings blocked (403)")
+
+        # Remote guest cannot access /api/accounts
+        r_acc_bad = client.get("/api/accounts", headers=guest_headers)
+        assert r_acc_bad.status_code == 403, "Guest must not be allowed to access /api/accounts"
+        print("  ✓ Remote guest GET /api/accounts blocked (403)")
+
+        # Test history sharing toggle
+        out_dir = PROJECT_ROOT / "outputs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        test_img = out_dir / "test_share_img.png"
+        test_sidecar = out_dir / "test_share_img.json"
+        test_img.write_bytes(b"dummy")
+        test_sidecar.write_text(json.dumps({
+            "prompt": "test prompt",
+            "owner_id": guest_id,
+            "owner_name": "Тестовый Гость",
+            "shared": False
+        }), encoding="utf-8")
+
+        # Guest toggles sharing on their image
+        r_share = client.post(f"/api/history/{test_img.name}/share", json={"shared": True}, headers=guest_headers)
+        assert r_share.status_code == 200
+        assert r_share.json()["shared"] is True
+        assert json.loads(test_sidecar.read_text(encoding="utf-8"))["shared"] is True
+        print("  ✓ POST /api/history/{filename}/share toggles sharing state OK")
+
+        # Cleanup test files & test account
+        test_img.unlink(missing_ok=True)
+        test_sidecar.unlink(missing_ok=True)
+        client.delete(f"/api/accounts/{guest_id}")
+
+        # Frontend elements verification
+        index_html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        assert 'id="user-role-badge"' in index_html, "Missing user-role-badge in index.html"
+        assert 'id="guest-mode-banner"' in index_html, "Missing guest-mode-banner in index.html"
+        assert 'id="setting-row-hf-token"' in index_html, "Missing setting-row-hf-token in index.html"
+        assert 'id="settings-accounts-section"' in index_html, "Missing settings-accounts-section in index.html"
+        assert 'id="history-author-filters"' in index_html, "Missing history-author-filters in index.html"
+        assert 'id="history-modal-share-btn"' in index_html, "Missing history-modal-share-btn in index.html"
+        assert 'id="guest-account-modal"' in index_html, "Missing guest-account-modal in index.html"
+        print("  ✓ Frontend UI components (Role badge, Guest banner, HF token row, Accounts section, History filters & share) verified in index.html")
+
+        return True
+    except Exception as e:
+        print(f"  ✗ Accounts & Guest Security test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     print("=" * 60)
     print("QuantFunc WebUI — Smoke Test")
@@ -677,6 +817,7 @@ def main():
         ("Engine status", test_engine_status()),
         ("Controls & samplers", test_controls_and_samplers()),
         ("LoRA, Sharing, Extras & Indicators", test_lora_share_extras()),
+        ("Accounts, Guest Isolation & HF Token UI", test_accounts_and_guest_security()),
     ]
 
     print("\n" + "=" * 60)
@@ -695,3 +836,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

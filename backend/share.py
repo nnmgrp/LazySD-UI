@@ -64,6 +64,7 @@ _GUEST_ALLOW: list[tuple[str, re.Pattern]] = [
     ("GET", re.compile(r"^/api/models/[^/]+/state$")),
     ("GET", re.compile(r"^/api/jobs/[^/]+$")),
     ("POST", re.compile(r"^/api/(generate|upload|system/open-folder|open-folder)$")),
+    ("POST", re.compile(r"^/api/history/[^/]+/share$")),
     ("POST", re.compile(r"^/api/jobs/[^/]+/cancel$")),
 ]
 
@@ -148,6 +149,12 @@ class ShareAccessMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket") or not is_remote_scope(scope):
+            scope.setdefault("state", {})["account"] = {
+                "role": "host",
+                "id": "host",
+                "username": "Хост",
+                "is_guest": False,
+            }
             return await self.app(scope, receive, send)
 
         if scope["type"] == "websocket":
@@ -168,8 +175,14 @@ class ShareAccessMiddleware:
                 "application/json",
             )
 
+        from .accounts import get_accounts_manager
+        acc_mgr = get_accounts_manager()
         provided, source = extract_token(scope)
-        if not token_ok(provided, expected):
+
+        matched_guest = acc_mgr.find_by_token(provided) if provided else None
+        is_master = token_ok(provided, expected)
+
+        if not is_master and not matched_guest:
             if method == "GET" and wants_html and path in ("/", "/index.html"):
                 return await _respond(send, 401, _LOGIN_HTML.encode(), "text/html; charset=utf-8")
             return await _respond(send, 401, json.dumps({"detail": "Invalid or missing access token"}).encode(),
@@ -181,21 +194,45 @@ class ShareAccessMiddleware:
             qs.pop("token", None)
             location = path + (("?" + urlencode(qs, doseq=True)) if qs else "")
             https = _headers(scope).get(b"x-forwarded-proto", b"").lower() == b"https"
-            cookie = f"{COOKIE_NAME}={expected}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"
+            cookie = f"{COOKIE_NAME}={provided}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"
             if https:
                 cookie += "; Secure"
             return await _respond(send, 302, b"", "text/plain",
                                   [(b"location", location.encode()), (b"set-cookie", cookie.encode())])
 
-        if not settings.share_allow_admin and not is_guest_allowed(method, path):
+        # Resolve caller role
+        if is_master and settings.share_allow_admin:
+            caller = {
+                "role": "host",
+                "id": "host_remote",
+                "username": "Хост (Удалённый)",
+                "is_guest": False,
+            }
+        elif matched_guest:
+            caller = {
+                "role": "guest",
+                "id": matched_guest["id"],
+                "username": matched_guest.get("username", "Гость"),
+                "is_guest": True,
+            }
+        else:
+            caller = {
+                "role": "guest",
+                "id": "guest_public",
+                "username": "Гость",
+                "is_guest": True,
+            }
+
+        scope.setdefault("state", {})["account"] = caller
+        scope["state"]["is_guest"] = caller["is_guest"]
+
+        if caller["is_guest"] and not is_guest_allowed(method, path):
             return await _respond(
                 send, 403,
                 json.dumps({"detail": "This action is only available on the host machine (guest access)."}).encode(),
                 "application/json",
             )
 
-        # Let downstream handlers know who is calling.
-        scope.setdefault("state", {})["is_guest"] = True
         return await self.app(scope, receive, send)
 
 

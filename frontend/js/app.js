@@ -64,6 +64,9 @@ const App = {
     dockBlur: 20,
     shareStatus: null,
     extrasStatus: null,
+    account: null,
+    guestAccounts: [],
+    historyFilter: "all",
   },
 
   // ---------- 3-Tier Model Sorting ----------
@@ -209,11 +212,61 @@ const App = {
     return res.json();
   },
 
-  // ---------- Config ----------
+  async apiDelete(path) {
+    const res = await fetch(path, { method: "DELETE" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+
+  // ---------- Config & Identity ----------
+  updateAccountRoleUI() {
+    const acc = this.state.account || { role: "host", id: "host", username: "Хост", is_guest: false };
+    const isGuest = Boolean(acc.is_guest);
+
+    if (isGuest) {
+      document.body.classList.add("role-guest");
+      const badge = document.getElementById("user-role-badge");
+      if (badge) {
+        badge.className = "user-role-badge guest";
+        badge.title = "Гостевой режим: генерация и просмотр своих работ";
+      }
+      const icon = document.getElementById("user-role-icon");
+      if (icon) icon.textContent = "👤";
+      const title = document.getElementById("user-role-title");
+      if (title) title.textContent = "Гость: " + (acc.username || "Друг");
+      const bannerName = document.getElementById("guest-username-display");
+      if (bannerName) bannerName.textContent = acc.username || "Гость";
+    } else {
+      document.body.classList.remove("role-guest");
+      const badge = document.getElementById("user-role-badge");
+      if (badge) {
+        badge.className = "user-role-badge host";
+        badge.title = "Пользовательский режим (Хост / Администратор)";
+      }
+      const icon = document.getElementById("user-role-icon");
+      if (icon) icon.textContent = "👑";
+      const title = document.getElementById("user-role-title");
+      if (title) title.textContent = "Хост";
+
+      // Host can view and manage guest accounts
+      this.loadGuestAccounts();
+
+      // Populate HuggingFace token in Settings
+      const hfInput = document.getElementById("setting-hf-token");
+      if (hfInput && this.state.settings?.huggingface_token) {
+        hfInput.value = this.state.settings.huggingface_token;
+      }
+    }
+  },
+
   async loadConfig() {
     try {
       const config = await this.apiGet("/api/config");
       this.state.config = config;
+      this.state.account = config.account || { role: "host", id: "host", username: "Хост", is_guest: false };
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
@@ -223,6 +276,7 @@ const App = {
       }
       // Inject into window for i18n detection
       window.QF_SETTINGS = config.settings;
+      this.updateAccountRoleUI();
     } catch (e) {
       console.error("[app] Failed to load config:", e);
       this.toast("error", t("errors.network_error") + ": " + e.message);
@@ -234,6 +288,7 @@ const App = {
     try {
       const config = await this.apiGet("/api/config");
       this.state.config = config;
+      this.state.account = config.account || { role: "host", id: "host", username: "Хост", is_guest: false };
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
@@ -242,6 +297,7 @@ const App = {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
       window.QF_SETTINGS = config.settings;
+      this.updateAccountRoleUI();
       this.renderGpuIndicator();
       this.renderSystemStats(config.system_stats);
       this.renderModels();
@@ -1892,6 +1948,14 @@ const App = {
     }
   },
 
+  setHistoryFilter(filter) {
+    this.state.historyFilter = filter || "all";
+    document.querySelectorAll(".history-filter-chip").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.filter === this.state.historyFilter);
+    });
+    this.renderHistory();
+  },
+
   renderHistory() {
     const grid = document.getElementById("history-grid");
     if (!grid) return;
@@ -1899,11 +1963,24 @@ const App = {
     const query = (document.getElementById("history-search")?.value || "").toLowerCase().trim();
     let items = this.state.historyItems || [];
 
+    // Filter by author/shared filter
+    const activeFilter = this.state.historyFilter || "all";
+    const myId = this.state.account?.id || "host";
+
+    if (activeFilter === "mine") {
+      items = items.filter(it => (it.owner_id || "host") === myId);
+    } else if (activeFilter === "guests") {
+      items = items.filter(it => (it.owner_id || "host") !== "host");
+    } else if (activeFilter === "shared") {
+      items = items.filter(it => Boolean(it.shared));
+    }
+
     if (query) {
       items = items.filter(item =>
         (item.prompt || "").toLowerCase().includes(query) ||
         (item.model_id || "").toLowerCase().includes(query) ||
-        (item.name || "").toLowerCase().includes(query)
+        (item.name || "").toLowerCase().includes(query) ||
+        (item.owner_name || "").toLowerCase().includes(query)
       );
     }
 
@@ -1927,9 +2004,16 @@ const App = {
       }) : "";
 
       const promptDisplay = item.prompt ? item.prompt : item.name;
+      const isHostItem = (item.owner_id || "host") === "host";
+      const authorBadge = isHostItem ? "👑 Хост" : `👤 ${escapeHtml(item.owner_name || "Гость")}`;
+      const sharedBadge = item.shared ? `<span class="history-shared-badge" title="Видна всем пользователям">🌐 Общая</span>` : "";
 
       card.innerHTML = `
         <div class="history-item-thumb-wrapper">
+          <div class="history-item-badges">
+            <span class="history-author-badge">${authorBadge}</span>
+            ${sharedBadge}
+          </div>
           <img src="${escapeHtml(item.url)}" alt="${escapeHtml(promptDisplay)}" loading="lazy">
           <div class="history-item-overlay">
             <div class="history-item-prompt-preview">${escapeHtml(promptDisplay)}</div>
@@ -1964,6 +2048,10 @@ const App = {
     const stepsEl = document.getElementById("history-modal-steps");
     const backendEl = document.getElementById("history-modal-backend");
     const timeEl = document.getElementById("history-modal-time");
+    const authorEl = document.getElementById("history-modal-author");
+    const sharedStatusEl = document.getElementById("history-modal-shared-status");
+    const shareBtn = document.getElementById("history-modal-share-btn");
+    const shareText = document.getElementById("history-modal-share-text");
 
     const promptText = item.prompt || t("history.no_prompt");
     if (img) img.src = item.url;
@@ -1984,6 +2072,23 @@ const App = {
     if (stepsEl) stepsEl.textContent = item.steps || "—";
     if (backendEl) backendEl.textContent = item.backend || "—";
     if (timeEl) timeEl.textContent = item.generation_time_sec ? `${item.generation_time_sec}s` : "—";
+
+    const isHostItem = (item.owner_id || "host") === "host";
+    const authorName = isHostItem ? "👑 Хост" : `👤 ${item.owner_name || "Гость"}`;
+    if (authorEl) authorEl.textContent = authorName;
+    if (sharedStatusEl) {
+      sharedStatusEl.textContent = item.shared ? "🌐 Доступна всем" : "🔒 Личная (только для автора)";
+      sharedStatusEl.style.color = item.shared ? "#34d399" : "var(--text-dim)";
+    }
+
+    if (shareBtn) {
+      const myId = this.state.account?.id || "host";
+      const canShare = !this.state.account?.is_guest || (item.owner_id === myId);
+      shareBtn.style.display = canShare ? "inline-flex" : "none";
+      if (shareText) {
+        shareText.textContent = item.shared ? "Скрыть из общей истории" : "Поделиться в общую историю";
+      }
+    }
 
     // Bind modal action buttons
     const reuseBtn = document.getElementById("history-modal-reuse-btn");
@@ -2034,6 +2139,24 @@ const App = {
     modal.style.display = "flex";
   },
 
+  async toggleShareCurrentHistoryItem() {
+    const item = this.state.selectedHistoryItem;
+    if (!item) return;
+    try {
+      const res = await this.apiPost(`/api/history/${encodeURIComponent(item.name)}/share`, {
+        shared: !item.shared,
+      });
+      if (res && res.status === "ok") {
+        item.shared = res.shared;
+        this.toast("success", item.shared ? "Картинка добавлена в общую историю 🌐" : "Картинка скрыта из общей истории 🔒");
+        this.openHistoryModal(item);
+        this.renderHistory();
+      }
+    } catch (e) {
+      this.toast("error", "Не удалось изменить статус доступа: " + e.message);
+    }
+  },
+
   toggleHistoryPrompt() {
     const box = document.getElementById("history-modal-prompt-box");
     const btn = document.getElementById("history-prompt-toggle");
@@ -2046,6 +2169,163 @@ const App = {
     const modal = document.getElementById("history-modal");
     if (modal) modal.style.display = "none";
     this.state.selectedHistoryItem = null;
+  },
+
+  // ---------- Hugging Face Token & Guest Accounts ----------
+  toggleTokenVisibility(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.type = input.type === "password" ? "text" : "password";
+  },
+
+  async saveHfToken() {
+    const token = document.getElementById("setting-hf-token")?.value?.trim() || "";
+    try {
+      await this.apiPatch("/api/settings", { huggingface_token: token });
+      if (this.state.settings) this.state.settings.huggingface_token = token;
+      this.toast("success", "Токен Hugging Face сохранён ✓");
+    } catch (e) {
+      this.toast("error", "Ошибка сохранения токена: " + e.message);
+    }
+  },
+
+  async testHfToken() {
+    const token = document.getElementById("setting-hf-token")?.value?.trim();
+    const btn = document.getElementById("btn-test-hf-token");
+    if (btn) btn.textContent = "⏳ Проверка...";
+    try {
+      const res = await this.apiPost("/api/hf/test-token", { token: token || undefined });
+      if (res.valid) {
+        this.toast("success", res.message || "Токен действителен ✓");
+      } else {
+        this.toast("error", res.message || "Неверный токен Hugging Face");
+      }
+    } catch (e) {
+      this.toast("error", "Ошибка проверки: " + e.message);
+    } finally {
+      if (btn) btn.textContent = "🔍 Проверить";
+    }
+  },
+
+  async loadGuestAccounts() {
+    if (this.state.account?.is_guest) return;
+    try {
+      const res = await this.apiGet("/api/accounts");
+      if (res && res.accounts) {
+        this.state.guestAccounts = res.accounts;
+        this.renderGuestAccounts(res.accounts);
+      }
+    } catch (e) {
+      console.warn("[accounts] Could not load guest accounts:", e);
+    }
+  },
+
+  renderGuestAccounts(accounts) {
+    const list = document.getElementById("guest-accounts-list");
+    if (!list) return;
+
+    if (!accounts || !accounts.length) {
+      list.innerHTML = `
+        <div style="color: var(--text-dim); font-size: 12.5px; padding: 12px; text-align: center; background: var(--bg-card); border-radius: 8px; border: 1px dashed var(--border);">
+          Нет созданных гостевых аккаунтов. Нажмите «+ Новый гость», чтобы пригласить друга со своей историей.
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = "";
+    for (const acc of accounts) {
+      const card = document.createElement("div");
+      card.className = "guest-account-card";
+
+      const createdDate = acc.created_at ? new Date(acc.created_at * 1000).toLocaleDateString() : "";
+
+      card.innerHTML = `
+        <div class="guest-account-info">
+          <div class="guest-account-name">
+            <span>👤 ${escapeHtml(acc.username)}</span>
+            <small style="color: var(--text-dim); font-weight: normal; font-size: 11px;">(${createdDate})</small>
+          </div>
+          <div class="guest-account-token">Токен: ${escapeHtml(acc.token)}</div>
+        </div>
+        <div class="guest-account-actions">
+          <button type="button" class="setting-btn" onclick="App.copyGuestLink('${acc.token}')" title="Скопировать персональную ссылку для входа">📋 Ссылка</button>
+          <button type="button" class="setting-btn" onclick="App.showCreateGuestModal('${acc.id}', '${escapeHtml(acc.username)}')" title="Переименовать">✏️</button>
+          <button type="button" class="setting-btn danger" onclick="App.deleteGuestAccount('${acc.id}')" title="Удалить аккаунт">🗑️</button>
+        </div>
+      `;
+      list.appendChild(card);
+    }
+  },
+
+  showCreateGuestModal(accountId = null, currentName = "") {
+    const modal = document.getElementById("guest-account-modal");
+    const title = document.getElementById("guest-modal-title");
+    const idInput = document.getElementById("guest-account-edit-id");
+    const nameInput = document.getElementById("guest-account-username-input");
+    if (!modal) return;
+
+    if (accountId) {
+      if (title) title.textContent = "Переименовать гостя";
+      if (idInput) idInput.value = accountId;
+      if (nameInput) nameInput.value = currentName || "";
+    } else {
+      if (title) title.textContent = "Новый гостевой аккаунт";
+      if (idInput) idInput.value = "";
+      if (nameInput) nameInput.value = "";
+    }
+    modal.style.display = "flex";
+    if (nameInput) nameInput.focus();
+  },
+
+  closeCreateGuestModal() {
+    const modal = document.getElementById("guest-account-modal");
+    if (modal) modal.style.display = "none";
+  },
+
+  async confirmCreateGuestAccount() {
+    const idInput = document.getElementById("guest-account-edit-id");
+    const nameInput = document.getElementById("guest-account-username-input");
+    const username = (nameInput?.value || "").trim();
+    if (!username) {
+      this.toast("error", "Укажите имя гостя");
+      return;
+    }
+    const editId = idInput?.value;
+    try {
+      if (editId) {
+        await this.apiPatch(`/api/accounts/${encodeURIComponent(editId)}`, { username });
+        this.toast("success", "Аккаунт переименован ✓");
+      } else {
+        const res = await this.apiPost("/api/accounts", { username });
+        this.toast("success", `Аккаунт '${username}' создан ✓`);
+        if (res && res.account && res.account.token) {
+          this.copyGuestLink(res.account.token);
+        }
+      }
+      this.closeCreateGuestModal();
+      await this.loadGuestAccounts();
+    } catch (e) {
+      this.toast("error", "Ошибка: " + e.message);
+    }
+  },
+
+  async deleteGuestAccount(accountId) {
+    if (!confirm("Удалить этот гостевой аккаунт? Его ссылка перестанет работать.")) return;
+    try {
+      await this.apiDelete(`/api/accounts/${encodeURIComponent(accountId)}`);
+      this.toast("success", "Аккаунт удалён ✓");
+      await this.loadGuestAccounts();
+    } catch (e) {
+      this.toast("error", "Не удалось удалить аккаунт: " + e.message);
+    }
+  },
+
+  copyGuestLink(token) {
+    const url = `${window.location.origin}/?token=${encodeURIComponent(token)}`;
+    navigator.clipboard.writeText(url)
+      .then(() => this.toast("success", "Персональная ссылка скопирована в буфер обмена! 📋"))
+      .catch(() => this.toast("info", `Ссылка: ${url}`));
   },
 
   async reuseHistoryItem(item) {

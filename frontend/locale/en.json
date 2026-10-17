@@ -98,7 +98,10 @@
   "settings.section.network": "Network",
   "settings.section.advanced": "Advanced",
   "settings.section.templates": "Templates",
+  "settings.section.accounts": "Guest Accounts Management",
   "settings.section.about": "About & AI Authors",
+  "role.host": "Host",
+  "role.guest": "Guest",
 
   "settings.vae.qwen_title": "Qwen-Image-2.1 VAE",
   "settings.vae.qwen_desc": "Choose VAE decoder. Texture-Fix eliminates 2px high-frequency checkerboard / carpet patterns.",

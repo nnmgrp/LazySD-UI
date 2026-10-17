@@ -659,6 +659,9 @@ class SDNQWorker:
                 "sampler": sampler,
                 "vae": vae_type,
                 "backend": "sdnq",
+                "owner_id": getattr(request, "owner_id", "host"),
+                "owner_name": getattr(request, "owner_name", "Хост"),
+                "shared": getattr(request, "shared", True),
                 "generation_time_sec": round(elapsed, 2),
                 "timestamp": int(time.time()),
             }

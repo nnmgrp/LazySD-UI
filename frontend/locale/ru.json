@@ -98,7 +98,10 @@
   "settings.section.network": "Сеть",
   "settings.section.advanced": "Расширенные",
   "settings.section.templates": "Шаблоны",
+  "settings.section.accounts": "Управление гостевыми аккаунтами",
   "settings.section.about": "О проекте и авторы нейросети",
+  "role.host": "Хост",
+  "role.guest": "Гость",
 
   "settings.vae.qwen_title": "Qwen-Image-2.1 VAE",
   "settings.vae.qwen_desc": "Выбор декодера VAE. Texture-Fix убирает 2px шахматный шум и текстуру ковра.",

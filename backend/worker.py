@@ -95,6 +95,9 @@ class GenerateRequest:
     custom_vae_path: Optional[str] = None
     ref_mode: str = "control_ref"      # "control_ref" | "controlnet_canny" | "img2img"
     control_net_path: Optional[str] = None
+    owner_id: str = "host"
+    owner_name: str = "Хост"
+    shared: bool = True
 
 
 # ---------- Result ----------
@@ -1034,6 +1037,9 @@ class Worker:
                 "sampler": sampler_val,
                 "vae": getattr(request, "vae", None),
                 "backend": request.backend,
+                "owner_id": getattr(request, "owner_id", "host"),
+                "owner_name": getattr(request, "owner_name", "Хост"),
+                "shared": getattr(request, "shared", True),
                 "generation_time_sec": round(elapsed, 2),
                 "timestamp": int(time.time()),
             }

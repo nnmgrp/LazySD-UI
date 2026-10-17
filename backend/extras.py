@@ -301,6 +301,7 @@ def _step(job: dict, label: str) -> None:
     job["step"] += 1
     job["step_label"] = label
     _log(job, f"=== [{job['step']}/{job['steps_total']}] {label} ===")
+    print(f"[extras-install] [{job['step']}/{job['steps_total']}] {label}...", flush=True)
 
 
 def _pip(job: dict, py: Path, *args: str) -> None:
@@ -403,13 +404,16 @@ def _job_main(job: dict, component: str) -> None:
             _log(job, f"OK: torch {env['torch']} (CUDA {env['cuda']}), diffusers {env['diffusers']}")
 
         job["state"] = "done"
+        print(f"[extras-install] Component '{component}' installed successfully [OK]", flush=True)
     except _Cancelled:
         job["state"] = "cancelled"
         _log(job, "Cancelled by user")
+        print(f"[extras-install] Component '{component}' installation cancelled", flush=True)
     except Exception as e:
         job["state"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
         _log(job, "ERROR: " + job["error"])
+        print(f"[extras-install] Component '{component}' failed: {job['error']}", flush=True)
     finally:
         job["ended"] = time.time()
         invalidate_probe()

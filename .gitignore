@@ -31,6 +31,8 @@ models/loras/
 models/custom/
 models/presets/*.json
 !models/presets/.gitkeep
+models/accounts/*.json
+!models/accounts/.gitkeep
 *.safetensors
 *.gguf
 *.bin

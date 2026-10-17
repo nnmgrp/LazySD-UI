@@ -485,7 +485,7 @@ def create_app() -> FastAPI:
 
     # ---------- API: Config ----------
     @app.get("/api/config")
-    async def api_config():
+    async def api_config(request: Request = None):
         """Initial config for frontend."""
         settings = get_settings()
         registry = get_registry()
@@ -558,19 +558,40 @@ def create_app() -> FastAPI:
         if is_sdnq_installed():
             installed_engines.append("sdnq")
 
+        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+        is_guest = caller.get("is_guest", False)
+
+        settings_dict = {
+            "lang": settings.lang,
+            "vram_mode": settings.vram_mode,
+            "auto_optimize": settings.auto_optimize,
+            "models_dir": "[Скрыто]" if is_guest else str(settings.models_dir),
+            "output_dir": "[Скрыто]" if is_guest else str(settings.output_dir),
+            "engine_version": settings.engine_version,
+            "engine_platform": settings.engine_platform,
+            "cuda_version": settings.cuda_version,
+            "qwen_vae_type": getattr(settings, "qwen_vae_type", "texture_fix"),
+            "enable_quantfunc_models": qf_enabled,
+        }
+        if not is_guest:
+            settings_dict.update({
+                "huggingface_token": settings.huggingface_token or "",
+                "modelscope_token": settings.modelscope_token or "",
+                "quantfunc_api_key": settings.quantfunc_api_key or "",
+                "download_source_priority": settings.download_source_priority,
+                "auto_update_engine": settings.auto_update_engine,
+                "share_token": settings.share_token or "",
+                "share_auto_start": getattr(settings, "share_auto_start", False),
+                "share_allow_admin": getattr(settings, "share_allow_admin", False),
+                "extras_python": settings.extras_python or "",
+            })
+
         return {
-            "settings": {
-                "lang": settings.lang,
-                "vram_mode": settings.vram_mode,
-                "auto_optimize": settings.auto_optimize,
-                "models_dir": str(settings.models_dir),
-                "output_dir": str(settings.output_dir),
-                "engine_version": settings.engine_version,
-                "engine_platform": settings.engine_platform,
-                "cuda_version": settings.cuda_version,
-                "qwen_vae_type": getattr(settings, "qwen_vae_type", "texture_fix"),
-                "enable_quantfunc_models": qf_enabled,
-            },
+            "account": caller,
+            "settings": settings_dict,
             "gpu": {
                 "name": STATE.gpu_info.name,
                 "sm": STATE.gpu_info.sm,
@@ -589,7 +610,7 @@ def create_app() -> FastAPI:
             "sd_cpp_version": get_sd_cpp_version(),
             "sdnq_installed": is_sdnq_installed(),
             "sdnq_version": get_sdnq_version(),
-            "api_auth": _api_auth_status(),
+            "api_auth": _api_auth_status() if not is_guest else {"key_available": False, "source": "guest"},
             "system_stats": get_system_memory_stats(),
             "models": models_list,
         }
@@ -1394,10 +1415,21 @@ def create_app() -> FastAPI:
 
     # ---------- API: Generate ----------
     @app.post("/api/generate")
-    async def api_generate(body: dict):
+    async def api_generate(body: dict, request: Request = None):
         """Start a generation job. Returns job_id for polling."""
         if not STATE.gpu_info:
             raise HTTPException(400, "GPU not detected")
+
+        # Resolve caller identity
+        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+        owner_id = caller.get("id", "host")
+        owner_name = caller.get("username", "Хост")
+        default_shared = not caller.get("is_guest", False)
+        shared = bool(body.get("shared", default_shared))
 
         # Parse request
         try:
@@ -1537,6 +1569,9 @@ def create_app() -> FastAPI:
             custom_vae_path=body.get("custom_vae_path"),
             ref_mode=ref_mode,
             control_net_path=control_net_path,
+            owner_id=owner_id,
+            owner_name=owner_name,
+            shared=shared,
         )
 
         # Create job
@@ -1595,7 +1630,16 @@ def create_app() -> FastAPI:
 
     # ---------- API: Settings ----------
     @app.patch("/api/settings")
-    async def api_settings_update(body: dict):
+    async def api_settings_update(body: dict, request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                allowed_guest = {"lang", "theme"}
+                unauthorized = [k for k in body.keys() if k not in allowed_guest]
+                if unauthorized:
+                    raise HTTPException(403, "Гостевой режим: системные настройки и API-ключи защищены хостом.")
+
         settings = get_settings()
         # Whitelist fields that can be updated
         allowed = {
@@ -1609,6 +1653,8 @@ def create_app() -> FastAPI:
             "cuda_bin_path",
             "qwen_vae_type",
             "enable_quantfunc_models",
+            "share_token", "share_auto_start", "share_allow_admin",
+            "extras_python",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if updates:
@@ -1776,59 +1822,65 @@ def create_app() -> FastAPI:
 
     # ---------- API: History ----------
     @app.get("/api/history")
-    async def api_history():
+    async def api_history(request: Request = None):
+        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+        is_guest = caller.get("is_guest", False)
+        caller_id = caller.get("id", "host")
+
         cache = CacheManager()
         outputs = cache.list_outputs(limit=100)
         result = []
         for p in outputs:
             st = p.stat()  # cache: avoid two syscalls per file
+            sidecar = p.with_suffix(".json")
+            meta = {}
+            if sidecar.exists():
+                try:
+                    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                except Exception as meta_err:
+                    print(f"[history] Failed to parse sidecar for {p.name}: {meta_err}")
+
+            owner_id = meta.get("owner_id", "host")
+            owner_name = meta.get("owner_name", "Хост")
+            is_shared = meta.get("shared", True)
+
+            # Isolation check: guest sees their own generations OR shared ones
+            if is_guest and owner_id != caller_id and not is_shared:
+                continue
+
             item = {
                 "path": str(p),
                 "name": p.name,
                 "size": st.st_size,
                 "modified": st.st_mtime,
                 "url": f"/outputs/{p.name}",
-                "prompt": "",
-                "model_id": "",
-                "variant_id": None,
-                "seed": None,
-                "width": None,
-                "height": None,
-                "steps": None,
-                "cfg": None,
-                "noise": None,
-                "sampler": None,
-                "vae": None,
-                "backend": None,
-                "generation_time_sec": None,
+                "prompt": meta.get("prompt", ""),
+                "negative_prompt": meta.get("negative_prompt", ""),
+                "model_id": meta.get("model_id", ""),
+                "variant_id": meta.get("variant_id"),
+                "seed": meta.get("seed"),
+                "width": meta.get("width"),
+                "height": meta.get("height"),
+                "steps": meta.get("steps"),
+                "cfg": meta.get("cfg"),
+                "noise": meta.get("noise"),
+                "sampler": meta.get("sampler"),
+                "vae": meta.get("vae"),
+                "backend": meta.get("backend"),
+                "owner_id": owner_id,
+                "owner_name": owner_name,
+                "shared": is_shared,
+                "generation_time_sec": meta.get("generation_time_sec"),
             }
-            sidecar = p.with_suffix(".json")
-            if sidecar.exists():
-                try:
-                    meta = json.loads(sidecar.read_text(encoding="utf-8"))
-                    item.update({
-                        "prompt": meta.get("prompt", ""),
-                        "negative_prompt": meta.get("negative_prompt", ""),
-                        "model_id": meta.get("model_id", ""),
-                        "variant_id": meta.get("variant_id"),
-                        "seed": meta.get("seed"),
-                        "width": meta.get("width"),
-                        "height": meta.get("height"),
-                        "steps": meta.get("steps"),
-                        "cfg": meta.get("cfg"),
-                        "noise": meta.get("noise"),
-                        "sampler": meta.get("sampler"),
-                        "vae": meta.get("vae"),
-                        "backend": meta.get("backend"),
-                        "generation_time_sec": meta.get("generation_time_sec"),
-                    })
-                except Exception as meta_err:
-                    print(f"[history] Failed to parse sidecar for {p.name}: {meta_err}")
             result.append(item)
         return result
 
     @app.delete("/api/history/{filename}")
-    async def api_history_delete(filename: str):
+    async def api_history_delete(filename: str, request: Request = None):
         from backend.security import validate_filename
         try:
             validate_filename(filename)
@@ -1837,10 +1889,23 @@ def create_app() -> FastAPI:
 
         output_dir = get_settings().output_dir
         target_file = output_dir / filename
+        sidecar = target_file.with_suffix(".json")
+
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False) and sidecar.exists():
+                try:
+                    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                    if meta.get("owner_id") != caller.get("id"):
+                        raise HTTPException(403, "Гость может удалять только свои собственные генерации")
+                except HTTPException:
+                    raise
+                except Exception:
+                    pass
 
         try:
             target_file.unlink()
-            sidecar = target_file.with_suffix(".json")
             if sidecar.exists():
                 sidecar.unlink()
             return {"status": "ok", "message": f"Deleted {filename}"}
@@ -1848,6 +1913,130 @@ def create_app() -> FastAPI:
             raise HTTPException(404, f"File not found: {filename}")
         except Exception as e:
             raise HTTPException(500, f"Failed to delete file: {e}")
+
+    @app.post("/api/history/{filename}/share")
+    async def api_history_share_toggle(filename: str, request: Request = None, body: Optional[dict] = None):
+        from backend.security import validate_filename
+        try:
+            validate_filename(filename)
+        except ValueError as e:
+            raise HTTPException(400, f"Invalid filename: {e}")
+
+        output_dir = get_settings().output_dir
+        target_file = output_dir / filename
+        sidecar = target_file.with_suffix(".json")
+        if not sidecar.exists():
+            raise HTTPException(404, "Metadata sidecar not found")
+
+        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+        try:
+            meta = json.loads(sidecar.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise HTTPException(500, f"Failed to read sidecar: {e}")
+
+        if caller.get("is_guest", False) and meta.get("owner_id") != caller.get("id"):
+            raise HTTPException(403, "Вы можете делиться только своими собственными генерациями")
+
+        body = body or {}
+        if "shared" in body:
+            new_shared = bool(body["shared"])
+        else:
+            new_shared = not bool(meta.get("shared", False))
+
+        meta["shared"] = new_shared
+        sidecar.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"status": "ok", "filename": filename, "shared": new_shared}
+
+    # ---------- API: Accounts Management (Host only) ----------
+    @app.get("/api/accounts")
+    async def api_accounts_list(request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Управление аккаунтами доступно только хосту.")
+        from backend.accounts import get_accounts_manager
+        mgr = get_accounts_manager()
+        return {"status": "ok", "accounts": mgr.list_accounts()}
+
+    @app.post("/api/accounts")
+    async def api_accounts_create(body: dict, request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Создание аккаунтов доступно только хосту.")
+        username = body.get("username", "Гость")
+        from backend.accounts import get_accounts_manager
+        mgr = get_accounts_manager()
+        acc = mgr.create_guest_account(username)
+        return {"status": "ok", "account": acc}
+
+    @app.patch("/api/accounts/{account_id}")
+    async def api_accounts_rename(account_id: str, body: dict, request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Редактирование аккаунтов доступно только хосту.")
+        new_username = body.get("username", "")
+        from backend.accounts import get_accounts_manager
+        mgr = get_accounts_manager()
+        updated = mgr.rename_guest_account(account_id, new_username)
+        if not updated:
+            raise HTTPException(404, "Аккаунт не найден")
+        return {"status": "ok", "account": updated}
+
+    @app.delete("/api/accounts/{account_id}")
+    async def api_accounts_delete(account_id: str, request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Удаление аккаунтов доступно только хосту.")
+        from backend.accounts import get_accounts_manager
+        mgr = get_accounts_manager()
+        if not mgr.delete_guest_account(account_id):
+            raise HTTPException(404, "Аккаунт не найден")
+        return {"status": "ok", "message": f"Аккаунт {account_id} удалён"}
+
+    @app.post("/api/accounts/{account_id}/token")
+    async def api_accounts_regen_token(account_id: str, request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Смена токена доступна только хосту.")
+        from backend.accounts import get_accounts_manager
+        mgr = get_accounts_manager()
+        new_tok = mgr.regenerate_guest_token(account_id)
+        if not new_tok:
+            raise HTTPException(404, "Аккаунт не найден")
+        return {"status": "ok", "token": new_tok}
+
+    # ---------- API: Test Hugging Face Token (Host only) ----------
+    @app.post("/api/hf/test-token")
+    async def api_hf_test_token(body: dict, request: Request = None):
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Проверка токенов доступна только хосту.")
+        token = body.get("token") or get_settings().huggingface_token
+        if not token:
+            return {"status": "empty", "valid": False, "message": "Токен не указан"}
+        try:
+            from huggingface_hub import HfApi
+            api = HfApi(token=token)
+            user_info = await asyncio.to_thread(api.whoami)
+            username = user_info.get("name", "Unknown")
+            return {"status": "ok", "valid": True, "user": username, "message": f"Токен активен (пользователь: {username})"}
+        except Exception as e:
+            return {"status": "invalid", "valid": False, "message": f"Ошибка проверки: {e}"}
 
 
     # ---------- Root: serve index.html ----------
@@ -1898,6 +2087,44 @@ def _free_port_if_in_use(host: str, port: int) -> None:
                         print(f"[startup] Could not terminate PID {pid} on port {port}: {e}")
     except Exception:
         pass
+
+
+def print_compact_engine_fleet_cli() -> None:
+    """Print a reduced, compact 5-engine status table directly in the CLI."""
+    try:
+        from backend.engine import is_engine_installed
+        from backend.sd_cpp import is_sd_cpp_installed, get_sd_cpp_version
+        from backend.sdnq_engine import is_sdnq_installed, get_sdnq_version
+        from backend.extras import is_orbitquant_ready, is_nunchaku_ready, inspect_env
+
+        qf_installed = is_engine_installed()
+        qf_status = "v0.0.17 [Ready]" if qf_installed else "[Not installed]"
+
+        sd_cpp_ok = is_sd_cpp_installed()
+        sd_cpp_ver = get_sd_cpp_version() or "master"
+        sd_cpp_status = f"{sd_cpp_ver} [Ready]" if sd_cpp_ok else "[Not installed]"
+
+        sdnq_ok = is_sdnq_installed()
+        sdnq_ver = get_sdnq_version() or "v0.2.8"
+        sdnq_status = f"{sdnq_ver} [Ready]" if sdnq_ok else "[Not installed]"
+
+        env = inspect_env()
+        nunchaku_ver = env.get("nunchaku")
+        nunchaku_status = f"v{nunchaku_ver} [Ready]" if nunchaku_ver else ("[Available in Extras]" if is_nunchaku_ready() else "[Not installed]")
+
+        orbit_ver = env.get("orbitquant")
+        orbit_status = f"v{orbit_ver} [Ready]" if orbit_ver else ("[Available in Extras]" if is_orbitquant_ready() else "[Not installed]")
+
+        print("┌" + "─" * 60 + "┐")
+        print("│ Engine Fleet Status (5 engines):                           │")
+        print(f"│  • QuantFunc:   {qf_status:<20} (Native SVDQ/FP4/FP8)     │")
+        print(f"│  • SD.CPP:      {sd_cpp_status:<20} (GGUF / sd-cli)             │")
+        print(f"│  • SDNQ:        {sdnq_status:<20} (Diffusers / 4-bit Turbo)     │")
+        print(f"│  • Nunchaku:    {nunchaku_status:<20} (SVDQ / FLUX.2 Klein)     │")
+        print(f"│  • OrbitQuant:  {orbit_status:<20} (BF16 / W4A16 Native)         │")
+        print("└" + "─" * 60 + "┘\n")
+    except Exception as e:
+        print(f"[engines] Status probe failed: {e}\n")
 
 
 def main():
@@ -1956,7 +2183,7 @@ def main():
         if STATE.gpu_info else "No NVIDIA GPU detected"
     )
 
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 62)
     print(" QuantFunc WebUI")
     print(f" URL:     http://{args.host}:{args.port}")
     print(f" GPU:     {gpu_desc}")
@@ -1965,7 +2192,9 @@ def main():
         print(" Mode:    VERBOSE (detailed console logs enabled)")
     else:
         print(" Mode:    QUIET console (use --verbose for detailed HTTP/debug logs)")
-    print("=" * 60 + "\n")
+    print("=" * 62 + "\n")
+
+    print_compact_engine_fleet_cli()
 
     uvicorn.run(
         app,
