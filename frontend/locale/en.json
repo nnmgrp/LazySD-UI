@@ -179,6 +179,8 @@
   "history.details": "Generation details",
   "history.confirm_delete": "Are you sure you want to delete this image?",
   "history.no_prompt": "(No prompt recorded)",
+  "history.show_in_folder": "Show in folder",
+  "history.open_output_folder": "Output folder",
 
   "dropzone.title": "Drop image here or click to upload",
   "dropzone.subtitle": "PNG, JPG, WEBP up to 25 MB",

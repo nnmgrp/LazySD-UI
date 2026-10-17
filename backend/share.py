@@ -60,10 +60,10 @@ PROXY_HEADERS = (
 _GUEST_ALLOW: list[tuple[str, re.Pattern]] = [
     ("GET", re.compile(r"^/(index\.html)?$")),
     ("GET", re.compile(r"^/(css|js|locale|outputs)/")),
-    ("GET", re.compile(r"^/api/(config|models|presets|loras|history|system/stats)$")),
+    ("GET", re.compile(r"^/api/(config|models|presets|loras|history|system/stats|system/open-folder|open-folder)$")),
     ("GET", re.compile(r"^/api/models/[^/]+/state$")),
     ("GET", re.compile(r"^/api/jobs/[^/]+$")),
-    ("POST", re.compile(r"^/api/(generate|upload)$")),
+    ("POST", re.compile(r"^/api/(generate|upload|system/open-folder|open-folder)$")),
     ("POST", re.compile(r"^/api/jobs/[^/]+/cancel$")),
 ]
 

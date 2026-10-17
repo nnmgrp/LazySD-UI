@@ -135,7 +135,7 @@
                 <button class="preview-tool-btn" id="btn-zoom-orig" title="Original 1:1 (Масштаб 100%)" onclick="zoomOriginal()">1:1</button>
                 <button class="preview-tool-btn" title="Download" onclick="downloadImage()">⬇</button>
                 <button class="preview-tool-btn" title="Отправить в Референс / ControlNet" onclick="sendCurrentPreviewToImg2Img()">🔄</button>
-                <button class="preview-tool-btn" title="Open folder" onclick="openOutputDir()">📂</button>
+                <button class="preview-tool-btn" id="btn-open-output-dir" title="Открыть папку со скачанным / сгенерированным в проводнике Windows" data-i18n-title="preview.open_folder" onclick="openOutputDir()">📂</button>
               </div>
             </div>
 
@@ -595,6 +595,7 @@
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <input type="text" id="history-search" class="history-search-input" placeholder="Search prompt..." data-i18n-placeholder="history.search">
+            <button class="icon-btn" onclick="openOutputDir()" title="Открыть папку вывода в проводнике Windows" data-i18n="history.open_output_folder">📂 Папка вывода</button>
             <button class="icon-btn" onclick="loadHistory()" data-i18n="history.refresh">Refresh</button>
           </div>
         </div>
@@ -798,12 +799,16 @@
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.models_dir">Models directory</div>
             <div class="setting-value" id="setting-models-dir">—</div>
-            <div></div>
+            <div>
+              <button type="button" class="history-action-btn" onclick="openSystemFolder('models')" title="Открыть папку со скачанными моделями в проводнике Windows" style="height: 28px; padding: 0 12px; font-size: 11.5px; width: auto;">📂 Открыть</button>
+            </div>
           </div>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.output_dir">Output directory</div>
             <div class="setting-value" id="setting-output-dir">—</div>
-            <div></div>
+            <div>
+              <button type="button" class="history-action-btn" onclick="openSystemFolder('outputs')" title="Открыть папку со скачанными / сгенерированными изображениями в проводнике Windows" style="height: 28px; padding: 0 12px; font-size: 11.5px; width: auto;">📂 Открыть</button>
+            </div>
           </div>
         </div>
 
@@ -1330,8 +1335,32 @@
       }
     }
     function openOutputDir() {
-      // Backend doesn't expose this — open in new tab as file listing
-      window.open("/api/history", "_blank");
+      if (window.App && typeof window.App.openFolder === "function") {
+        window.App.openFolder("outputs");
+      } else {
+        openSystemFolder("outputs");
+      }
+    }
+
+    async function openSystemFolder(folderType, filename) {
+      if (window.App && typeof window.App.openFolder === "function") {
+        return window.App.openFolder(folderType || "outputs", filename);
+      }
+      try {
+        const res = await fetch("/api/system/open-folder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder_type: folderType || "outputs", filename: filename || null }),
+        });
+        const data = await res.json();
+        if (data.status === "remote") {
+          if (window.App && typeof window.App.switchTab === "function") {
+            window.App.switchTab("history");
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to open folder:", err);
+      }
     }
 
     // ---------- Populate settings tab on first render ----------
@@ -1445,6 +1474,7 @@
             <button class="generate-btn" id="history-modal-reuse-btn">⚡ <span data-i18n="history.reuse">Use prompt & settings</span></button>
             <button class="history-action-btn" id="history-modal-send-img2img-btn">🔄 <span data-i18n="img2img.send_to">Edit in Img2Img</span></button>
             <button class="history-action-btn" id="history-modal-copy-btn">📋 <span data-i18n="history.copy_prompt">Copy prompt</span></button>
+            <button class="history-action-btn" id="history-modal-open-folder-btn" title="Показать файл в проводнике Windows">📂 <span data-i18n="history.show_in_folder">Показать в папке</span></button>
             <button class="history-action-btn danger" id="history-modal-delete-btn">🗑 <span data-i18n="history.delete">Delete</span></button>
           </div>
         </div>

@@ -2024,6 +2024,13 @@ const App = {
       };
     }
 
+    const openFolderBtn = document.getElementById("history-modal-open-folder-btn");
+    if (openFolderBtn) {
+      openFolderBtn.onclick = () => {
+        this.openFolder("outputs", item.name);
+      };
+    }
+
     modal.style.display = "flex";
   },
 
@@ -2147,6 +2154,46 @@ const App = {
     } catch (e) {
       console.error("[app] Delete history error:", e);
       this.toast("error", t("errors.history_delete_failed") + ": " + e.message);
+    }
+  },
+
+  async openFolder(folderType = "outputs", filename = null) {
+    if (!filename && folderType === "outputs") {
+      filename = this.state.currentPreviewFilename || null;
+      if (!filename) {
+        try {
+          const previewImg = document.getElementById("preview-img");
+          if (previewImg && previewImg.src) {
+            const u = new URL(previewImg.src, window.location.href);
+            const parts = u.pathname.split("/");
+            const last = parts[parts.length - 1];
+            if (last && (last.endsWith(".png") || last.endsWith(".jpg") || last.endsWith(".webp"))) {
+              filename = decodeURIComponent(last);
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    try {
+      const res = await this.apiPost("/api/system/open-folder", {
+        folder_type: folderType,
+        filename: filename,
+      });
+      if (res.status === "ok") {
+        const label = filename
+          ? `Файл «${filename}» открыт в проводнике`
+          : `Папка открыта: ${res.folder || res.path || ""}`;
+        this.toast("success", "📂 " + label);
+      } else if (res.status === "remote") {
+        this.toast("info", "Удалённая сессия: открытие проводника на сервере недоступно. Переход в Историю...");
+        this.switchTab("history");
+      } else {
+        this.toast("error", res.message || "Не удалось открыть папку");
+      }
+    } catch (e) {
+      console.warn("openFolder error:", e);
+      this.toast("error", "Не удалось открыть папку: " + e.message);
     }
   },
 

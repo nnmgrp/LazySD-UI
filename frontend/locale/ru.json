@@ -179,6 +179,8 @@
   "history.details": "Детали генерации",
   "history.confirm_delete": "Удалить это изображение из истории?",
   "history.no_prompt": "(Промпт не сохранён)",
+  "history.show_in_folder": "Показать в папке",
+  "history.open_output_folder": "Папка вывода",
 
   "dropzone.title": "Перетащите изображение или нажмите для загрузки",
   "dropzone.subtitle": "PNG, JPG, WEBP до 25 МБ",

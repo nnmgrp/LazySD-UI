@@ -69,7 +69,7 @@ from backend.worker import (
 # pattern: gradio.Server is replaced by a hand-rolled FastAPI app serving
 # custom index.html + JSON API endpoints. This avoids gradio's heavy
 # dependencies (huggingface_hub version conflicts, etc.).
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -598,6 +598,118 @@ def create_app() -> FastAPI:
     @app.get("/api/system/stats")
     async def api_system_stats():
         return get_system_memory_stats()
+
+    # ---------- API: Open local directory / file in OS file manager ----------
+    @app.post("/api/system/open-folder")
+    @app.post("/api/open-folder")
+    async def api_open_folder(request: Request, body: dict = None):
+        """Open specified local directory in Windows Explorer (or OS file manager).
+
+        Payload options:
+          - folder_type: "outputs" (default) | "models" | "loras" | "custom" | "presets" | "root"
+          - filename: optional filename inside target directory (if found, will be selected/highlighted)
+          - path: optional explicit relative or absolute path (validated against allowed root directories)
+        """
+        body = body or {}
+        folder_type = str(body.get("folder_type") or "outputs").lower()
+        filename = body.get("filename")
+        explicit_path = body.get("path")
+        settings = get_settings()
+
+        # Check if caller is remote tunnel guest
+        from backend.share import is_remote_scope
+        if is_remote_scope(request.scope):
+            return {
+                "status": "remote",
+                "message": "Remote session — cannot open local file manager on server.",
+                "path": str(settings.output_dir),
+            }
+
+        target_dir: Path
+        if explicit_path:
+            p = Path(explicit_path).resolve()
+            allowed_roots = [
+                PROJECT_ROOT.resolve(),
+                settings.output_dir.resolve(),
+                settings.models_dir.resolve(),
+                settings.cache_dir.resolve(),
+            ]
+            if not any(p == r or r in p.parents for r in allowed_roots):
+                raise HTTPException(400, "Path is outside allowed directories")
+            target_dir = p
+        else:
+            if folder_type in ("outputs", "output", "download", "downloads"):
+                target_dir = settings.output_dir
+            elif folder_type in ("models", "model", "cache"):
+                target_dir = settings.models_dir
+            elif folder_type in ("loras", "lora"):
+                target_dir = PROJECT_ROOT / "models" / "loras"
+            elif folder_type == "custom":
+                target_dir = PROJECT_ROOT / "models" / "custom"
+            elif folder_type in ("presets", "preset"):
+                target_dir = PROJECT_ROOT / "models" / "presets"
+            elif folder_type == "root":
+                target_dir = PROJECT_ROOT
+            else:
+                target_dir = settings.output_dir
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file: Optional[Path] = None
+        if filename:
+            from backend.security import validate_filename
+            try:
+                safe_fname = validate_filename(filename)
+                candidate = target_dir / safe_fname
+                if candidate.exists() and candidate.is_file():
+                    target_file = candidate
+            except Exception:
+                target_file = None
+
+        import subprocess
+        opened = False
+        err_msg = None
+        try:
+            if sys.platform == "win32":
+                if target_file and target_file.exists():
+                    subprocess.Popen(["explorer", f"/select,{str(target_file.resolve())}"])
+                else:
+                    os.startfile(str(target_dir.resolve()))
+                opened = True
+            elif sys.platform == "darwin":
+                if target_file and target_file.exists():
+                    subprocess.Popen(["open", "-R", str(target_file.resolve())])
+                else:
+                    subprocess.Popen(["open", str(target_dir.resolve())])
+                opened = True
+            else:
+                dir_to_open = target_dir if target_dir.is_dir() else target_dir.parent
+                subprocess.Popen(["xdg-open", str(dir_to_open.resolve())])
+                opened = True
+        except Exception as e:
+            opened = False
+            err_msg = str(e)
+            print(f"[system] Failed to open folder {target_dir}: {e}")
+
+        return {
+            "status": "ok" if opened else "error",
+            "message": err_msg,
+            "path": str((target_file or target_dir).resolve()),
+            "folder": str(target_dir.resolve()),
+            "selected_file": target_file.name if target_file else None,
+        }
+
+    @app.get("/api/system/open-folder")
+    @app.get("/api/open-folder")
+    async def api_open_folder_get(
+        request: Request,
+        folder_type: Optional[str] = Query("outputs"),
+        filename: Optional[str] = Query(None),
+        path: Optional[str] = Query(None),
+    ):
+        return await api_open_folder(
+            request,
+            body={"folder_type": folder_type, "filename": filename, "path": path},
+        )
 
     # ---------- API: Models ----------
     @app.get("/api/models")

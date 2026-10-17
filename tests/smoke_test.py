@@ -627,7 +627,17 @@ def test_lora_share_extras():
         assert "flux_2_klein_4b_nunchaku" in model_ids, "Missing Nunchaku model in /api/models"
         print("  ✓ OrbitQuant and Nunchaku models registered in /api/models")
 
-        # 6. Frontend markup validation
+        # 6. Open folder endpoint verification
+        r_folder = client.post("/api/system/open-folder", json={"folder_type": "outputs"})
+        assert r_folder.status_code == 200, "POST /api/system/open-folder failed"
+        assert r_folder.json().get("status") in ("ok", "remote", "error"), "Invalid open-folder response"
+        r_folder_get = client.get("/api/system/open-folder?folder_type=models")
+        assert r_folder_get.status_code == 200, "GET /api/system/open-folder failed"
+        r_bad_path = client.post("/api/system/open-folder", json={"path": "../../../etc/passwd"})
+        assert r_bad_path.status_code == 400, "Path traversal in open-folder not blocked"
+        print("  ✓ /api/system/open-folder (POST, GET, traversal guard) OK")
+
+        # 7. Frontend markup validation
         index_html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
         assert 'id="compare-container"' in index_html, "Missing compare container in index.html"
         assert 'id="btn-compare-toggle"' in index_html, "Missing compare toggle button in index.html"
@@ -636,7 +646,9 @@ def test_lora_share_extras():
         assert 'id="cpu-stat-text"' in index_html, "Missing cpu-stat-text in index.html"
         assert 'id="setting-dock-opacity"' in index_html, "Missing dock opacity setting in index.html"
         assert 'id="setting-share-toggle"' in index_html or 'id="btn-share-toggle"' in index_html, "Missing share tunnel toggle in index.html"
-        print("  ✓ Frontend UI components (Compare curtain, LoRA popover, CPU indicator, Dock controls, Share controls) verified in index.html")
+        assert 'id="btn-open-output-dir"' in index_html, "Missing btn-open-output-dir in index.html"
+        assert 'id="history-modal-open-folder-btn"' in index_html, "Missing history-modal-open-folder-btn in index.html"
+        print("  ✓ Frontend UI components (Compare curtain, LoRA popover, CPU indicator, Dock controls, Share controls, Open Folder buttons) verified in index.html")
 
         return True
     except Exception as e:
