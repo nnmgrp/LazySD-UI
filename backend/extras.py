@@ -88,17 +88,26 @@ def _diff():
 _try("diffusers", _diff)
 def _nun():
     import nunchaku
-    v = nunchaku.__version__
+    try:
+        from importlib.metadata import version
+        v = version("nunchaku")
+    except Exception:
+        v = getattr(nunchaku, "__version__", getattr(nunchaku, "version", "installed"))
     try:
         from nunchaku.utils import get_precision
         out["nunchaku_precision"] = get_precision()
     except Exception as e:
         out["nunchaku_precision_error"] = str(e)[:120]
-    return v
+    return v or "installed"
 _try("nunchaku", _nun)
 def _orb():
     import orbitquant
-    return getattr(orbitquant, "__version__", "installed")
+    try:
+        from importlib.metadata import version
+        v = version("orbitquant")
+    except Exception:
+        v = getattr(orbitquant, "__version__", getattr(orbitquant, "version", "installed"))
+    return v or "installed"
 _try("orbitquant", _orb)
 print("__PROBE__" + json.dumps(out))
 """
@@ -282,7 +291,12 @@ def _run(job: dict, cmd: list[str], env: Optional[dict] = None) -> int:
         raise _Cancelled()
     _log(job, "$ " + " ".join(cmd))
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
-    full_env = {**os.environ, "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONIOENCODING": "utf-8", **(env or {})}
+    hf_tok = get_settings().huggingface_token
+    extra_vars = {}
+    if hf_tok:
+        extra_vars["HF_TOKEN"] = hf_tok
+        extra_vars["HUGGING_FACE_HUB_TOKEN"] = hf_tok
+    full_env = {**os.environ, "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONIOENCODING": "utf-8", **extra_vars, **(env or {})}
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", bufsize=1, env=full_env, creationflags=flags)
     _PROCS[job["id"]] = proc

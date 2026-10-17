@@ -2984,6 +2984,16 @@ const App = {
     const dockList = document.getElementById("dock-presets-list");
     if (dockList) {
       dockList.innerHTML = "";
+      if (presets.length === 0) {
+        dockList.innerHTML = `
+          <div style="padding: 16px; text-align: center; color: var(--text-dim); font-size: 12px;">
+            У вас пока нет сохранённых шаблонов.
+            <div style="margin-top: 10px;">
+              <button type="button" class="generate-btn" style="height: 30px; padding: 0 14px; font-size: 11.5px;" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();">💾 Сохранить текущие настройки в шаблон</button>
+            </div>
+          </div>
+        `;
+      }
       for (const p of presets) {
         const row = document.createElement("div");
         row.className = "dock-preset-item";

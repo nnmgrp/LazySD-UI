@@ -918,6 +918,9 @@ class Worker:
             if existing_path:
                 new_path_parts.append(existing_path)
             env["PATH"] = _os.pathsep.join(new_path_parts)
+            if settings.huggingface_token:
+                env["HF_TOKEN"] = settings.huggingface_token
+                env["HUGGING_FACE_HUB_TOKEN"] = settings.huggingface_token
 
             print(f"[worker] Launching QuantFunc engine (v{engine_ver}): width={width}, height={height}, steps={request.steps}, backend={request.backend}")
             print(f"[worker] CLI args: {' '.join(args)}")

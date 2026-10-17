@@ -540,6 +540,9 @@ class SDNQWorker:
             pp_parts.append(env["PYTHONPATH"])
         env["PYTHONPATH"] = os.pathsep.join(pp_parts)
         env["PYTHONIOENCODING"] = "utf-8"
+        if settings.huggingface_token:
+            env["HF_TOKEN"] = settings.huggingface_token
+            env["HUGGING_FACE_HUB_TOKEN"] = settings.huggingface_token
 
         fd, job_json_path = tempfile.mkstemp(prefix="sdnq_job_", suffix=".json")
         os.close(fd)

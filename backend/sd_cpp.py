@@ -609,6 +609,9 @@ class SDCppWorker:
         ]
         valid_cuda = [d for d in cuda_dirs if os.path.exists(d)]
         env["PATH"] = ";".join(valid_cuda + [env.get("PATH", "")])
+        if settings.huggingface_token:
+            env["HF_TOKEN"] = settings.huggingface_token
+            env["HUGGING_FACE_HUB_TOKEN"] = settings.huggingface_token
 
         start_time = time.time()
         emit(ProgressEvent(

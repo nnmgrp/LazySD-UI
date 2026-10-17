@@ -2203,6 +2203,8 @@ def create_app() -> FastAPI:
             api = HfApi(token=token)
             user_info = await asyncio.to_thread(api.whoami)
             username = user_info.get("name", "Unknown")
+            from backend.settings import sync_hf_token_to_system
+            sync_hf_token_to_system(token)
             return {"status": "ok", "valid": True, "user": username, "message": f"Токен активен (пользователь: {username})"}
         except Exception as e:
             return {"status": "invalid", "valid": False, "message": f"Ошибка проверки: {e}"}

@@ -253,10 +253,14 @@
             <div class="dock-popover" id="dock-popover-presets" style="display: none; width: 380px;">
               <div class="dock-popover-header">
                 <span>📋 Шаблоны промптов и настроек</span>
-                <button type="button" class="dock-mini-btn accent" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();">+ Сохранить текущий</button>
+                <button type="button" class="dock-mini-btn accent" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();" title="Сохранить текущие настройки в шаблон">+ Сохранить шаблон</button>
               </div>
               <div class="dock-presets-list" id="dock-presets-list">
                 <!-- Populated by App.renderPresetsUI() -->
+              </div>
+              <div style="padding: 10px 14px; border-top: 1px solid var(--border); background: var(--bg-surface); display: flex; justify-content: space-between; align-items: center; border-radius: 0 0 var(--radius-md) var(--radius-md);">
+                <span style="font-size: 11px; color: var(--text-dim);">Текущие параметры:</span>
+                <button type="button" class="generate-btn" style="height: 28px; padding: 0 12px; font-size: 11.5px;" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();">💾 Сохранить в шаблон</button>
               </div>
             </div>
 
@@ -363,6 +367,9 @@
                   </button>
                 </div>
                 <div class="dock-actions-right" id="dock-actions-right">
+                  <button type="button" class="dock-pill" id="dock-save-preset-btn" onclick="App.openSavePresetModal()" title="Сохранить текущие параметры и промпт как шаблон (Preset)" style="height: 38px; padding: 0 12px; font-weight: 600; white-space: nowrap; margin-right: 6px;">
+                    <span>💾</span> <span class="hide-mobile">В шаблон</span>
+                  </button>
                   <button class="generate-btn dock-generate-btn" id="generate-btn">✨ <span data-i18n="controls.generate">Generate</span></button>
                 </div>
               </div>
@@ -1838,10 +1845,15 @@
 
   <!-- Modal: Save / Edit Template / Preset -->
   <div id="save-preset-modal" class="modal-overlay" style="display: none; z-index: 10002;">
-    <div class="modal-content" style="max-width: 520px; padding: 24px;">
-      <button class="modal-close" onclick="App.closeSavePresetModal()">✕</button>
-      <h3 style="margin: 0 0 6px; font-size: 17px;" id="preset-modal-title">⭐ Сохранить шаблон (Preset)</h3>
-      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);">Сохраняет промпт, негативный промпт, выбранную модель, разрешение, шаги, CFG и настройки генерации</p>
+    <div class="modal-content" style="max-width: 540px; padding: 22px; max-height: 88vh; overflow-y: auto; display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+        <h3 style="margin: 0; font-size: 17px;" id="preset-modal-title">⭐ Сохранить шаблон (Preset)</h3>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button type="button" class="generate-btn" style="height: 30px; padding: 0 14px; font-size: 12px;" onclick="App.saveCurrentAsPreset()">💾 Сохранить</button>
+          <button class="modal-close" style="position: static;" onclick="App.closeSavePresetModal()">✕</button>
+        </div>
+      </div>
+      <p style="margin: 0 0 14px; font-size: 12px; color: var(--text-dim);">Сохраняет промпт, негативный промпт, выбранную модель, разрешение, шаги, CFG и настройки генерации</p>
       <input type="hidden" id="preset-save-id" value="">
       <div style="display: flex; flex-direction: column; gap: 12px;">
         <div style="display: grid; grid-template-columns: 70px 1fr; gap: 10px;">
@@ -1895,7 +1907,7 @@
             Примечание: все файлы шаблонов физически хранятся на компьютере хоста, но приватные шаблоны будут скрыты из общего списка.
           </small>
         </div>
-        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;">
+        <div style="position: sticky; bottom: -22px; background: var(--bg-card); padding: 12px 0 0; margin-top: 10px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; z-index: 5;">
           <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeSavePresetModal()">Отмена</button>
           <button type="button" class="generate-btn" id="btn-save-preset-confirm" onclick="App.saveCurrentAsPreset()">💾 Сохранить шаблон</button>
         </div>

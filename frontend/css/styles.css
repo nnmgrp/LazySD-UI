@@ -1281,6 +1281,12 @@ textarea {
   overflow: hidden;
 }
 
+#save-preset-modal .modal-content {
+  overflow-y: auto !important;
+  max-height: 88vh;
+  box-sizing: border-box;
+}
+
 .modal-close {
   position: absolute;
   top: 12px;

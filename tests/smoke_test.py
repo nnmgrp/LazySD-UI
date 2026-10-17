@@ -551,7 +551,9 @@ def test_controls_and_samplers():
         assert 'id="gemini-dock-wrap"' in html, "gemini-dock-wrap missing in index.html"
         assert 'id="topaz-inspector"' in html, "topaz-inspector missing in index.html"
         assert 'id="tab-templates"' in html, "tab-templates missing in index.html"
-        print("  ✓ frontend/index.html includes #sampler-select, #gemini-dock-wrap, #topaz-inspector, #tab-templates")
+        assert 'id="dock-save-preset-btn"' in html, "dock-save-preset-btn missing in prompt box"
+        assert 'id="btn-save-preset-confirm"' in html, "btn-save-preset-confirm missing in save-preset-modal"
+        print("  ✓ frontend/index.html includes #sampler-select, #dock-save-preset-btn, #topaz-inspector, #tab-templates")
         return True
     except Exception as e:
         print(f"  ✗ Controls & samplers test failed: {e}")
@@ -652,7 +654,22 @@ def test_lora_share_extras():
         assert 'id="setting-share-toggle"' in index_html or 'id="btn-share-toggle"' in index_html, "Missing share tunnel toggle in index.html"
         assert 'id="btn-open-output-dir"' in index_html, "Missing btn-open-output-dir in index.html"
         assert 'id="history-modal-open-folder-btn"' in index_html, "Missing history-modal-open-folder-btn in index.html"
-        print("  ✓ Frontend UI components (Compare curtain, LoRA popover, CPU indicator, Dock controls, Share controls, Open Folder buttons) verified in index.html")
+        # 8. HuggingFace token environment sync check
+        import os
+        from backend.settings import sync_hf_token_to_system
+        sync_hf_token_to_system("hf_dummy_test_token_12345")
+        assert os.environ.get("HF_TOKEN") == "hf_dummy_test_token_12345"
+        assert os.environ.get("HUGGING_FACE_HUB_TOKEN") == "hf_dummy_test_token_12345"
+        sync_hf_token_to_system("")
+        assert "HF_TOKEN" not in os.environ
+        print("  ✓ HF token system and CLI environment synchronization verified")
+
+        # 9. Nunchaku version detection probe check (no AttributeError on missing __version__)
+        from backend.extras import inspect_env
+        env_probe = inspect_env(force=True)
+        if env_probe.get("ready"):
+            assert env_probe.get("nunchaku") is not None, "Nunchaku was installed but probe failed"
+            print(f"  ✓ Extras Nunchaku verified in probe without AttributeError: {env_probe['nunchaku']}")
 
         return True
     except Exception as e:

@@ -265,12 +265,36 @@ class Settings(BaseModel):
                     continue
                 setattr(self, key, Path(value).expanduser().resolve())
         self.save()
+        if "huggingface_token" in kwargs:
+            sync_hf_token_to_system(self.huggingface_token)
         return self
 
     def ensure_directories_exist(self) -> None:
         """Create all configured directories if they don't exist."""
         for path in (self.models_dir, self.output_dir, self.cache_dir, self.engine_dir):
             path.mkdir(parents=True, exist_ok=True)
+
+
+def sync_hf_token_to_system(token: Optional[str] = None) -> None:
+    """Sync HuggingFace token to OS environment variables and huggingface_hub login."""
+    tok = (token or "").strip()
+    if tok:
+        os.environ["HF_TOKEN"] = tok
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = tok
+        try:
+            from huggingface_hub import login
+            login(token=tok, add_to_git_credential=False, skip_if_logged_in=False)
+        except Exception:
+            pass
+    else:
+        if token == "":
+            os.environ.pop("HF_TOKEN", None)
+            os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+            try:
+                from huggingface_hub import logout
+                logout()
+            except Exception:
+                pass
 
 
 # ---------- Singleton accessor ----------
@@ -283,6 +307,7 @@ def get_settings() -> Settings:
     if _settings_instance is None:
         _settings_instance = Settings.load()
         _settings_instance.ensure_directories_exist()
+        sync_hf_token_to_system(_settings_instance.huggingface_token)
     return _settings_instance
 
 
@@ -291,4 +316,5 @@ def reload_settings() -> Settings:
     global _settings_instance
     _settings_instance = Settings.load()
     _settings_instance.ensure_directories_exist()
+    sync_hf_token_to_system(_settings_instance.huggingface_token)
     return _settings_instance
