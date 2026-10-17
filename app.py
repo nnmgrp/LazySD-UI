@@ -70,7 +70,7 @@ from backend.worker import (
 # custom index.html + JSON API endpoints. This avoids gradio's heavy
 # dependencies (huggingface_hub version conflicts, etc.).
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -2138,9 +2138,9 @@ def create_app() -> FastAPI:
         from backend.share import COOKIE_NAME, token_ok
         settings = get_settings()
 
-        if settings.share_token and token_ok(password, settings.share_token) and username.lower() in ("host", "хост", "admin", ""):
+        if settings.share_token and settings.share_allow_admin and token_ok(password, settings.share_token) and username.lower() in ("host", "хост", "admin", ""):
             tok = settings.share_token
-            acc_info = {"role": "host" if settings.share_allow_admin else "guest", "id": "host", "username": "Хост", "is_guest": not settings.share_allow_admin}
+            acc_info = {"role": "host", "id": "host_remote", "username": "Хост", "is_guest": False}
         else:
             from backend.accounts import get_accounts_manager
             acc = get_accounts_manager().verify_login(username, password)

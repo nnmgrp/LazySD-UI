@@ -2386,9 +2386,17 @@ const App = {
   copyGuestCredentials(username, password) {
     // Determine active tunnel url or current host
     const tunnelInput = document.getElementById("setting-share-url");
-    const tunnelUrl = tunnelInput && tunnelInput.value && !tunnelInput.value.includes("...")
+    let tunnelUrl = tunnelInput && tunnelInput.value && !tunnelInput.value.includes("...")
       ? tunnelInput.value.trim()
       : window.location.origin;
+
+    // Strip any query parameters or trailing slashes to guarantee clean URL
+    try {
+      const parsed = new URL(tunnelUrl);
+      tunnelUrl = `${parsed.protocol}//${parsed.host}`;
+    } catch (_) {
+      tunnelUrl = tunnelUrl.split("?")[0].replace(/\/+$/, "");
+    }
 
     const pwdText = password ? password : "(сохранённый вами пароль)";
     const text = `⚡ LazySD UI — Доступ к генератору\nСсылка: ${tunnelUrl}\nЛогин: ${username}\nПароль: ${pwdText}`;
@@ -2400,10 +2408,10 @@ const App = {
       });
   },
 
-  copyGuestLink(token) {
-    const url = `${window.location.origin}/?token=${encodeURIComponent(token)}`;
+  copyGuestLink() {
+    const url = window.location.origin;
     navigator.clipboard.writeText(url)
-      .then(() => this.toast("success", "Персональная ссылка скопирована в буфер обмена! 📋"))
+      .then(() => this.toast("success", "Ссылка на вход скопирована в буфер обмена! 📋"))
       .catch(() => this.toast("info", `Ссылка: ${url}`));
   },
 

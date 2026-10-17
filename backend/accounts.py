@@ -239,13 +239,6 @@ def resolve_account_from_scope(scope) -> dict:
                 "username": "Хост (Удалённый)",
                 "is_guest": False,
             }
-        else:
-            return {
-                "role": "guest",
-                "id": "guest_public",
-                "username": "Гость",
-                "is_guest": True,
-            }
 
     # Check registered persistent guest accounts
     if provided:

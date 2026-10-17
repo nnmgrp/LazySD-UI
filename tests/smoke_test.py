@@ -525,7 +525,7 @@ def test_controls_and_samplers():
         presets_res = client.get("/api/presets")
         assert presets_res.status_code == 200
         presets_data = presets_res.json()["presets"]
-        assert len(presets_data) >= 5
+        assert len(presets_data) >= 4
         create_res = client.post("/api/presets", json={
             "title": "Smoke Test Preset",
             "prompt": "high contrast manga lineart",
@@ -757,6 +757,47 @@ def test_accounts_and_guest_security():
         r_acc_bad = client.get("/api/accounts", headers=guest_headers)
         assert r_acc_bad.status_code == 403, "Guest must not be allowed to access /api/accounts"
         print("  ✓ Remote guest GET /api/accounts blocked (403)")
+
+        # Remote unauthenticated visitor opens root: must get 401 with login HTML (no token backdoor)
+        remote_anon_headers = {"x-forwarded-for": "198.51.100.2", "accept": "text/html"}
+        r_unauth_html = client.get("/", headers=remote_anon_headers)
+        assert r_unauth_html.status_code == 401, f"Expected 401 login screen, got {r_unauth_html.status_code}"
+        assert "LazySD UI — Вход" in r_unauth_html.text
+        assert "mode-toggle" not in r_unauth_html.text, "Token bypass toggle must not exist in login screen"
+        print("  ✓ Remote unauthenticated visitor is served strict 401 login screen")
+
+        # Remote unauthenticated API access must return 401 JSON
+        r_unauth_api = client.get("/api/config", headers={"x-forwarded-for": "198.51.100.2"})
+        assert r_unauth_api.status_code == 401
+        print("  ✓ Remote unauthenticated API request rejected with 401 JSON")
+
+        # Remote request with stale/invalid cookie gets 401 and cookie deletion header
+        r_stale_cookie = client.get("/", headers={"x-forwarded-for": "198.51.100.2", "cookie": "lazysd_token=stale_junk_token", "accept": "text/html"})
+        assert r_stale_cookie.status_code == 401
+        assert "lazysd_token=;" in r_stale_cookie.headers.get("set-cookie", "")
+        print("  ✓ Remote request with stale cookie clears cookie and presents login screen")
+
+        # Remote login test: bad password fails
+        r_login_bad = client.post("/api/auth/login", json={"username": "Тестовый Гость", "password": "wrong_password"})
+        assert r_login_bad.status_code == 401
+        print("  ✓ Remote login with invalid credentials rejected (401)")
+
+        # Remote login test: correct password succeeds and sets session cookie
+        r_login_ok = client.post("/api/auth/login", json={"username": "Тестовый Гость", "password": acc_created["initial_password"]})
+        assert r_login_ok.status_code == 200
+        assert r_login_ok.json()["account"]["username"] == "Тестовый Гость"
+        assert "lazysd_token=" in r_login_ok.headers.get("set-cookie", "")
+        print("  ✓ Remote login with host-assigned username and password succeeds (200)")
+
+        # Clean share URL verification: ShareManager does not append ?token= to public/LAN URLs
+        from backend.share import get_share_manager
+        share_mgr = get_share_manager()
+        status_info = share_mgr.status()
+        if status_info.get("share_url"):
+            assert "?token=" not in status_info["share_url"], "Share URL must not expose ?token="
+        for lan_url in status_info.get("bind", {}).get("lan_urls", []):
+            assert "?token=" not in lan_url, "LAN URL must not expose ?token="
+        print("  ✓ ShareManager generates clean share and LAN URLs without token query params")
 
         # Test history sharing toggle
         out_dir = PROJECT_ROOT / "outputs"

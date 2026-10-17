@@ -144,7 +144,6 @@ button { margin-top: 8px; width: 100%; padding: 12px; border: 0; border-radius: 
 button:hover { background: #6d28d9; }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 .error { color: #f87171; font-size: 12.5px; margin-top: 10px; display: none; text-align: center; }
-.token-toggle { margin-top: 18px; text-align: center; font-size: 12px; color: #818cf8; cursor: pointer; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -160,25 +159,11 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
       <label for="p">Пароль</label>
       <input id="p" type="password" autocomplete="current-password" required placeholder="Введите пароль">
     </div>
-    <div id="token-field" class="field" style="display:none;">
-      <label for="t">Или прямой токен доступа (Share Token)</label>
-      <input id="t" type="password" placeholder="gst_... или токен хоста">
-    </div>
     <button type="submit" id="submit-btn">Войти</button>
     <div id="err" class="error"></div>
-    <div class="token-toggle" id="mode-toggle" onclick="toggleMode()">Войти по токену доступа</div>
   </form>
 </div>
 <script>
-let useToken = false;
-function toggleMode() {
-  useToken = !useToken;
-  document.getElementById('user-field').style.display = useToken ? 'none' : 'block';
-  document.getElementById('pwd-field').style.display = useToken ? 'none' : 'block';
-  document.getElementById('token-field').style.display = useToken ? 'block' : 'none';
-  document.getElementById('mode-toggle').textContent = useToken ? 'Войти по имени и паролю' : 'Войти по токену доступа';
-  document.getElementById('err').style.display = 'none';
-}
 document.getElementById('login-form').onsubmit = async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('err');
@@ -187,12 +172,6 @@ document.getElementById('login-form').onsubmit = async (e) => {
   btn.disabled = true;
   btn.textContent = 'Проверка...';
   try {
-    if (useToken) {
-      const tok = document.getElementById('t').value.trim();
-      if (!tok) throw new Error('Введите токен доступа');
-      location.href = '/?token=' + encodeURIComponent(tok);
-      return;
-    }
     const username = document.getElementById('u').value.trim();
     const password = document.getElementById('p').value;
     const res = await fetch('/api/auth/login', {
@@ -276,12 +255,23 @@ class ShareAccessMiddleware:
 
         matched_guest = acc_mgr.find_by_token(provided) if provided else None
         is_master = token_ok(provided, expected)
+        is_authenticated_host = is_master and settings.share_allow_admin
+        is_authenticated_guest = bool(matched_guest)
 
-        if not is_master and not matched_guest:
+        # Clear invalid or stale cookie if caller sent an unrecognized/unauthorized token via cookie
+        clear_cookie_headers = []
+        if source == "cookie" and not is_authenticated_host and not is_authenticated_guest:
+            clear_cookie_headers = [(b"set-cookie", f"{COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax".encode())]
+
+        if not is_authenticated_host and not is_authenticated_guest:
             if method == "GET" and wants_html and path in ("/", "/index.html"):
-                return await _respond(send, 401, _LOGIN_HTML.encode("utf-8"), "text/html; charset=utf-8")
-            return await _respond(send, 401, json.dumps({"detail": "Invalid or missing access token"}).encode(),
-                                  "application/json")
+                return await _respond(send, 401, _LOGIN_HTML.encode("utf-8"), "text/html; charset=utf-8", extra_headers=clear_cookie_headers)
+            return await _respond(
+                send, 401,
+                json.dumps({"detail": "Требуется авторизация. Пожалуйста, войдите с логином и паролем."}).encode(),
+                "application/json",
+                extra_headers=clear_cookie_headers,
+            )
 
         # Valid token passed via ?token= -> set cookie, strip it from the URL.
         if source == "query" and method == "GET":
@@ -296,25 +286,18 @@ class ShareAccessMiddleware:
                                   [(b"location", location.encode()), (b"set-cookie", cookie.encode())])
 
         # Resolve caller role
-        if is_master and settings.share_allow_admin:
+        if is_authenticated_host:
             caller = {
                 "role": "host",
                 "id": "host_remote",
                 "username": "Хост (Удалённый)",
                 "is_guest": False,
             }
-        elif matched_guest:
+        else:
             caller = {
                 "role": "guest",
                 "id": matched_guest["id"],
                 "username": matched_guest.get("username", "Гость"),
-                "is_guest": True,
-            }
-        else:
-            caller = {
-                "role": "guest",
-                "id": "guest_public",
-                "username": "Гость",
                 "is_guest": True,
             }
 
@@ -557,15 +540,12 @@ class ShareManager:
         exe = provider.executable()
         port = _BIND["port"]
 
-        def with_token(base: str) -> str:
-            return f"{base}/?token={token}" if token else base
-
         lan = []
         if is_lan_exposed():
             host = _BIND["host"]
             ips = lan_ips() if host in ("0.0.0.0", "::") else [host]
-            lan = [with_token(f"http://{ip}:{port}") for ip in ips]
-        share_url = with_token(self._url) if self._url else None
+            lan = [f"http://{ip}:{port}" for ip in ips]
+        share_url = self._url if self._url else None
         return {
             "running": self._state == "running",
             "public_url": self._url,
