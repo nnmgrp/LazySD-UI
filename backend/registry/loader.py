@@ -141,11 +141,21 @@ class ModelSpec:
     def from_dict(cls, data: dict) -> "ModelSpec":
         """Build ModelSpec from a JSON dict."""
         sources = None
-        if "sources" in data:
+        if "sources" in data and data["sources"]:
             s = data["sources"]
-            primary = ModelSourceSpec(**s["primary"])
-            mirror = ModelSourceSpec(**s["mirror"]) if s.get("mirror") else None
-            sources = ModelSources(primary=primary, mirror=mirror)
+            p_data = dict(s.get("primary", {}))
+            if "repo" in p_data and "repo_id" not in p_data:
+                p_data["repo_id"] = p_data.pop("repo")
+            primary = ModelSourceSpec(**p_data) if p_data else None
+
+            mirror = None
+            if s.get("mirror"):
+                m_data = dict(s["mirror"])
+                if "repo" in m_data and "repo_id" not in m_data:
+                    m_data["repo_id"] = m_data.pop("repo")
+                mirror = ModelSourceSpec(**m_data)
+            if primary:
+                sources = ModelSources(primary=primary, mirror=mirror)
 
         transformers = [TransformerVariant(**t) for t in data.get("transformers", [])]
         prequant = [PrequantWeights(**p) for p in data.get("prequant_weights", [])]

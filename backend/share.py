@@ -66,6 +66,10 @@ _GUEST_ALLOW: list[tuple[str, re.Pattern]] = [
     ("POST", re.compile(r"^/api/(generate|upload|system/open-folder|open-folder)$")),
     ("POST", re.compile(r"^/api/history/[^/]+/share$")),
     ("POST", re.compile(r"^/api/jobs/[^/]+/cancel$")),
+    ("POST", re.compile(r"^/api/auth/(login|logout)$")),
+    ("POST", re.compile(r"^/api/account/change-password$")),
+    ("POST", re.compile(r"^/api/presets$")),
+    ("DELETE", re.compile(r"^/api/presets/[^/]+$")),
 ]
 
 
@@ -121,16 +125,96 @@ def token_ok(provided: Optional[str], expected: Optional[str]) -> bool:
     return hmac.compare_digest(provided.encode(), expected.encode())
 
 
-_LOGIN_HTML = """<!doctype html><meta charset=utf-8><title>LazySD UI</title>
-<body style="font-family:system-ui;background:#0f0f12;color:#e4e4e7;display:grid;place-items:center;height:100vh;margin:0">
-<form onsubmit="location.href='/?token='+encodeURIComponent(t.value);return false"
- style="background:#1f1f23;padding:28px 32px;border-radius:14px;border:1px solid #333;width:320px">
-<h3 style="margin:0 0 6px">LazySD UI</h3>
-<p style="margin:0 0 14px;color:#a1a1aa;font-size:13px">Remote access token required</p>
-<input id=t type=password autofocus placeholder="Access token"
- style="width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #444;background:#131316;color:#fff">
-<button style="margin-top:12px;width:100%;padding:10px;border:0;border-radius:8px;background:#7c3aed;color:#fff;font-weight:600">Enter</button>
-</form></body>"""
+_LOGIN_HTML = """<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LazySD UI — Вход</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #0b0c10; color: #e4e4e7; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+.card { background: #181920; padding: 32px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); width: 100%; max-width: 360px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+h3 { margin: 0 0 8px; font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+p { margin: 0 0 20px; color: #9ca3af; font-size: 13px; line-height: 1.4; }
+.field { margin-bottom: 16px; }
+label { display: block; font-size: 12px; font-weight: 500; color: #d1d5db; margin-bottom: 6px; }
+input { width: 100%; box-sizing: border-box; padding: 11px 13px; border-radius: 9px; border: 1px solid #2e303b; background: #101116; color: #fff; font-size: 14px; outline: none; transition: border-color .15s; }
+input:focus { border-color: #7c3aed; }
+button { margin-top: 8px; width: 100%; padding: 12px; border: 0; border-radius: 9px; background: #7c3aed; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .15s; }
+button:hover { background: #6d28d9; }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+.error { color: #f87171; font-size: 12.5px; margin-top: 10px; display: none; text-align: center; }
+.token-toggle { margin-top: 18px; text-align: center; font-size: 12px; color: #818cf8; cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h3><span>⚡</span> LazySD UI</h3>
+  <p>Вход в гостевой аккаунт хоста. Введите имя пользователя и постоянный пароль.</p>
+  <form id="login-form">
+    <div class="field" id="user-field">
+      <label for="u">Имя пользователя (Логин)</label>
+      <input id="u" type="text" autocomplete="username" required autofocus placeholder="Например: Alex">
+    </div>
+    <div class="field" id="pwd-field">
+      <label for="p">Пароль</label>
+      <input id="p" type="password" autocomplete="current-password" required placeholder="Введите пароль">
+    </div>
+    <div id="token-field" class="field" style="display:none;">
+      <label for="t">Или прямой токен доступа (Share Token)</label>
+      <input id="t" type="password" placeholder="gst_... или токен хоста">
+    </div>
+    <button type="submit" id="submit-btn">Войти</button>
+    <div id="err" class="error"></div>
+    <div class="token-toggle" id="mode-toggle" onclick="toggleMode()">Войти по токену доступа</div>
+  </form>
+</div>
+<script>
+let useToken = false;
+function toggleMode() {
+  useToken = !useToken;
+  document.getElementById('user-field').style.display = useToken ? 'none' : 'block';
+  document.getElementById('pwd-field').style.display = useToken ? 'none' : 'block';
+  document.getElementById('token-field').style.display = useToken ? 'block' : 'none';
+  document.getElementById('mode-toggle').textContent = useToken ? 'Войти по имени и паролю' : 'Войти по токену доступа';
+  document.getElementById('err').style.display = 'none';
+}
+document.getElementById('login-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('err');
+  errEl.style.display = 'none';
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Проверка...';
+  try {
+    if (useToken) {
+      const tok = document.getElementById('t').value.trim();
+      if (!tok) throw new Error('Введите токен доступа');
+      location.href = '/?token=' + encodeURIComponent(tok);
+      return;
+    }
+    const username = document.getElementById('u').value.trim();
+    const password = document.getElementById('p').value;
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Неверное имя пользователя или пароль');
+    }
+    location.href = '/';
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Войти';
+  }
+};
+</script>
+</body>
+</html>"""
 
 
 async def _respond(send, status: int, body: bytes, content_type: str, extra_headers: list | None = None):
@@ -168,6 +252,17 @@ class ShareAccessMiddleware:
         path = scope.get("path", "/")
         wants_html = b"text/html" in _headers(scope).get(b"accept", b"")
 
+        # Allow unauthenticated login/logout endpoints
+        if method == "POST" and path in ("/api/auth/login", "/api/auth/logout"):
+            scope.setdefault("state", {})["account"] = {
+                "role": "anonymous",
+                "id": "anonymous",
+                "username": "Гость",
+                "is_guest": True,
+            }
+            scope["state"]["is_guest"] = True
+            return await self.app(scope, receive, send)
+
         if not expected:
             return await _respond(
                 send, 403,
@@ -184,7 +279,7 @@ class ShareAccessMiddleware:
 
         if not is_master and not matched_guest:
             if method == "GET" and wants_html and path in ("/", "/index.html"):
-                return await _respond(send, 401, _LOGIN_HTML.encode(), "text/html; charset=utf-8")
+                return await _respond(send, 401, _LOGIN_HTML.encode("utf-8"), "text/html; charset=utf-8")
             return await _respond(send, 401, json.dumps({"detail": "Invalid or missing access token"}).encode(),
                                   "application/json")
 
@@ -284,7 +379,14 @@ class CloudflaredProvider(TunnelProvider):
             return str(local)
         return shutil.which("cloudflared")
 
-    def install(self, progress=None) -> str:
+    def install(self, progress=None, force: bool = False) -> str:
+        dest = self._local_path()
+        if not force and dest.is_file() and dest.stat().st_size > 5 * 1024 * 1024:
+            return str(dest)
+        existing = shutil.which("cloudflared")
+        if not force and existing:
+            return existing
+
         import requests
 
         asset = self._ASSET.get("win32" if IS_WINDOWS else sys.platform if sys.platform.startswith("linux") else "")
@@ -292,7 +394,6 @@ class CloudflaredProvider(TunnelProvider):
             raise RuntimeError("Automatic cloudflared install supports Windows and Linux only. "
                                "Install it manually and make sure `cloudflared` is on PATH.")
         url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}"
-        dest = self._local_path()
         tmp = dest.with_suffix(dest.suffix + ".part")
         if progress:
             progress(f"Downloading {url}")

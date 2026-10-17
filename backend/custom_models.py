@@ -139,7 +139,7 @@ def register_custom_model(data: dict) -> dict:
     if not name:
         raise ValueError("Model name is required")
 
-    model_file = data.get("model_file", "").strip()
+    model_file = data.get("model_file", "").strip().strip('"').strip("'")
     if not model_file:
         raise ValueError("Model file path is required")
 
@@ -177,22 +177,22 @@ def register_custom_model(data: dict) -> dict:
         else:
             engine_args["diffusion_model"] = str(abs_file)
 
-        llm_path = data.get("llm_file")
+        llm_path = (data.get("llm_file") or "").strip().strip('"').strip("'")
         if llm_path:
             p = Path(llm_path)
             engine_args["llm"] = str(p if p.is_absolute() else (custom_dir / llm_path).resolve())
 
-        t5_path = data.get("t5_file")
+        t5_path = (data.get("t5_file") or "").strip().strip('"').strip("'")
         if t5_path:
             p = Path(t5_path)
             engine_args["t5xxl"] = str(p if p.is_absolute() else (custom_dir / t5_path).resolve())
 
-        clip_path = data.get("clip_file")
+        clip_path = (data.get("clip_file") or "").strip().strip('"').strip("'")
         if clip_path:
             p = Path(clip_path)
             engine_args["clip_l"] = str(p if p.is_absolute() else (custom_dir / clip_path).resolve())
 
-        vae_path = data.get("vae_file")
+        vae_path = (data.get("vae_file") or "").strip().strip('"').strip("'")
         if vae_path:
             p = Path(vae_path)
             engine_args["vae"] = str(p if p.is_absolute() else (custom_dir / vae_path).resolve())
@@ -262,15 +262,21 @@ def register_custom_model(data: dict) -> dict:
     return manifest
 
 
+def _get_hf_token() -> Optional[str]:
+    """Retrieve Hugging Face token from settings."""
+    settings = get_settings()
+    return getattr(settings, "huggingface_token", None) or getattr(settings, "hf_token", None)
+
+
 def search_hf_models(query: str, limit: int = 12) -> list[dict[str, Any]]:
     """Search Hugging Face Hub for GGUF / image generation models."""
     q = (query or "").strip()
     if not q:
         q = "flux gguf"
-    settings = get_settings()
+    hf_token = _get_hf_token()
     headers = {}
-    if settings.hf_token:
-        headers["Authorization"] = f"Bearer {settings.hf_token}"
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
 
     params = {
         "search": q,
@@ -300,7 +306,7 @@ def search_hf_models(query: str, limit: int = 12) -> list[dict[str, Any]]:
 
 def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
     """Inspect a Hugging Face repository and classify all weight files (.gguf / .safetensors)."""
-    clean_repo = (repo_id or "").strip().replace("https://huggingface.co/", "").strip("/")
+    clean_repo = (repo_id or "").strip().strip('"').strip("'").replace("https://huggingface.co/", "").strip("/")
     if "/tree/" in clean_repo:
         clean_repo = clean_repo.split("/tree/")[0]
     if "/blob/" in clean_repo:
@@ -308,10 +314,10 @@ def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
     if not clean_repo or "/" not in clean_repo:
         raise ValueError("Укажите корректный Hugging Face репозиторий в формате author/repo-name")
 
-    settings = get_settings()
+    hf_token = _get_hf_token()
     headers = {}
-    if settings.hf_token:
-        headers["Authorization"] = f"Bearer {settings.hf_token}"
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
 
     url = f"https://huggingface.co/api/models/{clean_repo}?blobs=true"
     resp = requests.get(url, headers=headers, timeout=15)
@@ -353,11 +359,16 @@ def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
         else:
             diffusion_files.append(entry)
 
+    suggested_name = clean_repo.split("/")[-1].replace("-", " ")
     return {
         "repo_id": clean_repo,
-        "suggested_name": clean_repo.split("/")[-1].replace("-", " "),
+        "name": suggested_name,
+        "suggested_name": suggested_name,
+        "family": repo_meta["family"],
         "suggested_family": repo_meta["family"],
+        "steps": repo_meta["steps"],
         "suggested_steps": repo_meta["steps"],
+        "cfg": repo_meta["cfg"],
         "suggested_cfg": repo_meta["cfg"],
         "diffusion_files": diffusion_files,
         "text_encoder_files": text_encoder_files,
@@ -367,7 +378,8 @@ def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
 
 def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
     """Register a downloadable model profile directly from a Hugging Face repository."""
-    repo_id = (data.get("repo_id") or "").strip().replace("https://huggingface.co/", "").strip("/")
+    raw_repo = (data.get("repo_id") or "").strip().strip('"').strip("'")
+    repo_id = raw_repo.replace("https://huggingface.co/", "").strip("/")
     if not repo_id or "/" not in repo_id:
         raise ValueError("Некорректный repo_id Hugging Face")
 
@@ -375,7 +387,7 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
     family = (data.get("family") or detect_file_metadata(repo_id)["family"] or "flux").lower()
     steps = int(data.get("steps") or 20)
     cfg = float(data.get("cfg") if data.get("cfg") is not None else 3.5)
-    selected_files: list[dict[str, Any]] = data.get("variants") or []
+    selected_files: list[dict[str, Any]] = data.get("selected_files") or data.get("variants") or []
     if not selected_files:
         raise ValueError("Выберите хотя бы один файл модели (.gguf / .safetensors) из репозитория")
 
@@ -397,7 +409,7 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
             "steps": steps,
             "size_gb": float(vf.get("size_gb") or 4.0),
             "recommended": idx == 0,
-            "repo": repo_id,
+            "repo_id": repo_id,
             "note": f"{Path(fpath).name} ({meta['quant']})",
         })
 
@@ -493,7 +505,7 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
 
     manifest = {
         "id": model_id,
-        "name": f"{name} (HF)",
+        "name": f"{name} (HF)" if not name.endswith("(HF)") else name,
         "family": family,
         "pipeline": "text_to_image",
         "engine": "sd_cpp",
@@ -504,7 +516,7 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
         "sources": {
             "primary": {
                 "type": "huggingface",
-                "repo": repo_id,
+                "repo_id": repo_id,
             }
         },
         "base_models": {},
@@ -535,15 +547,90 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
-def delete_custom_model(model_id: str) -> bool:
-    """Delete a custom model manifest."""
-    if not model_id.startswith("custom_"):
-        raise ValueError("Cannot delete non-custom system models")
-
+def delete_custom_model(model_id: str, delete_files: bool = False) -> bool:
+    """Delete a custom or imported model manifest and optionally downloaded files."""
     registry_dir = Path(__file__).parent / "registry" / "models"
-    target = registry_dir / f"{model_id}.json"
-    if target.exists():
-        target.unlink()
-        reload_registry()
-        return True
-    return False
+
+    target_json: Optional[Path] = None
+    target_data: Optional[dict] = None
+
+    # 1. Match directly by filename
+    cand = registry_dir / f"{model_id}.json"
+    if cand.exists():
+        target_json = cand
+    else:
+        # 2. Match by "id" inside registry files
+        for f in sorted(registry_dir.glob("*.json")):
+            if f.name == "registry_schema.json":
+                continue
+            try:
+                with open(f, "r", encoding="utf-8") as jf:
+                    d = json.load(jf)
+                    if d.get("id") == model_id:
+                        target_json = f
+                        target_data = d
+                        break
+            except Exception:
+                continue
+
+    if not target_json or not target_json.exists():
+        raise ValueError(f"Модель {model_id} не найдена в реестре")
+
+    if target_data is None:
+        try:
+            with open(target_json, "r", encoding="utf-8") as jf:
+                target_data = json.load(jf)
+        except Exception:
+            target_data = {}
+
+    is_custom = target_data.get("is_custom", False) or model_id.startswith("custom_")
+    # Base core system models protection
+    protected_system_models = {
+        "flux_klein_9b", "flux_klein_4b", "z_image_turbo", "qwen_image_2_1",
+        "flux_schnell_gguf", "sdxl_turbo_gguf", "qwen_image_2_1_gguf", "qwen_image_2_1_turbo_sdnq",
+    }
+    if model_id in protected_system_models and not is_custom:
+        raise ValueError("Нельзя удалять базовые системные модели. Используйте скрытие модели.")
+
+    # Optionally delete downloaded files
+    if delete_files:
+        try:
+            from .cache import CacheManager
+            cache = CacheManager()
+            repo_id = target_data.get("sources", {}).get("primary", {}).get("repo_id")
+            if repo_id:
+                repo_cache_dir = cache.repo_dir_for(repo_id)
+                if repo_cache_dir.exists() and repo_cache_dir.is_dir():
+                    import shutil
+                    shutil.rmtree(repo_cache_dir, ignore_errors=True)
+                    print(f"[delete] Removed cached repo: {repo_cache_dir}")
+        except Exception as e:
+            print(f"[delete] Warning cleaning cache for {model_id}: {e}")
+
+        # Local custom files in models/custom/
+        try:
+            custom_dir = get_custom_models_dir()
+            for t in target_data.get("transformers", []):
+                t_path = t.get("path")
+                if t_path:
+                    cand_file = Path(t_path)
+                    if not cand_file.is_absolute():
+                        cand_file = custom_dir / t_path
+                    if cand_file.exists() and custom_dir in cand_file.parents:
+                        cand_file.unlink()
+                        print(f"[delete] Removed custom weight file: {cand_file}")
+        except Exception as e:
+            print(f"[delete] Warning cleaning custom files for {model_id}: {e}")
+
+    # Remove manifest JSON
+    target_json.unlink()
+
+    # Clean up from visibility map
+    try:
+        from .model_visibility import remove_model_from_visibility
+        remove_model_from_visibility(model_id)
+    except Exception:
+        pass
+
+    reload_registry()
+    return True

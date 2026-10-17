@@ -492,10 +492,26 @@ def create_app() -> FastAPI:
         cache = CacheManager()
         gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "unknown"
 
+        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+        is_guest = caller.get("is_guest", False)
+
+        from backend.model_visibility import load_visibility_map
+        vis_map = load_visibility_map()
+
         # Convert models to JSON-serializable list
         models_list = []
         qf_enabled = getattr(settings, "enable_quantfunc_models", False)
         for m in registry.list_all():
+            vinfo = vis_map.get(m.id, {})
+            hidden_for_guests = vinfo.get("hidden_for_guests", False)
+            hidden_from_host = vinfo.get("hidden_from_host", False)
+
+            if is_guest and (hidden_for_guests or hidden_from_host):
+                continue
+
             repo_id = m.sources.primary.repo_id if m.sources else ""
             repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
             default_cfg = m.get_default_cfg()
@@ -515,6 +531,8 @@ def create_app() -> FastAPI:
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
                 "default_cfg": default_cfg,
+                "hidden_for_guests": hidden_for_guests,
+                "hidden_from_host": hidden_from_host,
                 "requirements": {
                     "vram_min_gb": m.requirements.vram_min_gb,
                     "vram_recommended_gb": m.requirements.vram_recommended_gb,
@@ -557,12 +575,6 @@ def create_app() -> FastAPI:
             installed_engines.append("sd_cpp")
         if is_sdnq_installed():
             installed_engines.append("sdnq")
-
-        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
-        if request:
-            from backend.accounts import resolve_account_from_scope
-            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
-        is_guest = caller.get("is_guest", False)
 
         settings_dict = {
             "lang": settings.lang,
@@ -734,14 +746,31 @@ def create_app() -> FastAPI:
 
     # ---------- API: Models ----------
     @app.get("/api/models")
-    async def api_models():
+    async def api_models(request: Request = None):
         registry = get_registry()
         cache = CacheManager()
         gpu_tier = STATE.gpu_info.tier if STATE.gpu_info else "unknown"
+
+        caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+        is_guest = caller.get("is_guest", False)
+
+        from backend.model_visibility import load_visibility_map
+        vis_map = load_visibility_map()
+
         models_out = []
         settings = get_settings()
         qf_enabled = getattr(settings, "enable_quantfunc_models", False)
         for m in registry.list_all():
+            vinfo = vis_map.get(m.id, {})
+            hidden_for_guests = vinfo.get("hidden_for_guests", False)
+            hidden_from_host = vinfo.get("hidden_from_host", False)
+
+            if is_guest and (hidden_for_guests or hidden_from_host):
+                continue
+
             repo_id = m.sources.primary.repo_id if m.sources else ""
             repo_dir = cache.repo_dir_for(repo_id) if repo_id else None
             default_cfg = m.get_default_cfg()
@@ -761,6 +790,8 @@ def create_app() -> FastAPI:
                 "description": m.description,
                 "key_protected": bool(m.key_protected),
                 "default_cfg": default_cfg,
+                "hidden_for_guests": hidden_for_guests,
+                "hidden_from_host": hidden_from_host,
                 "requirements": {
                     "vram_min_gb": m.requirements.vram_min_gb,
                     "vram_recommended_gb": m.requirements.vram_recommended_gb,
@@ -798,13 +829,17 @@ def create_app() -> FastAPI:
         return models_out
 
     @app.get("/api/models/{model_id}/state")
-    async def api_model_state(model_id: str):
-        """Check cache state for a model's required files.
+    async def api_model_state(model_id: str, request: Request = None):
+        """Check cache state for a model's required files."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            from backend.model_visibility import get_model_visibility
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                vinfo = get_model_visibility(model_id)
+                if vinfo.get("hidden_for_guests", False) or vinfo.get("hidden_from_host", False):
+                    raise HTTPException(404, f"Model not found: {model_id}")
 
-        If GPU is not detected, returns all transformers (no tier filtering)
-        so the UI can still show the model. The user just won't be able to
-        generate until GPU is available.
-        """
         registry = get_registry()
         try:
             model = registry.get(model_id)
@@ -975,8 +1010,13 @@ def create_app() -> FastAPI:
 
     # ---------- API: Custom Models ----------
     @app.get("/api/custom-models/files")
-    async def api_custom_models_files():
+    async def api_custom_models_files(request: Request = None):
         """List local files available in models/custom/ directory."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot view custom model files")
         from backend.custom_models import list_custom_files, get_custom_models_dir
         return {
             "custom_dir": str(get_custom_models_dir()),
@@ -984,8 +1024,13 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/api/custom-models")
-    async def api_register_custom_model(body: dict):
+    async def api_register_custom_model(body: dict, request: Request = None):
         """Register a new custom model profile."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot register models")
         from backend.custom_models import register_custom_model
         try:
             res = register_custom_model(body)
@@ -994,11 +1039,16 @@ def create_app() -> FastAPI:
             raise HTTPException(400, str(e))
 
     @app.delete("/api/custom-models/{model_id}")
-    async def api_delete_custom_model(model_id: str):
+    async def api_delete_custom_model(model_id: str, delete_files: bool = False, request: Request = None):
         """Delete an imported custom model profile."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot delete models")
         from backend.custom_models import delete_custom_model
         try:
-            ok = delete_custom_model(model_id)
+            ok = delete_custom_model(model_id, delete_files=delete_files)
             if not ok:
                 raise HTTPException(404, "Custom model manifest not found")
             return {"ok": True}
@@ -1017,18 +1067,26 @@ def create_app() -> FastAPI:
             raise HTTPException(400, f"Ошибка поиска Hugging Face: {e}")
 
     @app.get("/api/hf/repo-tree")
-    async def api_hf_repo_tree(repo_id: str):
+    async def api_hf_repo_tree(repo_id: Optional[str] = None, repo: Optional[str] = None):
         """Inspect weight files (.gguf / .safetensors) in a Hugging Face repository."""
+        target_repo = repo_id or repo
+        if not target_repo:
+            raise HTTPException(400, "repo_id is required")
         from backend.custom_models import inspect_hf_repo
         try:
-            info = inspect_hf_repo(repo_id)
+            info = inspect_hf_repo(target_repo)
             return {"ok": True, **info}
         except Exception as e:
             raise HTTPException(400, str(e))
 
     @app.post("/api/hf/register")
-    async def api_hf_register_model(body: dict):
+    async def api_hf_register_model(body: dict, request: Request = None):
         """Register a downloadable model profile from a Hugging Face repository."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot register models")
         from backend.custom_models import register_hf_custom_model
         try:
             manifest = register_hf_custom_model(body)
@@ -1036,39 +1094,78 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(400, str(e))
 
+    # ---------- API: Model Visibility (Host Control) ----------
+    @app.get("/api/models/visibility")
+    async def api_get_models_visibility(request: Request = None):
+        """Get visibility settings for models."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot view model visibility")
+        from backend.model_visibility import load_visibility_map
+        return {"visibility": load_visibility_map()}
+
+    @app.post("/api/models/{model_id}/visibility")
+    async def api_set_model_visibility(model_id: str, body: dict, request: Request = None):
+        """Update visibility settings for a model (hidden for guests / hidden from host)."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot change model visibility")
+        from backend.model_visibility import set_model_visibility
+        hidden_for_guests = bool(body.get("hidden_for_guests", False))
+        hidden_from_host = bool(body.get("hidden_from_host", False))
+        res = set_model_visibility(model_id, hidden_for_guests=hidden_for_guests, hidden_from_host=hidden_from_host)
+        return {"ok": True, "model_id": model_id, "visibility": res}
+
     # ---------- API: Presets & Templates ----------
     @app.get("/api/presets")
-    async def api_list_presets():
-        """Return factory and user generation presets."""
+    async def api_list_presets(request: Request = None):
+        """Return generation presets filtered by caller permissions."""
         from backend.presets import list_presets
-        return {"presets": list_presets()}
+        from backend.accounts import resolve_account_from_scope
+        caller = (request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)) if request else None
+        return {"presets": list_presets(caller)}
 
     @app.post("/api/presets")
-    async def api_save_preset(body: dict):
-        """Save a new or updated user preset."""
+    async def api_save_preset(body: dict, request: Request = None):
+        """Save a new or updated preset."""
         from backend.presets import save_user_preset
+        from backend.accounts import resolve_account_from_scope
+        caller = (request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)) if request else None
         try:
-            preset = save_user_preset(body)
+            preset = save_user_preset(body, caller)
             return {"ok": True, "preset": preset}
+        except PermissionError as pe:
+            raise HTTPException(403, str(pe))
         except Exception as e:
             raise HTTPException(400, str(e))
 
     @app.delete("/api/presets/{preset_id}")
-    async def api_delete_preset(preset_id: str):
-        """Delete a user preset by ID."""
+    async def api_delete_preset(preset_id: str, request: Request = None):
+        """Delete a preset by ID."""
         from backend.presets import delete_user_preset
-        ok = delete_user_preset(preset_id)
-        if not ok:
-            raise HTTPException(404, "Шаблон не найден или является системным")
-        return {"ok": True}
+        from backend.accounts import resolve_account_from_scope
+        caller = (request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)) if request else None
+        try:
+            ok = delete_user_preset(preset_id, caller)
+            if not ok:
+                raise HTTPException(404, "Шаблон не найден")
+            return {"ok": True}
+        except PermissionError as pe:
+            raise HTTPException(403, str(pe))
 
     @app.post("/api/models/{model_id}/download")
-    async def api_model_download(model_id: str, body: Optional[dict] = None):
-        """Download missing files for a model. Runs in background thread.
+    async def api_model_download(model_id: str, body: Optional[dict] = None, request: Request = None):
+        """Download missing files for a model. Runs in background thread."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot trigger model downloads")
 
-        Body (optional):
-            {"variant_id": "lighting-50x", "include_base": true, "include_precision": true}
-        """
         if not STATE.gpu_info:
             raise HTTPException(400, "GPU not detected")
 
@@ -1077,6 +1174,9 @@ def create_app() -> FastAPI:
             model = registry.get(model_id)
         except KeyError:
             raise HTTPException(404, f"Model not found: {model_id}")
+
+        if not model.sources or not model.sources.primary:
+            raise HTTPException(400, "Эта модель является локальной и не требует скачивания из сети.")
 
         settings = get_settings()
         if getattr(model, "engine", "quantfunc") == "quantfunc" and not getattr(settings, "enable_quantfunc_models", False):
@@ -1417,10 +1517,7 @@ def create_app() -> FastAPI:
     @app.post("/api/generate")
     async def api_generate(body: dict, request: Request = None):
         """Start a generation job. Returns job_id for polling."""
-        if not STATE.gpu_info:
-            raise HTTPException(400, "GPU not detected")
-
-        # Resolve caller identity
+        # Resolve caller identity first
         caller = {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
         if request:
             from backend.accounts import resolve_account_from_scope
@@ -1446,6 +1543,16 @@ def create_app() -> FastAPI:
             init_image_strength = float(body.get("init_image_strength", 0.7))
         except (KeyError, TypeError, ValueError) as e:
             raise HTTPException(400, f"Invalid request: {e}")
+
+        # Enforce model visibility for guests before checking GPU
+        if caller.get("is_guest", False):
+            from backend.model_visibility import get_model_visibility
+            vinfo = get_model_visibility(model_id)
+            if vinfo.get("hidden_for_guests", False) or vinfo.get("hidden_from_host", False):
+                raise HTTPException(403, "Выбранная модель скрыта хостом и недоступна для использования.")
+
+        if not STATE.gpu_info:
+            raise HTTPException(400, "GPU not detected")
 
         # Normalize init_image_path
         init_image_path = None
@@ -1971,22 +2078,24 @@ def create_app() -> FastAPI:
             if caller.get("is_guest", False):
                 raise HTTPException(403, "Создание аккаунтов доступно только хосту.")
         username = body.get("username", "Гость")
+        password = body.get("password")
         from backend.accounts import get_accounts_manager
         mgr = get_accounts_manager()
-        acc = mgr.create_guest_account(username)
+        acc = mgr.create_guest_account(username, password=password)
         return {"status": "ok", "account": acc}
 
     @app.patch("/api/accounts/{account_id}")
-    async def api_accounts_rename(account_id: str, body: dict, request: Request = None):
+    async def api_accounts_update(account_id: str, body: dict, request: Request = None):
         if request:
             from backend.accounts import resolve_account_from_scope
             caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
             if caller.get("is_guest", False):
                 raise HTTPException(403, "Редактирование аккаунтов доступно только хосту.")
-        new_username = body.get("username", "")
+        new_username = body.get("username")
+        new_password = body.get("password")
         from backend.accounts import get_accounts_manager
         mgr = get_accounts_manager()
-        updated = mgr.rename_guest_account(account_id, new_username)
+        updated = mgr.update_guest_account(account_id, new_username=new_username, new_password=new_password)
         if not updated:
             raise HTTPException(404, "Аккаунт не найден")
         return {"status": "ok", "account": updated}
@@ -2017,6 +2126,66 @@ def create_app() -> FastAPI:
         if not new_tok:
             raise HTTPException(404, "Аккаунт не найден")
         return {"status": "ok", "token": new_tok}
+
+    # ---------- API: Remote Guest Auth & Self-Service ----------
+    @app.post("/api/auth/login")
+    async def api_auth_login(body: dict):
+        username = (body.get("username") or "").strip()
+        password = (body.get("password") or "").strip()
+        if not username or not password:
+            raise HTTPException(400, "Укажите имя пользователя и пароль")
+
+        from backend.share import COOKIE_NAME, token_ok
+        settings = get_settings()
+
+        if settings.share_token and token_ok(password, settings.share_token) and username.lower() in ("host", "хост", "admin", ""):
+            tok = settings.share_token
+            acc_info = {"role": "host" if settings.share_allow_admin else "guest", "id": "host", "username": "Хост", "is_guest": not settings.share_allow_admin}
+        else:
+            from backend.accounts import get_accounts_manager
+            acc = get_accounts_manager().verify_login(username, password)
+            if not acc:
+                raise HTTPException(401, "Неверное имя пользователя или пароль")
+            tok = acc["token"]
+            acc_info = {"role": "guest", "id": acc["id"], "username": acc.get("username", "Гость"), "is_guest": True}
+
+        res = JSONResponse({"status": "ok", "account": acc_info, "token": tok})
+        res.set_cookie(COOKIE_NAME, tok, path="/", httponly=True, samesite="lax", max_age=2592000)
+        return res
+
+    @app.post("/api/auth/logout")
+    async def api_auth_logout():
+        from backend.share import COOKIE_NAME
+        res = JSONResponse({"status": "ok", "message": "Вы вышли из системы"})
+        res.delete_cookie(COOKIE_NAME, path="/")
+        return res
+
+    @app.post("/api/account/change-password")
+    async def api_account_change_password(body: dict, request: Request = None):
+        """Guest self-service: update their own account password."""
+        from backend.accounts import resolve_account_from_scope, get_accounts_manager
+        from backend.share import COOKIE_NAME
+        caller = (request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)) if request else {}
+        account_id = caller.get("id")
+        if not account_id or account_id in ("anonymous", "host"):
+            if account_id == "host":
+                raise HTTPException(400, "Пароль хоста настраивается в параметрах туннеля.")
+            raise HTTPException(401, "Необходима авторизация")
+
+        new_pwd = (body.get("new_password") or "").strip()
+        if len(new_pwd) < 3:
+            raise HTTPException(400, "Пароль должен содержать не менее 3 символов")
+
+        mgr = get_accounts_manager()
+        ok = mgr.change_guest_password(account_id, new_pwd)
+        if not ok:
+            raise HTTPException(404, "Аккаунт не найден")
+
+        updated_acc = mgr.get_account(account_id)
+        new_tok = updated_acc.get("token")
+        res = JSONResponse({"status": "ok", "message": "Пароль успешно обновлён", "token": new_tok})
+        res.set_cookie(COOKIE_NAME, new_tok, path="/", httponly=True, samesite="lax", max_age=2592000)
+        return res
 
     # ---------- API: Test Hugging Face Token (Host only) ----------
     @app.post("/api/hf/test-token")

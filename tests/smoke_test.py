@@ -802,6 +802,118 @@ def test_accounts_and_guest_security():
         return False
 
 
+def test_custom_models_and_visibility():
+    print("\n[11/11] Testing Custom Models, Hugging Face Hub & Model Visibility...")
+    try:
+        from app import create_app
+        from fastapi.testclient import TestClient
+        from backend.model_visibility import set_model_visibility, get_model_visibility, remove_model_from_visibility
+        from backend.custom_models import get_custom_models_dir
+
+        # 1. Direct Model Visibility Manager tests
+        set_model_visibility("smoke_test_model", hidden_for_guests=True, hidden_from_host=True)
+        v = get_model_visibility("smoke_test_model")
+        assert v["hidden_for_guests"] is True
+        assert v["hidden_from_host"] is True
+        remove_model_from_visibility("smoke_test_model")
+        assert get_model_visibility("smoke_test_model")["hidden_for_guests"] is False
+        print("  ✓ Model Visibility Manager CRUD verified")
+
+        app = create_app()
+        client = TestClient(app)
+
+        # 2. Host sets visibility for a model
+        r_vis = client.post("/api/models/sdxl_turbo_gguf/visibility", json={
+            "hidden_for_guests": True,
+            "hidden_from_host": False,
+        })
+        assert r_vis.status_code == 200, "POST /api/models/{id}/visibility failed"
+        assert r_vis.json()["visibility"]["hidden_for_guests"] is True
+        print("  ✓ POST /api/models/{id}/visibility sets visibility flags OK")
+
+        # 3. Host sees sdxl_turbo_gguf with hidden_for_guests: True
+        r_host = client.get("/api/config")
+        assert r_host.status_code == 200
+        host_models = r_host.json()["models"]
+        sdxl_host = next((m for m in host_models if m["id"] == "sdxl_turbo_gguf"), None)
+        assert sdxl_host is not None
+        assert sdxl_host.get("hidden_for_guests") is True
+
+        # 4. Guest is blocked from seeing or generating with sdxl_turbo_gguf
+        from backend.accounts import get_accounts_manager
+        acc_mgr = get_accounts_manager()
+        t_guest = acc_mgr.create_guest_account("Smoke Guest")
+        guest_headers = {
+            "x-forwarded-for": "198.51.100.2",
+            "x-access-token": t_guest["token"],
+        }
+
+        r_guest_conf = client.get("/api/config", headers=guest_headers)
+        assert r_guest_conf.status_code == 200
+        guest_models = r_guest_conf.json()["models"]
+        assert not any(m["id"] == "sdxl_turbo_gguf" for m in guest_models), "Hidden model must not be visible to guest"
+
+        r_guest_gen = client.post("/api/generate", json={
+            "model_id": "sdxl_turbo_gguf",
+            "prompt": "test prompt",
+        }, headers=guest_headers)
+        assert r_guest_gen.status_code == 403, "Guest must be blocked from generating with hidden model"
+        print("  ✓ Remote guest completely blocked from seeing/using hidden models (403)")
+
+        # Restore visibility for sdxl_turbo_gguf
+        client.post("/api/models/sdxl_turbo_gguf/visibility", json={
+            "hidden_for_guests": False,
+            "hidden_from_host": False,
+        })
+
+        # 5. Local Custom Model Registration & Deletion
+        custom_dir = get_custom_models_dir()
+        dummy_model_file = custom_dir / "smoke_custom_test.gguf"
+        dummy_model_file.write_bytes(b"dummy gguf content")
+
+        r_reg = client.post("/api/custom-models", json={
+            "name": "Smoke Custom Test Model",
+            "model_file": "smoke_custom_test.gguf",
+            "family": "flux",
+            "steps": 4,
+            "cfg": 1.0,
+        })
+        assert r_reg.status_code == 200, f"Registration failed: {r_reg.text}"
+        created_model_id = r_reg.json()["model"]["id"]
+        assert created_model_id == "custom_smoke_custom_test_model"
+
+        # Verify it shows up in models
+        r_all_models = client.get("/api/models")
+        assert any(m["id"] == created_model_id for m in r_all_models.json())
+        print("  ✓ Local custom model registration via /api/custom-models OK")
+
+        # Delete it from Hub with files
+        r_del = client.delete(f"/api/custom-models/{created_model_id}?delete_files=true")
+        assert r_del.status_code == 200, f"Deletion failed: {r_del.text}"
+        assert not dummy_model_file.exists(), "Custom weight file must be deleted when delete_files=true"
+        r_after_del = client.get("/api/models")
+        assert not any(m["id"] == created_model_id for m in r_after_del.json())
+        print("  ✓ Custom model deletion from Hub and disk via DELETE /api/custom-models OK")
+
+        # Cleanup test guest account
+        acc_mgr.delete_guest_account(t_guest["id"])
+
+        # 6. Frontend markup validation
+        index_html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        assert 'id="filter-chip-hidden"' in index_html, "Missing filter-chip-hidden in index.html"
+        assert 'id="model-visibility-modal"' in index_html, "Missing model-visibility-modal in index.html"
+        assert 'id="model-vis-hidden-guests"' in index_html, "Missing model-vis-hidden-guests in index.html"
+        assert 'id="model-vis-hidden-host"' in index_html, "Missing model-vis-hidden-host in index.html"
+        print("  ✓ Frontend UI components (Hidden filter chip, Model visibility modal) verified in index.html")
+
+        return True
+    except Exception as e:
+        print(f"  ✗ Custom Models & Model Visibility test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     print("=" * 60)
     print("QuantFunc WebUI — Smoke Test")
@@ -818,6 +930,7 @@ def main():
         ("Controls & samplers", test_controls_and_samplers()),
         ("LoRA, Sharing, Extras & Indicators", test_lora_share_extras()),
         ("Accounts, Guest Isolation & HF Token UI", test_accounts_and_guest_security()),
+        ("Custom Models, HF Hub & Model Visibility", test_custom_models_and_visibility()),
     ]
 
     print("\n" + "=" * 60)

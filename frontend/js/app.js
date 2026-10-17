@@ -239,6 +239,8 @@ const App = {
       if (title) title.textContent = "Гость: " + (acc.username || "Друг");
       const bannerName = document.getElementById("guest-username-display");
       if (bannerName) bannerName.textContent = acc.username || "Гость";
+      const guestProfileUser = document.getElementById("guest-profile-username");
+      if (guestProfileUser) guestProfileUser.textContent = acc.username || "Гость";
     } else {
       document.body.classList.remove("role-guest");
       const badge = document.getElementById("user-role-badge");
@@ -259,6 +261,22 @@ const App = {
       if (hfInput && this.state.settings?.huggingface_token) {
         hfInput.value = this.state.settings.huggingface_token;
       }
+    }
+  },
+
+  async saveGuestPassword() {
+    const input = document.getElementById("guest-input-new-password");
+    const pwd = (input?.value || "").trim();
+    if (!pwd || pwd.length < 3) {
+      this.toast("warning", "Пароль должен содержать не менее 3 символов");
+      return;
+    }
+    try {
+      await this.apiPost("/api/account/change-password", { new_password: pwd });
+      if (input) input.value = "";
+      this.toast("success", "Ваш пароль успешно сохранён! ✓");
+    } catch (e) {
+      this.toast("error", "Не удалось сменить пароль: " + e.message);
     }
   },
 
@@ -632,6 +650,13 @@ const App = {
         const matchesDesc = m.description?.toLowerCase().includes(query);
         if (!matchesName && !matchesFamily && !matchesDesc) return false;
       }
+      // Visibility filter
+      if (filter === "hidden") {
+        return m.hidden_from_host === true || m.hidden_for_guests === true;
+      } else if (m.hidden_from_host === true) {
+        return false;
+      }
+
       // Category filter
       if (filter === "installed") {
         return m.installed === true;
@@ -689,12 +714,24 @@ const App = {
         ? `<span class="model-badge key-protected" style="font-size: 10px; padding: 2px 6px;">🔑 Key Protected</span>`
         : "";
 
+      let visBadges = "";
+      if (model.hidden_from_host) {
+        visBadges += `<span class="model-badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="Скрыта из общего списка">🙈 Скрыта</span>`;
+      }
+      if (model.hidden_for_guests) {
+        visBadges += `<span class="model-badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);" title="Скрыта от гостей">🔒 Только хост</span>`;
+      }
+
       const vramMin = model.requirements?.vram_min_gb ? `${model.requirements.vram_min_gb} GB` : "8 GB";
       const defaultSteps = model.transformers?.[0]?.steps || 4;
 
       let actionBtnHtml = "";
       let deleteBtnHtml = "";
-      if (model.is_custom) {
+      let visBtnHtml = "";
+      if (!this.state.isGuest) {
+        visBtnHtml = `<button class="card-action-btn secondary" style="width: auto; padding: 0 10px; font-size: 11px; height: 32px;" onclick="App.openModelVisibilityModal('${escapeHtml(model.id)}', event)" title="Видимость модели">👁️ Видимость</button>`;
+      }
+      if (model.is_custom && !this.state.isGuest) {
         deleteBtnHtml = `<button class="delete-custom-btn" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)" title="${t('custom_model.delete') || 'Delete'}">🗑 ${t('custom_model.delete') || 'Delete'}</button>`;
       }
 
@@ -728,6 +765,7 @@ const App = {
               ${engineBadge}
               ${statusBadge}
               ${keyBadge}
+              ${visBadges}
             </div>
           </div>
           <p class="card-desc">${escapeHtml(model.description || "")}</p>
@@ -740,8 +778,9 @@ const App = {
             ${teInfo}
           </div>
         </div>
-        <div class="card-footer" style="display: flex; gap: 8px; align-items: center;">
+        <div class="card-footer" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
           ${actionBtnHtml}
+          ${visBtnHtml}
           ${deleteBtnHtml}
         </div>
       `;
@@ -2227,7 +2266,7 @@ const App = {
     if (!accounts || !accounts.length) {
       list.innerHTML = `
         <div style="color: var(--text-dim); font-size: 12.5px; padding: 12px; text-align: center; background: var(--bg-card); border-radius: 8px; border: 1px dashed var(--border);">
-          Нет созданных гостевых аккаунтов. Нажмите «+ Новый гость», чтобы пригласить друга со своей историей.
+          Нет созданных гостевых аккаунтов. Нажмите «+ Новый гость», чтобы пригласить друга с постоянным паролем и изолированной историей.
         </div>
       `;
       return;
@@ -2239,6 +2278,9 @@ const App = {
       card.className = "guest-account-card";
 
       const createdDate = acc.created_at ? new Date(acc.created_at * 1000).toLocaleDateString() : "";
+      const pwdDisplay = acc.initial_password
+        ? `<span style="font-family: monospace; color: #a78bfa;">${escapeHtml(acc.initial_password)}</span>`
+        : `<span style="color: var(--text-dim); font-size: 11px;">(изменён гостем)</span>`;
 
       card.innerHTML = `
         <div class="guest-account-info">
@@ -2246,11 +2288,14 @@ const App = {
             <span>👤 ${escapeHtml(acc.username)}</span>
             <small style="color: var(--text-dim); font-weight: normal; font-size: 11px;">(${createdDate})</small>
           </div>
-          <div class="guest-account-token">Токен: ${escapeHtml(acc.token)}</div>
+          <div class="guest-account-token" style="display: flex; gap: 12px; font-size: 11px;">
+            <span>Пароль: ${pwdDisplay}</span>
+            <span style="color: var(--text-dim);">Токен: ${escapeHtml((acc.token || '').slice(0, 10))}...</span>
+          </div>
         </div>
         <div class="guest-account-actions">
-          <button type="button" class="setting-btn" onclick="App.copyGuestLink('${acc.token}')" title="Скопировать персональную ссылку для входа">📋 Ссылка</button>
-          <button type="button" class="setting-btn" onclick="App.showCreateGuestModal('${acc.id}', '${escapeHtml(acc.username)}')" title="Переименовать">✏️</button>
+          <button type="button" class="setting-btn" onclick="App.copyGuestCredentials('${escapeHtml(acc.username)}', '${escapeHtml(acc.initial_password || '')}')" title="Скопировать ссылку, логин и пароль">📋 Данные</button>
+          <button type="button" class="setting-btn" onclick="App.showCreateGuestModal('${acc.id}', '${escapeHtml(acc.username)}', '${escapeHtml(acc.initial_password || '')}')" title="Редактировать имя или пароль">✏️</button>
           <button type="button" class="setting-btn danger" onclick="App.deleteGuestAccount('${acc.id}')" title="Удалить аккаунт">🗑️</button>
         </div>
       `;
@@ -2258,21 +2303,35 @@ const App = {
     }
   },
 
-  showCreateGuestModal(accountId = null, currentName = "") {
+  generateRandomGuestPassword() {
+    const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+    let pass = "guest_";
+    for (let i = 0; i < 6; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    const pwdInput = document.getElementById("guest-account-password-input");
+    if (pwdInput) pwdInput.value = pass;
+    return pass;
+  },
+
+  showCreateGuestModal(accountId = null, currentName = "", currentPassword = "") {
     const modal = document.getElementById("guest-account-modal");
     const title = document.getElementById("guest-modal-title");
     const idInput = document.getElementById("guest-account-edit-id");
     const nameInput = document.getElementById("guest-account-username-input");
+    const pwdInput = document.getElementById("guest-account-password-input");
     if (!modal) return;
 
     if (accountId) {
-      if (title) title.textContent = "Переименовать гостя";
+      if (title) title.textContent = "Редактировать гостевой аккаунт";
       if (idInput) idInput.value = accountId;
       if (nameInput) nameInput.value = currentName || "";
+      if (pwdInput) pwdInput.value = currentPassword || "";
     } else {
       if (title) title.textContent = "Новый гостевой аккаунт";
       if (idInput) idInput.value = "";
       if (nameInput) nameInput.value = "";
+      this.generateRandomGuestPassword();
     }
     modal.style.display = "flex";
     if (nameInput) nameInput.focus();
@@ -2286,7 +2345,10 @@ const App = {
   async confirmCreateGuestAccount() {
     const idInput = document.getElementById("guest-account-edit-id");
     const nameInput = document.getElementById("guest-account-username-input");
+    const pwdInput = document.getElementById("guest-account-password-input");
     const username = (nameInput?.value || "").trim();
+    const password = (pwdInput?.value || "").trim();
+
     if (!username) {
       this.toast("error", "Укажите имя гостя");
       return;
@@ -2294,13 +2356,13 @@ const App = {
     const editId = idInput?.value;
     try {
       if (editId) {
-        await this.apiPatch(`/api/accounts/${encodeURIComponent(editId)}`, { username });
-        this.toast("success", "Аккаунт переименован ✓");
+        await this.apiPatch(`/api/accounts/${encodeURIComponent(editId)}`, { username, password });
+        this.toast("success", "Аккаунт обновлён ✓");
       } else {
-        const res = await this.apiPost("/api/accounts", { username });
+        const res = await this.apiPost("/api/accounts", { username, password });
         this.toast("success", `Аккаунт '${username}' создан ✓`);
-        if (res && res.account && res.account.token) {
-          this.copyGuestLink(res.account.token);
+        if (res && res.account) {
+          this.copyGuestCredentials(username, password || res.account.initial_password);
         }
       }
       this.closeCreateGuestModal();
@@ -2311,7 +2373,7 @@ const App = {
   },
 
   async deleteGuestAccount(accountId) {
-    if (!confirm("Удалить этот гостевой аккаунт? Его ссылка перестанет работать.")) return;
+    if (!confirm("Удалить этот гостевой аккаунт? Его ссылка и пароль перестанут работать.")) return;
     try {
       await this.apiDelete(`/api/accounts/${encodeURIComponent(accountId)}`);
       this.toast("success", "Аккаунт удалён ✓");
@@ -2319,6 +2381,23 @@ const App = {
     } catch (e) {
       this.toast("error", "Не удалось удалить аккаунт: " + e.message);
     }
+  },
+
+  copyGuestCredentials(username, password) {
+    // Determine active tunnel url or current host
+    const tunnelInput = document.getElementById("setting-share-url");
+    const tunnelUrl = tunnelInput && tunnelInput.value && !tunnelInput.value.includes("...")
+      ? tunnelInput.value.trim()
+      : window.location.origin;
+
+    const pwdText = password ? password : "(сохранённый вами пароль)";
+    const text = `⚡ LazySD UI — Доступ к генератору\nСсылка: ${tunnelUrl}\nЛогин: ${username}\nПароль: ${pwdText}`;
+
+    navigator.clipboard.writeText(text)
+      .then(() => this.toast("success", "Данные доступа (ссылка, логин, пароль) скопированы в буфер! 📋"))
+      .catch(() => {
+        prompt("Скопируйте данные для гостя:", text);
+      });
   },
 
   copyGuestLink(token) {
@@ -2900,9 +2979,12 @@ const App = {
       for (const p of presets) {
         const row = document.createElement("div");
         row.className = "dock-preset-item";
-        const delBtn = !p.builtin
+        const editBtn = p.can_edit
+          ? `<button class="history-action-btn" style="padding: 2px 6px; font-size: 11px; height: 22px; width: auto;" onclick="App.openEditPresetModal('${escapeHtml(p.id)}', event)" title="Редактировать шаблон">✏️</button>`
+          : "";
+        const delBtn = p.can_delete
           ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)" title="Удалить шаблон">🗑</button>`
-          : `<span style="font-size: 10px; color: var(--text-dim);">Preset</span>`;
+          : "";
         row.innerHTML = `
           <div class="dock-preset-info">
             <span class="dock-preset-icon">${escapeHtml(p.icon || "✨")}</span>
@@ -2911,7 +2993,10 @@ const App = {
               <div class="dock-preset-sub">${escapeHtml(p.description || "")}</div>
             </div>
           </div>
-          ${delBtn}
+          <div style="display: flex; gap: 4px; align-items: center;">
+            ${editBtn}
+            ${delBtn}
+          </div>
         `;
         row.addEventListener("click", (e) => {
           if (e.target.tagName === "BUTTON") return;
@@ -2929,17 +3014,26 @@ const App = {
       for (const p of presets) {
         const card = document.createElement("div");
         card.className = "model-card";
-        const badge = p.builtin
-          ? `<span class="badge-installed">★ Базовый</span>`
-          : `<span class="badge-custom">👤 Пользовательский</span>`;
-        const delBtn = !p.builtin
+        const ownerBadge = p.owner_id === "host"
+          ? `<span class="badge-installed">👑 Шаблон хоста</span>`
+          : `<span class="badge-custom">👤 ${escapeHtml(p.owner_name || "Гость")}</span>`;
+        const privBadge = p.is_private
+          ? `<span class="badge-custom" style="background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #f87171;">🔒 Скрытый</span>`
+          : "";
+        const editBtn = p.can_edit
+          ? `<button class="card-action-btn" style="width: auto;" onclick="App.openEditPresetModal('${escapeHtml(p.id)}')">✏️ Изменить</button>`
+          : "";
+        const delBtn = p.can_delete
           ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)">🗑 Удалить</button>`
           : "";
         card.innerHTML = `
           <div>
             <div class="model-card-header">
               <span class="model-card-title">${escapeHtml(p.icon || "✨")} ${escapeHtml(p.title)}</span>
-              <div class="model-card-badges">${badge}</div>
+              <div class="model-card-badges" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                ${ownerBadge}
+                ${privBadge}
+              </div>
             </div>
             <p class="model-card-description" style="margin-top: 8px;">${escapeHtml(p.description || "")}</p>
             <div class="model-card-reqs" style="margin-top: 10px;">
@@ -2949,8 +3043,9 @@ const App = {
               <span>🖼️ ${escapeHtml(p.ref_mode || "control_ref")}</span>
             </div>
             ${p.prompt ? `<div style="margin-top: 10px; padding: 8px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; color: var(--text-muted); max-height: 64px; overflow: hidden;">${escapeHtml(p.prompt)}</div>` : ""}
-            <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center;">
+            <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
               <button class="card-action-btn primary" style="width: auto;" onclick="App.applyPreset('${escapeHtml(p.id)}')">⚡ Применить шаблон</button>
+              ${editBtn}
               ${delBtn}
             </div>
           </div>
@@ -3053,15 +3148,77 @@ const App = {
     this.closeAllDockPopovers();
     const modal = document.getElementById("save-preset-modal");
     if (modal) modal.style.display = "flex";
-    const titleInput = document.getElementById("preset-save-name") || document.getElementById("preset-save-title");
+
+    const idInput = document.getElementById("preset-save-id");
+    if (idInput) idInput.value = "";
+    const titleHeader = document.getElementById("preset-modal-title");
+    if (titleHeader) titleHeader.textContent = "⭐ Сохранить шаблон (Preset)";
+    const titleInput = document.getElementById("preset-save-name");
     if (titleInput) {
       titleInput.value = "";
       titleInput.focus();
     }
+    const iconInput = document.getElementById("preset-save-icon");
+    if (iconInput) iconInput.value = "⭐";
+    const catInput = document.getElementById("preset-save-category");
+    if (catInput) catInput.value = "Пользовательские";
+    const descInput = document.getElementById("preset-save-desc");
+    if (descInput) descInput.value = "";
+
     const promptPre = document.getElementById("preset-save-prompt");
     if (promptPre) promptPre.value = document.getElementById("prompt-input")?.value || "";
     const negPre = document.getElementById("preset-save-neg");
     if (negPre) negPre.value = document.getElementById("negative-prompt-input")?.value || "";
+
+    const stepsPre = document.getElementById("preset-save-steps");
+    if (stepsPre) stepsPre.value = document.getElementById("steps-input")?.value || "20";
+    const cfgPre = document.getElementById("preset-save-cfg");
+    if (cfgPre) cfgPre.value = document.getElementById("cfg-input")?.value || "3.5";
+    const noisePre = document.getElementById("preset-save-noise");
+    if (noisePre) noisePre.value = document.getElementById("noise-input")?.value || "0.0";
+    const privPre = document.getElementById("preset-save-private");
+    if (privPre) privPre.checked = false;
+  },
+
+  openEditPresetModal(presetId, event) {
+    if (event) event.stopPropagation();
+    this.closeAllDockPopovers();
+    const preset = (this.state.presets || []).find(p => p.id === presetId);
+    if (!preset) return;
+
+    const modal = document.getElementById("save-preset-modal");
+    if (modal) modal.style.display = "flex";
+
+    const idInput = document.getElementById("preset-save-id");
+    if (idInput) idInput.value = preset.id;
+    const titleHeader = document.getElementById("preset-modal-title");
+    if (titleHeader) titleHeader.textContent = `✏️ Редактировать шаблон: «${preset.title}»`;
+
+    const titleInput = document.getElementById("preset-save-name");
+    if (titleInput) {
+      titleInput.value = preset.title || "";
+      titleInput.focus();
+    }
+    const iconInput = document.getElementById("preset-save-icon");
+    if (iconInput) iconInput.value = preset.icon || "⭐";
+    const catInput = document.getElementById("preset-save-category");
+    if (catInput) catInput.value = preset.category || "Пользовательские";
+    const descInput = document.getElementById("preset-save-desc");
+    if (descInput) descInput.value = preset.description || "";
+
+    const promptPre = document.getElementById("preset-save-prompt");
+    if (promptPre) promptPre.value = preset.prompt || preset.prompt_template || "";
+    const negPre = document.getElementById("preset-save-neg");
+    if (negPre) negPre.value = preset.negative_prompt || "";
+
+    const stepsPre = document.getElementById("preset-save-steps");
+    if (stepsPre) stepsPre.value = preset.steps || 20;
+    const cfgPre = document.getElementById("preset-save-cfg");
+    if (cfgPre) cfgPre.value = preset.cfg ?? 3.5;
+    const noisePre = document.getElementById("preset-save-noise");
+    if (noisePre) noisePre.value = preset.noise ?? 0.0;
+    const privPre = document.getElementById("preset-save-private");
+    if (privPre) privPre.checked = Boolean(preset.is_private);
   },
 
   closeSavePresetModal() {
@@ -3070,22 +3227,30 @@ const App = {
   },
 
   async saveCurrentAsPreset() {
-    const titleEl = document.getElementById("preset-save-name") || document.getElementById("preset-save-title");
+    const titleEl = document.getElementById("preset-save-name");
     const title = titleEl?.value?.trim();
     if (!title) {
       this.toast("warning", "Введите название шаблона");
       return;
     }
+    const editId = document.getElementById("preset-save-id")?.value?.trim() || null;
     const promptVal = document.getElementById("preset-save-prompt")?.value?.trim()
       ?? document.getElementById("prompt-input")?.value?.trim()
       ?? "";
     const negVal = document.getElementById("preset-save-neg")?.value?.trim()
       ?? document.getElementById("negative-prompt-input")?.value?.trim()
       ?? "";
+
+    const stepsVal = parseInt(document.getElementById("preset-save-steps")?.value || "20", 10);
+    const cfgVal = parseFloat(document.getElementById("preset-save-cfg")?.value || "3.5");
+    const noiseVal = parseFloat(document.getElementById("preset-save-noise")?.value || "0.0");
+    const isPrivate = Boolean(document.getElementById("preset-save-private")?.checked);
+
     const payload = {
+      id: editId,
       title: title,
-      icon: document.getElementById("preset-save-icon")?.value?.trim() || "✨",
-      category: document.getElementById("preset-save-category")?.value || "custom",
+      icon: document.getElementById("preset-save-icon")?.value?.trim() || "⭐",
+      category: document.getElementById("preset-save-category")?.value?.trim() || "Пользовательские",
       description: document.getElementById("preset-save-desc")?.value?.trim() || "",
       prompt: promptVal,
       negative_prompt: negVal,
@@ -3094,17 +3259,18 @@ const App = {
       ref_mode: document.getElementById("img2img-mode")?.value || "control_ref",
       strength: parseFloat(document.getElementById("img2img-strength")?.value || "0.85"),
       resolution: document.getElementById("resolution-select")?.value || "1024x1024",
-      steps: parseInt(document.getElementById("steps-input")?.value || "20", 10),
-      cfg: parseFloat(document.getElementById("cfg-input")?.value || "3.5"),
+      steps: stepsVal,
+      cfg: cfgVal,
       sampler: document.getElementById("sampler-select")?.value || "euler",
-      noise: parseFloat(document.getElementById("noise-input")?.value || "0.0"),
+      noise: noiseVal,
+      is_private: isPrivate,
     };
 
     try {
       await this.apiPost("/api/presets", payload);
       this.closeSavePresetModal();
       await this.loadPresets();
-      this.toast("success", `Шаблон «${title}» сохранён ✓`);
+      this.toast("success", editId ? `Шаблон «${title}» обновлён ✓` : `Шаблон «${title}» сохранён ✓`);
     } catch (e) {
       this.toast("error", e.message);
     }
@@ -3112,7 +3278,7 @@ const App = {
 
   async deletePreset(presetId, event) {
     if (event) event.stopPropagation();
-    if (!confirm("Удалить этот пользовательский шаблон?")) return;
+    if (!confirm("Удалить этот шаблон?")) return;
     try {
       const res = await fetch(`/api/presets/${encodeURIComponent(presetId)}`, { method: "DELETE" });
       if (!res.ok) {
@@ -3120,7 +3286,7 @@ const App = {
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       await this.loadPresets();
-      this.toast("info", "Шаблон удалён");
+      this.toast("info", "Шаблон удалён ✓");
     } catch (e) {
       this.toast("error", e.message);
     }
@@ -3401,18 +3567,20 @@ const App = {
     if (filesListEl) filesListEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted);">Запрос метаданных репозитория...</div>`;
 
     try {
-      const info = await this.apiGet(`/api/hf/repo-tree?repo=${encodeURIComponent(repoId)}`);
+      const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(repoId)}`);
       this.state.hfInspectedRepo = info;
 
       if (titleEl) titleEl.textContent = `📦 ${info.repo_id}`;
       const nameInp = document.getElementById("hf-import-name") || document.getElementById("hf-custom-name");
-      if (nameInp) nameInp.value = `${info.name} (HF)`;
+      const modelDisplayName = info.name || info.suggested_name || repoId.split("/").pop();
+      if (nameInp) nameInp.value = `${modelDisplayName} (HF)`;
       const famSel = document.getElementById("hf-import-family") || document.getElementById("hf-custom-family");
-      if (famSel && info.family) famSel.value = info.family;
+      if (famSel && (info.family || info.suggested_family)) famSel.value = info.family || info.suggested_family;
       const stepsInp = document.getElementById("hf-import-steps") || document.getElementById("hf-custom-steps");
-      if (stepsInp && info.steps) stepsInp.value = info.steps;
+      if (stepsInp && (info.steps || info.suggested_steps)) stepsInp.value = info.steps || info.suggested_steps;
       const cfgInp = document.getElementById("hf-import-cfg") || document.getElementById("hf-custom-cfg");
-      if (cfgInp && info.cfg !== undefined) cfgInp.value = info.cfg;
+      const suggestedCfg = info.cfg !== undefined ? info.cfg : info.suggested_cfg;
+      if (cfgInp && suggestedCfg !== undefined) cfgInp.value = suggestedCfg;
 
       if (filesListEl) {
         filesListEl.innerHTML = "";
@@ -3468,11 +3636,12 @@ const App = {
 
     const payload = {
       repo_id: info.repo_id,
-      name: nameEl?.value?.trim() || `${info.name} (HF)`,
-      family: famEl?.value || info.family || "flux",
+      name: nameEl?.value?.trim() || `${info.name || info.suggested_name || 'Model'} (HF)`,
+      family: famEl?.value || info.family || info.suggested_family || "flux",
       steps: parseInt(stepsEl?.value || "20", 10),
       cfg: parseFloat(cfgEl?.value || "3.5"),
       selected_files: selectedFiles,
+      variants: selectedFiles,
       text_encoder_files: (info.text_encoder_files || []).slice(0, 2),
     };
 
@@ -3491,17 +3660,68 @@ const App = {
 
   async deleteCustomModel(modelId, event) {
     if (event) event.stopPropagation();
-    if (!confirm(`Удалить пользовательскую модель ${modelId}?`)) return;
+    const confirmed = confirm(`Удалить модель «${modelId}» из реестра Model Hub?`);
+    if (!confirmed) return;
 
     try {
-      const res = await fetch(`/api/custom-models/${encodeURIComponent(modelId)}`, {
+      const res = await fetch(`/api/custom-models/${encodeURIComponent(modelId)}?delete_files=true`, {
         method: "DELETE",
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || "Failed to delete");
       }
-      this.toast("info", `Модель ${modelId} удалена`);
+      this.toast("info", `Модель ${modelId} удалена из реестра`);
+      await this.refreshConfig();
+      if (this.state.isModelPickerOpen) {
+        this.renderModelPickerModal();
+      }
+    } catch (err) {
+      this.toast("error", err.message);
+    }
+  },
+
+  openModelVisibilityModal(modelId, event) {
+    if (event) event.stopPropagation();
+    const modal = document.getElementById("model-visibility-modal");
+    if (!modal) return;
+    const model = (this.state.models || []).find(m => m.id === modelId);
+    if (!model) return;
+
+    const idInput = document.getElementById("model-vis-id");
+    const descEl = document.getElementById("model-vis-title-desc");
+    const chkGuests = document.getElementById("model-vis-hidden-guests");
+    const chkHost = document.getElementById("model-vis-hidden-host");
+
+    if (idInput) idInput.value = model.id;
+    if (descEl) descEl.textContent = `Модель: «${model.name}» (${model.id})`;
+    if (chkGuests) chkGuests.checked = !!model.hidden_for_guests;
+    if (chkHost) chkHost.checked = !!model.hidden_from_host;
+
+    modal.style.display = "flex";
+  },
+
+  closeModelVisibilityModal() {
+    const modal = document.getElementById("model-visibility-modal");
+    if (modal) modal.style.display = "none";
+  },
+
+  async saveModelVisibility() {
+    const idInput = document.getElementById("model-vis-id");
+    const chkGuests = document.getElementById("model-vis-hidden-guests");
+    const chkHost = document.getElementById("model-vis-hidden-host");
+    const modelId = idInput?.value;
+    if (!modelId) return;
+
+    const payload = {
+      hidden_for_guests: !!chkGuests?.checked,
+      hidden_from_host: !!chkHost?.checked,
+    };
+
+    try {
+      await this.apiPost(`/api/models/${encodeURIComponent(modelId)}/visibility`, payload);
+      this.toast("success", `✓ Настройки видимости для «${modelId}» сохранены`);
+      this.closeModelVisibilityModal();
       await this.refreshConfig();
       if (this.state.isModelPickerOpen) {
         this.renderModelPickerModal();
@@ -3622,15 +3842,17 @@ const App = {
       return;
     }
 
+    const hasRef = Boolean(this.state.img2imgRef?.url);
     const fgSrc = this.state.currentPreviewUrl || (mainImg.src && !mainImg.src.endsWith("#") ? mainImg.src : null);
-    const bgSrc = this.state.previousPreviewUrl || (this.state.img2imgRef?.url || null);
+    // Prioritize imported document/reference as the baseline (left/bg)
+    const bgSrc = hasRef ? this.state.img2imgRef.url : (this.state.previousPreviewUrl || null);
 
     if (!fgSrc) {
       this.toast("warning", "Нет изображения для сравнения. Сгенерируйте кадр.");
       return;
     }
     if (!bgSrc) {
-      this.toast("warning", "Нет второго кадра для сравнения (требуется предыдущая генерация или референс).");
+      this.toast("warning", "Нет второго кадра для сравнения (загрузите документ/референс или сгенерируйте ещё один кадр).");
       return;
     }
 
@@ -3645,8 +3867,12 @@ const App = {
     if (fgImg) fgImg.src = fgSrc;
 
     const leftLabel = document.getElementById("compare-label-left");
+    const rightLabel = document.getElementById("compare-label-right");
     if (leftLabel) {
-      leftLabel.textContent = this.state.previousPreviewUrl ? "Пред. кадр" : "Референс";
+      leftLabel.textContent = hasRef ? "Документ / Исходник" : "Пред. кадр";
+    }
+    if (rightLabel) {
+      rightLabel.textContent = "Результат";
     }
 
     this.updateCompareSlider(this.state.comparePercentage || 50);
@@ -3655,8 +3881,24 @@ const App = {
   updateCompareImages() {
     const bgImg = document.getElementById("compare-bg-img");
     const fgImg = document.getElementById("compare-fg-img");
+    const leftLabel = document.getElementById("compare-label-left");
+    const rightLabel = document.getElementById("compare-label-right");
+    const hasRef = Boolean(this.state.img2imgRef?.url);
+
     if (fgImg && this.state.currentPreviewUrl) fgImg.src = this.state.currentPreviewUrl;
-    if (bgImg && this.state.previousPreviewUrl) bgImg.src = this.state.previousPreviewUrl;
+    if (bgImg) {
+      if (hasRef) {
+        bgImg.src = this.state.img2imgRef.url;
+      } else if (this.state.previousPreviewUrl) {
+        bgImg.src = this.state.previousPreviewUrl;
+      }
+    }
+    if (leftLabel) {
+      leftLabel.textContent = hasRef ? "Документ / Исходник" : "Пред. кадр";
+    }
+    if (rightLabel) {
+      rightLabel.textContent = "Результат";
+    }
   },
 
   updateCompareSlider(pct) {

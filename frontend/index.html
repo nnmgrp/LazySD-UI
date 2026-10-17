@@ -629,8 +629,97 @@
           </div>
         </div>
 
-        <div class="settings-section">
-          <h3 data-i18n="settings.section.engine">Engines & Runtimes</h3>
+        <!-- Section: My Guest Account (Visible only for guests) -->
+        <div class="settings-section" id="section-guest-account" style="display: none;">
+          <h3>👤 Мой аккаунт гостя</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Имя пользователя (Логин)</strong><br>
+              <small style="color: var(--text-dim);">Ваш логин для подключения к мощностям хоста</small>
+            </div>
+            <div class="setting-value" id="guest-profile-username" style="font-weight: 600; color: #a78bfa;">Гость</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Смена постоянного пароля</strong><br>
+              <small style="color: var(--text-dim);">Установите свой собственный пароль вместо временного от хоста</small>
+            </div>
+            <div class="setting-value" style="display: flex; gap: 8px;">
+              <input type="password" id="guest-input-new-password" placeholder="Новый пароль..." style="flex: 1; font-size: 12px; height: 32px;">
+              <button type="button" class="icon-btn" onclick="App.toggleTokenVisibility('guest-input-new-password')" style="height: 32px; width: 32px;">👁️</button>
+            </div>
+            <div class="setting-actions">
+              <button type="button" class="setting-btn" onclick="App.saveGuestPassword()" style="background: var(--accent); color: #fff;">Сохранить пароль</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Unified Engines & Runtimes Hub (Host only) -->
+        <div class="settings-section settings-host-only" id="section-unified-engines">
+          <h3 data-i18n="settings.section.engine">⚙️ Движки генерации и среды выполнения</h3>
+
+          <!-- Subhead: Основные квантованные движки -->
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 6px 0 10px 0; font-weight: 600;">
+            Быстрые квантованные движки (GGUF, SDNQ, SVDQuant, W4A4)
+          </div>
+
+          <!-- stable-diffusion.cpp (SD.CPP) -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>SD.CPP (GGUF)</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.sdcpp_desc">Standalone GGUF runner (Flux.1 Schnell, SDXL, Unsloth Q4)</small>
+            </div>
+            <div class="setting-value" id="setting-engine-sdcpp-status">—</div>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="downloadSDCpp()" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
+            </div>
+          </div>
+
+          <!-- SDNQ (SD.Next Quantization + Diffusers) -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>SDNQ (Diffusers INT8/INT4)</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.sdnq_desc">PyTorch + Triton quantization with Hadamard & SVD (Qwen-Image-2.1 Turbo INT8)</small>
+            </div>
+            <div class="setting-value" id="setting-engine-sdnq-status">—</div>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="installSDNQ()" data-i18n="settings.engine.install_sdnq">Verify / Install</button>
+            </div>
+          </div>
+
+          <!-- Nunchaku SVDQ -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Nunchaku SVDQ (vitoom-nunchaku)</strong><br>
+              <small style="color: var(--text-dim);">Быстрый 4-битный движок SVDQuant для Flux.2 Klein (поддержка Blackwell NVFP4). Автоматическая загрузка wheel из HuggingFace.</small>
+            </div>
+            <div class="setting-value" id="setting-nunchaku-status">
+              <span class="state-badge missing">Не установлен</span>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" id="btn-install-nunchaku" onclick="App.installExtrasPackage('nunchaku')">Установить Nunchaku</button>
+            </div>
+          </div>
+
+          <!-- OrbitQuant W4A4 -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>OrbitQuant W4A4 (WaveCut)</strong><br>
+              <small style="color: var(--text-dim);">Движок ротационных квантованных кодеков OrbitQuant W4A4 для FLUX.2 Klein и Z-Image-Turbo.</small>
+            </div>
+            <div class="setting-value" id="setting-orbitquant-status">
+              <span class="state-badge missing">Не установлен</span>
+            </div>
+            <div class="setting-actions">
+              <button class="setting-btn" id="btn-install-orbitquant" onclick="App.installExtrasPackage('orbitquant')">Установить OrbitQuant</button>
+            </div>
+          </div>
+
+          <!-- Subhead: Экспериментальные движки (Legacy) -->
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 16px 0 10px 0; font-weight: 600;">
+            Экспериментальные движки QuantFunc (Legacy)
+          </div>
 
           <!-- QuantFunc v0.0.17 -->
           <div class="setting-row">
@@ -660,30 +749,6 @@
             </div>
           </div>
 
-          <!-- stable-diffusion.cpp (SD.CPP) -->
-          <div class="setting-row">
-            <div class="setting-label">
-              <strong>SD.CPP (GGUF)</strong><br>
-              <small style="color: var(--text-dim);" data-i18n="settings.engine.sdcpp_desc">Standalone GGUF runner (Flux.1 Schnell, SDXL, Unsloth Q4)</small>
-            </div>
-            <div class="setting-value" id="setting-engine-sdcpp-status">—</div>
-            <div class="setting-actions">
-              <button class="setting-btn" onclick="downloadSDCpp()" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
-            </div>
-          </div>
-
-          <!-- SDNQ (SD.Next Quantization + Diffusers) -->
-          <div class="setting-row">
-            <div class="setting-label">
-              <strong>SDNQ (Diffusers INT8/INT4)</strong><br>
-              <small style="color: var(--text-dim);" data-i18n="settings.engine.sdnq_desc">PyTorch + Triton quantization with Hadamard & SVD (Qwen-Image-2.1 Turbo INT8)</small>
-            </div>
-            <div class="setting-value" id="setting-engine-sdnq-status">—</div>
-            <div class="setting-actions">
-              <button class="setting-btn" onclick="installSDNQ()" data-i18n="settings.engine.install_sdnq">Verify / Install</button>
-            </div>
-          </div>
-
           <!-- QuantFunc models toggle -->
           <div class="setting-row">
             <div class="setting-label">
@@ -699,19 +764,7 @@
             </div>
           </div>
 
-          <!-- CUDA version & dependencies -->
-          <div class="setting-row">
-            <div class="setting-label" data-i18n="settings.cuda_version">CUDA version</div>
-            <div class="setting-value" id="setting-cuda-version">13</div>
-            <div></div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">CUDA deps</div>
-            <div class="setting-value" id="setting-cuda-status">—</div>
-            <div class="setting-actions">
-              <button class="setting-btn" onclick="downloadCudaDeps()">Download</button>
-            </div>
-          </div>
+          <!-- QuantFunc API key -->
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.qf_api_key">QuantFunc API key</div>
             <div class="setting-value">
@@ -731,6 +784,47 @@
               </small>
             </div>
             <div></div>
+          </div>
+
+          <!-- Subhead: Среды выполнения и рантаймы -->
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 16px 0 10px 0; font-weight: 600;">
+            Изолированная среда Python и CUDA
+          </div>
+
+          <!-- Extras Python environment -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong>Окружение Extras Python</strong><br>
+              <small style="color: var(--text-dim); line-height: 1.4; display: block; margin-top: 4px;">
+                Изолированная среда Python в папке <code>envs/extras</code> для запуска движков Nunchaku (vitoom) и OrbitQuant без конфликтов с основным WebUI и SD.Next.<br>
+                <em>Создаётся автоматически при первой установке Nunchaku или OrbitQuant.</em>
+              </small>
+            </div>
+            <div class="setting-value">
+              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted); line-height: 1.5; padding: 6px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border);">Проверка...</div>
+              <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="setting-extras-custom-py" placeholder="Кастомный путь к python.exe (опционально, напр. D:\...)" style="flex: 1; font-size: 11px; height: 30px;">
+                <button type="button" class="history-action-btn" onclick="App.saveExtrasPythonPath()" style="height: 30px; font-size: 11px; width: auto;">Применить путь</button>
+              </div>
+            </div>
+            <div class="setting-actions" style="display: flex; flex-direction: column; gap: 6px;">
+              <button class="setting-btn" onclick="App.refreshExtrasStatus(true)">🔍 Проверить</button>
+              <button class="setting-btn" id="btn-install-runtime" onclick="App.installExtrasPackage('runtime')">⚡ Создать окружение</button>
+            </div>
+          </div>
+
+          <!-- CUDA version & dependencies -->
+          <div class="setting-row">
+            <div class="setting-label" data-i18n="settings.cuda_version">CUDA version</div>
+            <div class="setting-value" id="setting-cuda-version">13</div>
+            <div></div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">CUDA deps</div>
+            <div class="setting-value" id="setting-cuda-status">—</div>
+            <div class="setting-actions">
+              <button class="setting-btn" onclick="downloadCudaDeps()">Download</button>
+            </div>
           </div>
           <div class="setting-row">
             <div class="setting-label">CUDA bin path<br><small style="color: var(--text-dim);">if auto-detect fails</small></div>
@@ -753,7 +847,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section settings-host-only">
           <h3 data-i18n="settings.section.gpu">GPU</h3>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.gpu_name">GPU name</div>
@@ -796,7 +890,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section settings-host-only">
           <h3 data-i18n="settings.section.vae">VAE (Variational Autoencoder)</h3>
           <div class="setting-row">
             <div class="setting-label">
@@ -813,7 +907,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section settings-host-only">
           <h3 data-i18n="settings.section.paths">Paths</h3>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.models_dir">Models directory</div>
@@ -831,7 +925,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section settings-host-only">
           <h3 data-i18n="settings.section.network">Network</h3>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.download_source">Download source priority</div>
@@ -875,7 +969,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section settings-host-only">
           <h3 data-i18n="settings.section.advanced">Advanced</h3>
           <div class="setting-row">
             <div class="setting-label" data-i18n="settings.fbcache_cond">FBCache cond threshold</div>
@@ -923,8 +1017,8 @@
           </div>
         </div>
 
-        <!-- Section: Dock Box & Interface Settings -->
-        <div class="settings-section">
+        <!-- Section: Dock Box & Interface Settings (Available to both Host and Guest) -->
+        <div class="settings-section" id="section-interface-settings">
           <h3>Интерфейс и Коробка (Gemini Dock)</h3>
           <div class="setting-row">
             <div class="setting-label">
@@ -966,7 +1060,7 @@
         </div>
 
         <!-- Section: Remote Sharing & Quick Tunnels (without Gradio) -->
-        <div class="settings-section">
+        <div class="settings-section settings-host-only" id="section-remote-tunnels">
           <h3>Деление сайтом (Remote Sharing & Tunnels)</h3>
           <div class="setting-row">
             <div class="setting-label">
@@ -1021,55 +1115,6 @@
 
           <div id="guest-accounts-list" style="display: flex; flex-direction: column; gap: 8px;">
             <div style="color: var(--text-dim); font-size: 13px; padding: 12px; text-align: center;">Загрузка списка аккаунтов...</div>
-          </div>
-        </div>
-
-        <!-- Section: Extras & Engines (OrbitQuant & Nunchaku) -->
-        <div class="settings-section">
-          <h3>Дополнительные движки (OrbitQuant & Nunchaku)</h3>
-          <div class="setting-row">
-            <div class="setting-label">
-              <strong>Nunchaku SVDQ (vitoom-nunchaku)</strong><br>
-              <small style="color: var(--text-dim);">Быстрый 4-битный движок SVDQuant для Flux.2 Klein (поддержка Blackwell NVFP4). Автоматическая загрузка wheel из HuggingFace.</small>
-            </div>
-            <div class="setting-value" id="setting-nunchaku-status">
-              <span class="state-badge missing">Не установлен</span>
-            </div>
-            <div class="setting-actions">
-              <button class="setting-btn" id="btn-install-nunchaku" onclick="App.installExtrasPackage('nunchaku')">Установить Nunchaku</button>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">
-              <strong>OrbitQuant W4A4 (WaveCut)</strong><br>
-              <small style="color: var(--text-dim);">Движок ротационных квантованных кодеков OrbitQuant W4A4 для FLUX.2 Klein и Z-Image-Turbo.</small>
-            </div>
-            <div class="setting-value" id="setting-orbitquant-status">
-              <span class="state-badge missing">Не установлен</span>
-            </div>
-            <div class="setting-actions">
-              <button class="setting-btn" id="btn-install-orbitquant" onclick="App.installExtrasPackage('orbitquant')">Установить OrbitQuant</button>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">
-              <strong>Окружение Extras Python</strong><br>
-              <small style="color: var(--text-dim); line-height: 1.4; display: block; margin-top: 4px;">
-                Изолированная среда Python в папке <code>envs/extras</code> для запуска движков Nunchaku (vitoom) и OrbitQuant без конфликтов с основным WebUI и SD.Next.<br>
-                <em>Создаётся автоматически при первой установке Nunchaku или OrbitQuant.</em>
-              </small>
-            </div>
-            <div class="setting-value">
-              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted); line-height: 1.5; padding: 6px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border);">Проверка...</div>
-              <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
-                <input type="text" id="setting-extras-custom-py" placeholder="Кастомный путь к python.exe (опционально, напр. D:\...)" style="flex: 1; font-size: 11px; height: 30px;">
-                <button type="button" class="history-action-btn" onclick="App.saveExtrasPythonPath()" style="height: 30px; font-size: 11px; width: auto;">Применить путь</button>
-              </div>
-            </div>
-            <div class="setting-actions" style="display: flex; flex-direction: column; gap: 6px;">
-              <button class="setting-btn" onclick="App.refreshExtrasStatus(true)">🔍 Проверить</button>
-              <button class="setting-btn" id="btn-install-runtime" onclick="App.installExtrasPackage('runtime')">⚡ Создать окружение</button>
-            </div>
           </div>
         </div>
 
@@ -1534,17 +1579,28 @@
     </div>
   </div>
 
-  <!-- Modal: Create / Rename Guest Account -->
+  <!-- Modal: Create / Edit Guest Account -->
   <div id="guest-account-modal" class="modal-overlay" style="display: none;">
     <div class="modal-content" style="max-width: 440px; padding: 22px;">
       <h3 style="margin: 0 0 8px 0;" id="guest-modal-title">Новый гостевой аккаунт</h3>
       <p style="color: var(--text-dim); font-size: 12.5px; margin-bottom: 16px;">
-        Укажите имя друга или коллеги. Для него будет создан постоянный профиль, персональная ссылка и изолированная история генераций на этом компьютере.
+        Укажите логин и постоянный пароль для гостя. Гость сможет войти по ним по ссылке туннеля и при желании изменить свой пароль.
       </p>
       <input type="hidden" id="guest-account-edit-id" value="">
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; font-size: 12px; margin-bottom: 6px; color: var(--text-muted);">Имя пользователя / Никнейм:</label>
-        <input type="text" id="guest-account-username-input" placeholder="Например: Друг, Коллега, Алекс" style="width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-primary); color: #fff;">
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; margin-bottom: 6px; color: var(--text-muted);">Имя пользователя / Логин:</label>
+        <input type="text" id="guest-account-username-input" placeholder="Например: Alex" style="width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-primary); color: #fff;">
+      </div>
+      <div style="margin-bottom: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label style="font-size: 12px; color: var(--text-muted);">Пароль аккаунта:</label>
+          <button type="button" class="history-action-btn" onclick="App.generateRandomGuestPassword()" style="font-size: 11px; padding: 2px 8px; height: 22px; width: auto;">🎲 Сгенерировать</button>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" id="guest-account-password-input" placeholder="Введите пароль..." style="flex: 1; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-primary); color: #fff; font-family: monospace;">
+          <button type="button" class="icon-btn" onclick="App.toggleTokenVisibility('guest-account-password-input')" style="height: 38px; width: 38px;">👁️</button>
+        </div>
+        <small style="color: var(--text-dim); font-size: 11px; display: block; margin-top: 4px;">Гость сможет сохранить или сменить этот пароль в настройках своего профиля.</small>
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 8px;">
         <button type="button" class="setting-btn" onclick="App.closeCreateGuestModal()">Отмена</button>
@@ -1570,10 +1626,10 @@
             <div class="model-picker-search-wrap" style="flex: 1;">
               <input type="text" id="model-picker-search" class="model-picker-search-input" placeholder="Search models by name or family..." data-i18n-placeholder="models.search_placeholder" oninput="App.onModelPickerSearch(this.value)">
             </div>
-            <button type="button" class="generate-btn" style="height: 36px; padding: 0 14px; font-size: 12px;" onclick="App.openCustomModelModal('local')">
+            <button type="button" class="generate-btn settings-host-only" style="height: 36px; padding: 0 14px; font-size: 12px;" onclick="App.openCustomModelModal('local')">
               <span>➕</span> <span data-i18n="models.add_custom">Локальная модель</span>
             </button>
-            <button type="button" class="generate-btn" style="height: 36px; padding: 0 14px; font-size: 12px; background: #6366f1;" onclick="App.openCustomModelModal('hf')">
+            <button type="button" class="generate-btn settings-host-only" style="height: 36px; padding: 0 14px; font-size: 12px; background: #6366f1;" onclick="App.openCustomModelModal('hf')">
               <span>🤗</span> <span>Hugging Face</span>
             </button>
           </div>
@@ -1586,12 +1642,43 @@
             <button class="filter-chip" data-filter="sdnq" onclick="App.setModelPickerFilter('sdnq', this)">SDNQ (INT8)</button>
             <button class="filter-chip" data-filter="sd_cpp" onclick="App.setModelPickerFilter('sd_cpp', this)">SD.CPP (GGUF)</button>
             <button class="filter-chip" data-filter="custom" onclick="App.setModelPickerFilter('custom', this)" data-i18n="models.filter_custom">🎨 Custom</button>
+            <button class="filter-chip settings-host-only" id="filter-chip-hidden" data-filter="hidden" onclick="App.setModelPickerFilter('hidden', this)">🙈 Скрытые</button>
           </div>
         </div>
       </div>
       <div class="model-picker-body">
         <div class="model-picker-grid" id="model-picker-grid">
           <!-- Dynamically populated by App.renderModelPickerModal() -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Model Visibility Settings (Host only) -->
+  <div id="model-visibility-modal" class="modal-overlay" style="display: none; z-index: 10003;">
+    <div class="modal-content" style="max-width: 480px; padding: 22px;">
+      <button class="modal-close" onclick="App.closeModelVisibilityModal()">✕</button>
+      <h3 style="margin: 0 0 6px; font-size: 16px;">👁️ Видимость модели</h3>
+      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);" id="model-vis-title-desc">Настройка видимости модели для гостей и основного списка</p>
+      <input type="hidden" id="model-vis-id" value="">
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px;">
+          <input type="checkbox" id="model-vis-hidden-guests" style="margin-top: 2px;">
+          <div>
+            <div style="font-weight: 600; color: var(--text-bright);">🔒 Скрыть от гостей</div>
+            <div style="font-size: 11px; color: var(--text-dim);">Удаленные клиенты и гости не видят эту модель в Хабе и не могут запускать с ней генерацию.</div>
+          </div>
+        </label>
+        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px;">
+          <input type="checkbox" id="model-vis-hidden-host" style="margin-top: 2px;">
+          <div>
+            <div style="font-weight: 600; color: var(--text-bright);">🙈 Скрыть из общего списка</div>
+            <div style="font-size: 11px; color: var(--text-dim);">Модель не будет загромождать основной список и будет доступна только во вкладке «Скрытые».</div>
+          </div>
+        </label>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeModelVisibilityModal()">Отмена</button>
+          <button type="button" class="generate-btn" style="width: auto; padding: 0 18px;" onclick="App.saveModelVisibility()">✓ Сохранить</button>
         </div>
       </div>
     </div>
@@ -1749,12 +1836,13 @@
     </div>
   </div>
 
-  <!-- Modal: Save Current Settings as Template / Preset -->
+  <!-- Modal: Save / Edit Template / Preset -->
   <div id="save-preset-modal" class="modal-overlay" style="display: none; z-index: 10002;">
-    <div class="modal-content" style="max-width: 500px; padding: 24px;">
+    <div class="modal-content" style="max-width: 520px; padding: 24px;">
       <button class="modal-close" onclick="App.closeSavePresetModal()">✕</button>
-      <h3 style="margin: 0 0 6px; font-size: 17px;">⭐ Сохранить шаблон (Preset)</h3>
-      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);">Сохраняет промпт, негативный промпт, выбранную модель, разрешение, шаги, CFG и настройки референса</p>
+      <h3 style="margin: 0 0 6px; font-size: 17px;" id="preset-modal-title">⭐ Сохранить шаблон (Preset)</h3>
+      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);">Сохраняет промпт, негативный промпт, выбранную модель, разрешение, шаги, CFG и настройки генерации</p>
+      <input type="hidden" id="preset-save-id" value="">
       <div style="display: flex; flex-direction: column; gap: 12px;">
         <div style="display: grid; grid-template-columns: 70px 1fr; gap: 10px;">
           <div class="control-group" style="min-width: 0;">
@@ -1763,7 +1851,7 @@
           </div>
           <div class="control-group" style="min-width: 0;">
             <label>Название шаблона</label>
-            <input type="text" id="preset-save-name" placeholder="например: Моя настройка для манги Q8">
+            <input type="text" id="preset-save-name" placeholder="например: Чистый лайн-арт манги">
           </div>
         </div>
         <div class="control-group">
@@ -1782,9 +1870,34 @@
           <label>Негативный промпт</label>
           <textarea id="preset-save-neg" rows="2" style="font-size: 12px;"></textarea>
         </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div class="control-group">
+            <label>Шаги (Steps)</label>
+            <input type="number" id="preset-save-steps" value="20" min="1" max="100">
+          </div>
+          <div class="control-group">
+            <label>CFG Scale</label>
+            <input type="number" id="preset-save-cfg" value="3.5" step="0.1" min="1.0" max="20.0">
+          </div>
+          <div class="control-group">
+            <label>Шум (Noise)</label>
+            <input type="number" id="preset-save-noise" value="0.0" step="0.01" min="0.0" max="1.0">
+          </div>
+        </div>
+        <div style="margin-top: 4px; padding: 10px 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="preset-save-private" style="cursor: pointer;">
+            <label for="preset-save-private" style="font-size: 12px; color: var(--text-primary); cursor: pointer; font-weight: 500;">
+              🔒 Скрыть этот шаблон в интерфейсе от других пользователей
+            </label>
+          </div>
+          <small style="display: block; color: var(--text-dim); margin-top: 4px; font-size: 11px;">
+            Примечание: все файлы шаблонов физически хранятся на компьютере хоста, но приватные шаблоны будут скрыты из общего списка.
+          </small>
+        </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;">
           <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeSavePresetModal()">Отмена</button>
-          <button type="button" class="generate-btn" onclick="App.saveCurrentAsPreset()">💾 Сохранить шаблон</button>
+          <button type="button" class="generate-btn" id="btn-save-preset-confirm" onclick="App.saveCurrentAsPreset()">💾 Сохранить шаблон</button>
         </div>
       </div>
     </div>

@@ -3162,13 +3162,14 @@ textarea {
   gap: 6px;
 }
 
-/* In Guest Mode: securely hide host-only settings */
+/* In Guest Mode: strictly hide all host-only settings, leaving ONLY My Account and Interface */
+body.role-guest .settings-host-only,
 body.role-guest #settings-accounts-section,
+body.role-guest #section-unified-engines,
+body.role-guest #section-remote-tunnels,
 body.role-guest #setting-row-hf-token,
 body.role-guest #setting-models-dir,
 body.role-guest #setting-output-dir,
-body.role-guest .settings-host-only,
-body.role-guest .section-remote-tunnels,
 body.role-guest #setting-share-token,
 body.role-guest #setting-share-autostart,
 body.role-guest #btn-share-toggle,
@@ -3180,6 +3181,16 @@ body.role-guest #setting-ms-token {
 body.role-guest #guest-mode-banner {
   display: flex !important;
 }
+body.role-guest #section-guest-account {
+  display: block !important;
+}
+body:not(.role-guest) #section-guest-account {
+  display: none !important;
+}
+body:not(.role-guest) #guest-mode-banner {
+  display: none !important;
+}
+
 
 
 

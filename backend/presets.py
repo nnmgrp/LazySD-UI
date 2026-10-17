@@ -121,17 +121,27 @@ FACTORY_PRESETS: list[dict[str, Any]] = [
 ]
 
 
-def _get_user_presets_path() -> Path:
+def _get_presets_path() -> Path:
     settings = get_settings()
     presets_dir = settings.models_dir.parent / "presets"
     presets_dir.mkdir(parents=True, exist_ok=True)
-    return presets_dir / "user_presets.json"
+    return presets_dir / "presets.json"
 
 
-def _load_user_presets() -> list[dict[str, Any]]:
-    path = _get_user_presets_path()
+def _load_all_presets() -> list[dict[str, Any]]:
+    path = _get_presets_path()
     if not path.exists():
-        return []
+        # Initialize with factory presets so that even factory presets can be edited and deleted by the host!
+        initial = []
+        for p in FACTORY_PRESETS:
+            item = dict(p)
+            item["owner_id"] = "host"
+            item["owner_name"] = "Хост"
+            item["is_private"] = False
+            item["builtin"] = True
+            initial.append(item)
+        _save_all_presets(initial)
+        return initial
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
@@ -141,21 +151,35 @@ def _load_user_presets() -> list[dict[str, Any]]:
     return []
 
 
-def _save_user_presets(presets: list[dict[str, Any]]) -> None:
-    path = _get_user_presets_path()
+def _save_all_presets(presets: list[dict[str, Any]]) -> None:
+    path = _get_presets_path()
     path.write_text(json.dumps(presets, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _normalize_preset(p: dict[str, Any]) -> dict[str, Any]:
+def _normalize_preset(p: dict[str, Any], caller_account: Optional[dict] = None) -> dict[str, Any]:
     """Ensure every preset exposes both flat and nested fields for UI & API."""
     out = dict(p)
     st = dict(out.get("settings") or {})
     title = out.get("title") or out.get("name") or "Preset"
     out["title"] = title
     out["name"] = title
-    builtin = bool(out.get("builtin") if "builtin" in out else out.get("is_factory", False))
-    out["builtin"] = builtin
-    out["is_factory"] = builtin
+    
+    owner_id = out.get("owner_id") or ("host" if out.get("is_factory") or out.get("builtin") else "host")
+    out["owner_id"] = owner_id
+    out["owner_name"] = out.get("owner_name") or ("Хост" if owner_id == "host" else "Гость")
+    out["is_private"] = bool(out.get("is_private", False))
+
+    caller_id = (caller_account or {}).get("id", "host")
+    is_guest = bool((caller_account or {}).get("is_guest", False))
+
+    if not is_guest or caller_id in ("host", "host_remote"):
+        # Host can edit and delete ANY preset (including factory presets)
+        out["can_edit"] = True
+        out["can_delete"] = True
+    else:
+        # Guests can only edit/delete their own presets
+        out["can_edit"] = (owner_id == caller_id)
+        out["can_delete"] = (owner_id == caller_id)
 
     raw_prompt = out.get("prompt") or out.get("prompt_template") or ""
     clean_prompt = raw_prompt.replace("{prompt}, ", "").replace("{prompt}", "").strip()
@@ -176,65 +200,141 @@ def _normalize_preset(p: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def list_presets() -> list[dict[str, Any]]:
-    """Return combined list of factory presets and user presets."""
-    user_presets = _load_user_presets()
-    return [_normalize_preset(p) for p in (FACTORY_PRESETS + user_presets)]
+def list_presets(caller_account: Optional[dict] = None) -> list[dict[str, Any]]:
+    """Return filtered presets list based on caller role & ownership."""
+    all_presets = _load_all_presets()
+    caller = caller_account or {"role": "host", "id": "host", "is_guest": False}
+    caller_id = caller.get("id", "host")
+    is_guest = bool(caller.get("is_guest", False))
+
+    results = []
+    for p in all_presets:
+        owner_id = p.get("owner_id") or "host"
+        is_private = bool(p.get("is_private", False))
+
+        if is_guest:
+            # Guests see all host presets + their own presets. They never see other guests' private presets.
+            if owner_id in ("host", "host_remote") or owner_id == caller_id:
+                results.append(_normalize_preset(p, caller))
+        else:
+            # Host sees everything (including guest presets)
+            results.append(_normalize_preset(p, caller))
+    return results
 
 
-def save_user_preset(data: dict[str, Any]) -> dict[str, Any]:
-    """Create or update a user preset."""
+def save_user_preset(data: dict[str, Any], caller_account: Optional[dict] = None) -> dict[str, Any]:
+    """Create or update a preset with permission checks."""
+    caller = caller_account or {"role": "host", "id": "host", "username": "Хост", "is_guest": False}
+    caller_id = caller.get("id", "host")
+    is_guest = bool(caller.get("is_guest", False))
+
     name = (data.get("title") or data.get("name") or "").strip()
     if not name:
         raise ValueError("Название шаблона обязательно")
 
     raw_id = (data.get("id") or "").strip()
-    if not raw_id:
+    all_presets = _load_all_presets()
+
+    # If updating an existing preset
+    existing_idx = None
+    existing_preset = None
+    if raw_id:
+        for idx, item in enumerate(all_presets):
+            if item.get("id") == raw_id:
+                existing_idx = idx
+                existing_preset = item
+                break
+
+    if existing_preset is not None:
+        # Check permission to edit
+        owner_id = existing_preset.get("owner_id") or "host"
+        if is_guest and owner_id != caller_id:
+            raise PermissionError("Гость не может редактировать чужие шаблоны или шаблоны хоста")
+        owner_name = existing_preset.get("owner_name") or caller.get("username", "Пользователь")
+    else:
+        # Creating a new preset
         slug = re.sub(r"[^\w\s-]", "", name.lower())
         slug = re.sub(r"[\s_-]+", "_", slug).strip("_") or "preset"
-        raw_id = f"user_{slug}_{int(time.time()) % 100000}"
+        raw_id = f"preset_{slug}_{int(time.time()) % 100000}"
+        owner_id = caller_id if is_guest else "host"
+        owner_name = caller.get("username", "Гость" if is_guest else "Хост")
 
     st = dict(data.get("settings") or {})
     for key in ("model_id", "variant_id", "ref_mode", "strength", "resolution", "steps", "cfg", "sampler", "noise"):
         if key in data and data[key] is not None:
             st[key] = data[key]
 
-    preset = _normalize_preset({
+    is_private = bool(data.get("is_private", False))
+
+    preset = {
         "id": raw_id,
         "name": name,
         "title": name,
-        "category": (data.get("category") or "Пользовательские").strip(),
-        "icon": (data.get("icon") or "⭐").strip(),
+        "category": (data.get("category") or ("Гостевые" if is_guest else "Пользовательские")).strip(),
+        "icon": (data.get("icon") or ("👤" if is_guest else "⭐")).strip(),
         "description": (data.get("description") or "").strip(),
         "prompt": (data.get("prompt") or data.get("prompt_template") or "").strip(),
         "prompt_template": (data.get("prompt_template") or data.get("prompt") or "").strip(),
         "negative_prompt": (data.get("negative_prompt") or "").strip(),
         "settings": st,
+        "owner_id": owner_id,
+        "owner_name": owner_name,
+        "is_private": is_private,
         "is_factory": False,
         "builtin": False,
-        "created_at": int(time.time()),
-    })
+        "updated_at": int(time.time()),
+    }
 
-    user_presets = _load_user_presets()
-    replaced = False
-    for idx, existing in enumerate(user_presets):
-        if existing.get("id") == raw_id:
-            user_presets[idx] = preset
-            replaced = True
+    if existing_idx is not None:
+        all_presets[existing_idx] = preset
+    else:
+        preset["created_at"] = int(time.time())
+        all_presets.insert(0, preset)
+
+    _save_all_presets(all_presets)
+    return _normalize_preset(preset, caller)
+
+
+def delete_user_preset(preset_id: str, caller_account: Optional[dict] = None) -> bool:
+    """Delete a preset with permission checks."""
+    caller = caller_account or {"role": "host", "id": "host", "is_guest": False}
+    caller_id = caller.get("id", "host")
+    is_guest = bool(caller.get("is_guest", False))
+
+    all_presets = _load_all_presets()
+    target_idx = None
+    target_preset = None
+    for idx, item in enumerate(all_presets):
+        if item.get("id") == preset_id:
+            target_idx = idx
+            target_preset = item
             break
-    if not replaced:
-        user_presets.insert(0, preset)
 
-    _save_user_presets(user_presets)
-    return preset
-
-
-def delete_user_preset(preset_id: str) -> bool:
-    """Delete a user preset by ID."""
-    user_presets = _load_user_presets()
-    filtered = [p for p in user_presets if p.get("id") != preset_id]
-    if len(filtered) == len(user_presets):
+    if target_preset is None:
         return False
-    _save_user_presets(filtered)
+
+    owner_id = target_preset.get("owner_id") or "host"
+    if is_guest and owner_id != caller_id:
+        raise PermissionError("Гость не может удалять шаблоны хоста или других пользователей")
+
+    all_presets.pop(target_idx)
+    _save_all_presets(all_presets)
     return True
+
+
+def restore_factory_presets() -> list[dict[str, Any]]:
+    """Host helper to reset/repopulate factory presets."""
+    all_presets = _load_all_presets()
+    existing_ids = {p.get("id") for p in all_presets}
+    for p in FACTORY_PRESETS:
+        if p["id"] not in existing_ids:
+            item = dict(p)
+            item["owner_id"] = "host"
+            item["owner_name"] = "Хост"
+            item["is_private"] = False
+            item["builtin"] = True
+            all_presets.append(item)
+    _save_all_presets(all_presets)
+    return list_presets()
+
 

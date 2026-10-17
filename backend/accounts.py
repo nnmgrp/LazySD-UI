@@ -67,7 +67,11 @@ class AccountsManager:
                 return acc
         return None
 
-    def create_guest_account(self, username: str) -> dict:
+    def _hash_password(self, password: str, salt: str) -> str:
+        import hashlib
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+
+    def create_guest_account(self, username: str, password: Optional[str] = None) -> dict:
         username = (username or "").strip() or "Гость"
         # Sanitize username (letters, numbers, underscores, spaces, hyphens)
         clean_name = "".join(c for c in username if c.isalnum() or c in (" ", "_", "-", "(", ")", ".", "@")).strip()
@@ -80,11 +84,24 @@ class AccountsManager:
         account_id = f"guest_{secrets.token_hex(4)}"
         token = f"gst_{secrets.token_urlsafe(16)}"
 
+        raw_pwd = (password or "").strip()
+        is_custom = bool(raw_pwd)
+        if not raw_pwd:
+            # Generate friendly initial temporary password
+            raw_pwd = f"guest_{secrets.token_hex(3)}"
+
+        salt = secrets.token_hex(16)
+        pwd_hash = self._hash_password(raw_pwd, salt)
+
         new_acc = {
             "id": account_id,
             "username": clean_name,
             "role": "guest",
             "token": token,
+            "salt": salt,
+            "password_hash": pwd_hash,
+            "initial_password": raw_pwd if not is_custom else raw_pwd,
+            "has_custom_password": is_custom,
             "created_at": int(time.time()),
             "is_active": True,
         }
@@ -92,19 +109,52 @@ class AccountsManager:
         self.save_data(data)
         return new_acc
 
-    def rename_guest_account(self, account_id: str, new_username: str) -> Optional[dict]:
-        new_username = (new_username or "").strip()
-        clean_name = "".join(c for c in new_username if c.isalnum() or c in (" ", "_", "-", "(", ")", ".", "@")).strip()
-        if not clean_name:
-            clean_name = "Гость"
-
+    def update_guest_account(
+        self,
+        account_id: str,
+        new_username: Optional[str] = None,
+        new_password: Optional[str] = None,
+    ) -> Optional[dict]:
         data = self.load_data()
         for acc in data.get("accounts", []):
             if acc.get("id") == account_id:
-                acc["username"] = clean_name
+                if new_username is not None:
+                    u = new_username.strip()
+                    clean_name = "".join(c for c in u if c.isalnum() or c in (" ", "_", "-", "(", ")", ".", "@")).strip()
+                    if clean_name:
+                        acc["username"] = clean_name
+                if new_password is not None and new_password.strip():
+                    raw_pwd = new_password.strip()
+                    salt = secrets.token_hex(16)
+                    acc["salt"] = salt
+                    acc["password_hash"] = self._hash_password(raw_pwd, salt)
+                    acc["initial_password"] = raw_pwd
+                    acc["has_custom_password"] = True
+                    acc["token"] = f"gst_{secrets.token_urlsafe(16)}"
                 self.save_data(data)
                 return acc
         return None
+
+    def change_guest_password(self, account_id: str, new_password: str) -> bool:
+        """Guest self-service: update their own password."""
+        raw_pwd = (new_password or "").strip()
+        if not raw_pwd:
+            return False
+        data = self.load_data()
+        for acc in data.get("accounts", []):
+            if acc.get("id") == account_id:
+                salt = secrets.token_hex(16)
+                acc["salt"] = salt
+                acc["password_hash"] = self._hash_password(raw_pwd, salt)
+                acc["initial_password"] = None  # Cleared once guest sets their personal secret
+                acc["has_custom_password"] = True
+                acc["token"] = f"gst_{secrets.token_urlsafe(16)}"
+                self.save_data(data)
+                return True
+        return False
+
+    def rename_guest_account(self, account_id: str, new_username: str) -> Optional[dict]:
+        return self.update_guest_account(account_id, new_username=new_username)
 
     def delete_guest_account(self, account_id: str) -> bool:
         data = self.load_data()
@@ -124,6 +174,32 @@ class AccountsManager:
                 acc["token"] = new_token
                 self.save_data(data)
                 return new_token
+        return None
+
+    def verify_login(self, username: str, password: str) -> Optional[dict]:
+        """Verify username & password against registered active accounts."""
+        if not username or not password:
+            return None
+        clean_user = username.strip().lower()
+        clean_pwd = password.strip()
+
+        for acc in self.list_accounts():
+            if not acc.get("is_active", True):
+                continue
+            acc_user = (acc.get("username") or "").strip().lower()
+            if acc_user != clean_user:
+                continue
+
+            salt = acc.get("salt")
+            pwd_hash = acc.get("password_hash")
+            if salt and pwd_hash:
+                test_hash = self._hash_password(clean_pwd, salt)
+                if secrets.compare_digest(test_hash, pwd_hash):
+                    return acc
+            elif acc.get("initial_password") and secrets.compare_digest(acc.get("initial_password"), clean_pwd):
+                return acc
+            elif acc.get("token") and secrets.compare_digest(acc.get("token"), clean_pwd):
+                return acc
         return None
 
 
