@@ -34,9 +34,18 @@
       "size_bytes": 2630667468,
       "recommended": true,
       "recommended_for_gpu": [
-        "RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090",
-        "RTX 4060", "RTX 4070", "RTX 4080", "RTX 4090",
-        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+        "RTX 3060",
+        "RTX 3070",
+        "RTX 3080",
+        "RTX 3090",
+        "RTX 4060",
+        "RTX 4070",
+        "RTX 4080",
+        "RTX 4090",
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
       ],
       "note": "Nunchaku SVDQuant INT4-r32 (~2.45 GB)"
     },
@@ -51,7 +60,10 @@
       "size_bytes": 2748779069,
       "recommended": false,
       "recommended_for_gpu": [
-        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
       ],
       "note": "Nunchaku SVDQuant FP4-r32 (NVFP4 for Blackwell/RTX 50-series)"
     }
@@ -71,5 +83,27 @@
       "cfg": 1.0,
       "sampler": "euler"
     }
-  }
+  },
+  "text_encoders": [
+    {
+      "id": "qwen3_4b_text_nunchaku",
+      "name": "Qwen3-4B Text Encoder (Tonera SVDQ INT4)",
+      "file": "svdq-int4-Qwen3-4B-text-Nunchaku.safetensors",
+      "precision": "int4",
+      "size_gb": 2.68,
+      "size_bytes": 2872610792,
+      "recommended": true,
+      "source": {
+        "repo_id": "tonera/Qwen3-4B-text-Nunchaku",
+        "file_path": "svdq-int4-Qwen3-4B-text-Nunchaku.safetensors"
+      }
+    }
+  ],
+  "tags": [
+    "svdq",
+    "nunchaku",
+    "tonera",
+    "klein",
+    "flux"
+  ]
 }

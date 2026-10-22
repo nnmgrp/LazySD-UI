@@ -1,0 +1,119 @@
+{
+  "id": "flux_2_klein_9b_kv_nunchaku",
+  "name": "Flux.2 Klein 9B KV (Nunchaku SVDQ)",
+  "family": "klein",
+  "pipeline": "text_to_image",
+  "engine": "nunchaku",
+  "engine_version": "nunchaku",
+  "key_protected": false,
+  "description": "FLUX.2 Klein 9B with KV caching quantized with SVDQuant for Nunchaku engine. Fast 4-step generation with INT4-r32 or Blackwell FP4-r32.",
+  "upstream": {
+    "model": "tonera/FLUX.2-klein-9b-kv-Nunchaku",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "tonera/FLUX.2-klein-9b-kv-Nunchaku"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "text_encoders": [
+    {
+      "id": "qwen3_4b_text_nunchaku",
+      "name": "Qwen3-4B Text Encoder (Tonera SVDQ INT4)",
+      "file": "svdq-int4-Qwen3-4B-text-Nunchaku.safetensors",
+      "precision": "int4",
+      "size_gb": 2.68,
+      "size_bytes": 2872610792,
+      "recommended": true,
+      "source": {
+        "repo_id": "tonera/Qwen3-4B-text-Nunchaku",
+        "file_path": "svdq-int4-Qwen3-4B-text-Nunchaku.safetensors"
+      }
+    },
+    {
+      "id": "qwen3_8b_q8_0",
+      "name": "Qwen3-8B Q8_0 GGUF (~8.1 GB, High Fidelity)",
+      "file": "Qwen3-8B-Q8_0.gguf",
+      "precision": "q8_0",
+      "size_gb": 8.11,
+      "size_bytes": 8709519168,
+      "recommended": false,
+      "source": {
+        "repo_id": "unsloth/Qwen3-8B-GGUF",
+        "file_path": "Qwen3-8B-Q8_0.gguf"
+      }
+    }
+  ],
+  "transformers": [
+    {
+      "id": "svdq-int4-r32-9b-kv",
+      "path": "svdq-int4_r32-FLUX.2-klein-9b-kv-Nunchaku.safetensors",
+      "tier": "universal",
+      "backend": "nunchaku",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 5.15,
+      "size_bytes": 5525885584,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3080",
+        "RTX 3090",
+        "RTX 4070",
+        "RTX 4080",
+        "RTX 4090",
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant INT4-r32 with KV-cache (~5.15 GB)"
+    },
+    {
+      "id": "svdq-fp4-r32-9b-kv",
+      "path": "svdq-fp4_r32-FLUX.2-klein-9b-kv-Nunchaku.safetensors",
+      "tier": "50x-above",
+      "backend": "nunchaku",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 5.4,
+      "size_bytes": 5800843424,
+      "recommended": false,
+      "recommended_for_gpu": [
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant FP4-r32 with KV-cache (NVFP4 for Blackwell/RTX 50-series)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 16,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler": "euler"
+    }
+  },
+  "tags": [
+    "svdq",
+    "nunchaku",
+    "tonera",
+    "klein",
+    "flux"
+  ]
+}

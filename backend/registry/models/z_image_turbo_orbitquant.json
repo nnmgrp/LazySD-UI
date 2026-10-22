@@ -19,8 +19,8 @@
     }
   },
   "base_models": {
-    "50x-above": ".",
-    "50x-below": "."
+    "50x-above": "Tongyi-MAAS/Z-Image-Turbo",
+    "50x-below": "Tongyi-MAAS/Z-Image-Turbo"
   },
   "transformers": [
     {
@@ -30,13 +30,21 @@
       "backend": "orbitquant",
       "steps": 8,
       "prequant": false,
-      "size_gb": 3.10,
+      "size_gb": 3.1,
       "size_bytes": 3328599654,
       "recommended": true,
       "recommended_for_gpu": [
-        "RTX 3060", "RTX 3080", "RTX 3090",
-        "RTX 4060 Ti", "RTX 4070", "RTX 4080", "RTX 4090",
-        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+        "RTX 3060",
+        "RTX 3080",
+        "RTX 3090",
+        "RTX 4060 Ti",
+        "RTX 4070",
+        "RTX 4080",
+        "RTX 4090",
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
       ],
       "note": "OrbitQuant W4A4 (~3.1 GB)"
     }

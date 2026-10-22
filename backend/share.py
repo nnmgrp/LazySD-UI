@@ -70,6 +70,9 @@ _GUEST_ALLOW: list[tuple[str, re.Pattern]] = [
     ("POST", re.compile(r"^/api/account/change-password$")),
     ("POST", re.compile(r"^/api/presets$")),
     ("DELETE", re.compile(r"^/api/presets/[^/]+$")),
+    ("GET", re.compile(r"^/api/loras/check-compatibility$")),
+    ("POST", re.compile(r"^/api/halftone/process$")),
+    ("POST", re.compile(r"^/api/manga/(process|ai-job)$")),
 ]
 
 

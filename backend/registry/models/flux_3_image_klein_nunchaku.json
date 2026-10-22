@@ -1,0 +1,101 @@
+{
+  "id": "flux_3_image_klein_nunchaku",
+  "name": "Flux.3 Image Klein (Nunchaku SVDQ)",
+  "family": "flux3",
+  "pipeline": "text_to_image",
+  "engine": "nunchaku",
+  "engine_version": "nunchaku",
+  "key_protected": false,
+  "description": "FLUX.3 Image Klein model quantized with SVDQuant for Nunchaku (vitoom) engine. Uses shared Qwen3-VL-4B text encoder.",
+  "upstream": {
+    "model": "tonera/flux-3-image-klein-nunchaku",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "tonera/flux-3-image-klein-nunchaku"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "transformers": [
+    {
+      "id": "svdq-int4-r32-flux3",
+      "path": "svdq-int4_r32-flux-3-image-klein-nunchaku.safetensors",
+      "tier": "universal",
+      "backend": "nunchaku",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 4.08,
+      "size_bytes": 4380059264,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3080",
+        "RTX 3090",
+        "RTX 4070",
+        "RTX 4080",
+        "RTX 4090",
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant INT4-r32 (~4.08 GB)"
+    },
+    {
+      "id": "svdq-fp4-r32-flux3",
+      "path": "svdq-fp4_r32-flux-3-image-klein-nunchaku.safetensors",
+      "tier": "50x-above",
+      "backend": "nunchaku",
+      "steps": 4,
+      "prequant": false,
+      "size_gb": 4.22,
+      "size_bytes": 4528333088,
+      "recommended": false,
+      "recommended_for_gpu": [
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant FP4-r32 (NVFP4 for Blackwell/RTX 50-series)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 16,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler": "euler"
+    }
+  },
+  "default_cfg": 1.0,
+  "text_encoders": [
+    {
+      "id": "qwen3_vl_4b_nunchaku",
+      "name": "Qwen3-VL-4B-Instruct (Tonera SVDQ INT4)",
+      "file": "svdq-int4-Qwen3-VL-4B-Instruct-Nunchaku.safetensors",
+      "precision": "int4",
+      "size_gb": 3.45,
+      "size_bytes": 3703354072,
+      "recommended": true,
+      "source": {
+        "repo_id": "tonera/Qwen3-VL-4B-Instruct-Nunchaku",
+        "file_path": "svdq-int4-Qwen3-VL-4B-Instruct-Nunchaku.safetensors"
+      }
+    }
+  ],
+  "tags": ["svdq", "nunchaku", "tonera", "klein", "flux"]
+}

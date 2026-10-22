@@ -75,6 +75,25 @@ def compute_sha256(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
+# ---------- Folder aliases (host-named folders for imported models) ----------
+_REPO_FOLDER_ALIASES: dict[str, str] = {}
+
+
+def set_repo_folder_alias(repo_id: str, folder: Optional[str]) -> None:
+    """Map a repo_id to a host-chosen local folder name (single path segment)."""
+    if not repo_id:
+        return
+    clean = (folder or "").strip().replace("\\", "/").strip("/")
+    if not clean or "/" in clean or clean in (".", ".."):
+        _REPO_FOLDER_ALIASES.pop(repo_id, None)
+        return
+    _REPO_FOLDER_ALIASES[repo_id] = clean
+
+
+def _repo_dir_name(repo_id: str) -> str:
+    return _REPO_FOLDER_ALIASES.get(repo_id) or repo_id.split("/")[-1]
+
+
 # ---------- Cache manager ----------
 class CacheManager:
     """Manages the local model cache directory + state tracking."""
@@ -87,13 +106,11 @@ class CacheManager:
     def path_for(self, repo_id: str, file_path: str) -> Path:
         """Get the local path where a remote file should be stored."""
         # Sanitize repo_id → directory name (e.g. "QuantFunc/Klein-9B-Series" → "Klein-9B-Series")
-        repo_dir_name = repo_id.split("/")[-1]
-        return self.cache_dir / repo_dir_name / file_path
+        return self.cache_dir / _repo_dir_name(repo_id) / file_path
 
     def repo_dir_for(self, repo_id: str) -> Path:
         """Get the local directory for a repo's files."""
-        repo_dir_name = repo_id.split("/")[-1]
-        return self.cache_dir / repo_dir_name
+        return self.cache_dir / _repo_dir_name(repo_id)
 
     # ---------- State inspection ----------
     def check_file(

@@ -956,13 +956,73 @@ def test_custom_models_and_visibility():
         # Cleanup test guest account
         acc_mgr.delete_guest_account(t_guest["id"])
 
-        # 6. Frontend markup validation
+        # 6. Model sniffer verification
+        from backend.model_sniffer import sniff_files, suggest_engine, classify_path
+        multi_folder_files = [
+            {"path": "transformer/diffusion_pytorch_model.safetensors", "size": 8000000000},
+            {"path": "text_encoder/model.safetensors", "size": 4000000000},
+            {"path": "vae/diffusion_pytorch_model.safetensors", "size": 350000000},
+        ]
+        sniff_multi = sniff_files(multi_folder_files, repo_id="test/multi_folder_model")
+        assert sniff_multi["layout"] == "folders"
+        assert len(sniff_multi["folders"]) == 3
+        assert len(sniff_multi["components"]["diffusion_model"]) == 1
+        assert len(sniff_multi["components"]["text_encoder"]) == 1
+        assert len(sniff_multi["components"]["vae"]) == 1
+        print("  ✓ Model sniffer preserves folder hierarchy (transformer/, text_encoder/, vae/)")
+
+        # Single weight file warning and manual link requirements
+        single_file = [{"path": "flux1-dev-q4_k_m.gguf", "size": 12000000000}]
+        sniff_single = sniff_files(single_file, repo_id="city96/FLUX.1-dev-gguf")
+        assert sniff_single["needs_manual"] is True
+        assert "text_encoder" in sniff_single["missing"]
+        assert len(sniff_single["warnings"]) > 0
+        assert "Не хватает:" in sniff_single["warnings"][0]
+        assert sniff_single["defaults"]["vae"] is not None
+        print("  ✓ Model sniffer produces warning & recommended links when components (TE, VAE) are missing")
+
+        # Sniff API endpoint (local path)
+        r_sniff = client.post("/api/custom-models/sniff", json={"path": str(PROJECT_ROOT / "models" / "custom")})
+        assert r_sniff.status_code == 200
+        assert r_sniff.json().get("ok") is True
+        print("  ✓ POST /api/custom-models/sniff endpoint OK")
+
+        # 7. LoRA Hub inspection test (HuggingFace repo requested by user)
+        r_lora_insp = client.get("/api/loras/hf-inspect?repo_id=artificialguybr/LineartAnime-Redmond-Flux9BKlein")
+        assert r_lora_insp.status_code == 200, f"LoRA inspect failed: {r_lora_insp.text}"
+        insp_data = r_lora_insp.json()
+        assert insp_data["suggested_family"] == "flux"
+        assert "Lineart" in insp_data["suggested_trigger"]
+        assert any("[FLUX.2.Klein]LineArt_Redmond" in f["name"] for f in insp_data["files"])
+        print("  ✓ LoRA Hub HF inspection of artificialguybr/LineartAnime-Redmond-Flux9BKlein OK (family=flux, trigger='Lineart, LineAniAF')")
+
+        # LoRA metadata update endpoint test
+        r_meta = client.patch("/api/loras/test_lora.safetensors/metadata", json={
+            "family": "flux",
+            "trigger": "Lineart, LineAniAF",
+            "label": "LineArt Redmond Flux 9B",
+        })
+        assert r_meta.status_code == 200
+        assert r_meta.json()["status"] == "ok"
+        print("  ✓ PATCH /api/loras/{name}/metadata host configuration OK")
+
+        # 8. Frontend markup validation
         index_html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
         assert 'id="filter-chip-hidden"' in index_html, "Missing filter-chip-hidden in index.html"
         assert 'id="model-visibility-modal"' in index_html, "Missing model-visibility-modal in index.html"
         assert 'id="model-vis-hidden-guests"' in index_html, "Missing model-vis-hidden-guests in index.html"
         assert 'id="model-vis-hidden-host"' in index_html, "Missing model-vis-hidden-host in index.html"
-        print("  ✓ Frontend UI components (Hidden filter chip, Model visibility modal) verified in index.html")
+        assert 'id="lora-manage-modal"' in index_html, "Missing lora-manage-modal in index.html"
+        assert 'id="lora-pane-hub"' in index_html, "Missing lora-pane-hub in index.html"
+        assert 'id="lora-hf-repo-input"' in index_html, "Missing lora-hf-repo-input in index.html"
+        assert 'id="lora-hf-file-select"' in index_html, "Missing lora-hf-file-select in index.html"
+        assert 'id="lora-hf-family-select"' in index_html, "Missing lora-hf-family-select in index.html"
+        assert 'id="lora-hf-trigger-input"' in index_html, "Missing lora-hf-trigger-input in index.html"
+        assert 'id="hf-import-warning-banner"' in index_html, "Missing hf-import-warning-banner in index.html"
+        assert 'id="hf-import-engine-reason"' in index_html, "Missing hf-import-engine-reason in index.html"
+        assert 'id="hf-import-folders-tree"' in index_html, "Missing hf-import-folders-tree in index.html"
+        assert 'id="hf-import-manual-section"' in index_html, "Missing hf-import-manual-section in index.html"
+        print("  ✓ Frontend UI components (LoRA Hub, Model sniffer tree, Warning banners, Visibility modal) verified in index.html")
 
         return True
     except Exception as e:

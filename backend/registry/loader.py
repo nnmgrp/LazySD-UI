@@ -137,6 +137,11 @@ class ModelSpec:
     # Custom user-imported model flag
     is_custom: bool = False
 
+    # Host-defined metadata for imported models
+    local_folder: str = ""                 # Host-named folder inside models/cache
+    base_repo_id: str = ""                 # Repo that supplies encoder/VAE/config (diffusers layout)
+    download_patterns: list[str] = field(default_factory=list)  # Snapshot patterns for the base task
+
     @classmethod
     def from_dict(cls, data: dict) -> "ModelSpec":
         """Build ModelSpec from a JSON dict."""
@@ -162,6 +167,12 @@ class ModelSpec:
         precision = [PrecisionConfig(**p) for p in data.get("precision_configs", [])]
         requirements = ModelRequirements(**data.get("requirements", {}))
 
+        is_custom = bool(data.get("is_custom", False))
+        local_folder = str(data.get("local_folder") or "").strip()
+        if is_custom and local_folder and sources and sources.primary and sources.primary.repo_id:
+            from ..cache import set_repo_folder_alias
+            set_repo_folder_alias(sources.primary.repo_id, local_folder)
+
         return cls(
             id=data["id"],
             name=data["name"],
@@ -183,7 +194,10 @@ class ModelSpec:
             engine_args=data.get("engine_args", {}),
             engine_version=data.get("engine_version"),
             text_encoders=data.get("text_encoders", []),
-            is_custom=bool(data.get("is_custom", False)),
+            is_custom=is_custom,
+            local_folder=local_folder,
+            base_repo_id=str(data.get("base_repo_id") or "").strip(),
+            download_patterns=list(data.get("download_patterns") or []),
         )
 
     # ---------- Helpers ----------
@@ -384,10 +398,13 @@ class ModelRegistry:
                 print(f"[registry] ERROR loading {json_path.name}: {e}")
 
     def get(self, model_id: str) -> ModelSpec:
-        """Get a model spec by ID."""
-        if model_id not in self.models:
-            raise KeyError(f"Model not found: {model_id!r}. Available: {list(self.models.keys())}")
-        return self.models[model_id]
+        """Get a model spec by ID (or by primary repo_id / upstream_model alias)."""
+        if model_id in self.models:
+            return self.models[model_id]
+        for m in self.models.values():
+            if (m.sources and m.sources.primary and m.sources.primary.repo_id == model_id) or m.upstream_model == model_id:
+                return m
+        raise KeyError(f"Model not found: {model_id!r}. Available: {list(self.models.keys())}")
 
     def list_all(self) -> list[ModelSpec]:
         """List all loaded model specs."""

@@ -25,7 +25,11 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from .settings import IS_WINDOWS, get_settings
+IS_WINDOWS = sys.platform.startswith("win")
+
+def get_settings():
+    from .settings import get_settings as _get
+    return _get()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENVS_DIR = PROJECT_ROOT / "envs"
@@ -93,6 +97,7 @@ def _nun():
         v = version("nunchaku")
     except Exception:
         v = getattr(nunchaku, "__version__", getattr(nunchaku, "version", "installed"))
+    out["has_flux3"] = hasattr(nunchaku, "NunchakuFlux3Transformer2DModel")
     try:
         from nunchaku.utils import get_precision
         out["nunchaku_precision"] = get_precision()
@@ -354,7 +359,7 @@ def _ensure_runtime(job: dict, plan: dict) -> Path:
     if not env.get("diffusers"):
         _step(job, "Installing diffusers / transformers / accelerate / peft")
         _pip(job, py, "install", "diffusers", "transformers", "accelerate", "safetensors",
-             "sentencepiece", "protobuf", "huggingface_hub", "pillow", "numpy", "peft")
+             "sentencepiece", "protobuf", "huggingface_hub", "pillow", "numpy", "peft", "pydantic")
     env = inspect_env(force=True)
     if env.get("diffusers") and not env.get("has_flux2_klein"):
         # FLUX.2 Klein support landed after some releases; fall back to main if git is around.
@@ -382,6 +387,15 @@ def _job_main(job: dict, component: str) -> None:
         py = _ensure_runtime(job, plan)
 
         if component == "nunchaku":
+            env_cur = inspect_env()
+            req_torch = plan.get("torch_pin")
+            cur_torch = env_cur.get("torch_version") or env_cur.get("torch") or ""
+            if req_torch and not str(cur_torch).startswith(str(req_torch)):
+                cu = plan.get("cuda_tag") or "cu130"
+                _step(job, f"Upgrading PyTorch to {req_torch} ({cu}) for Nunchaku {plan.get('version')}")
+                idx = f"https://download.pytorch.org/whl/{cu}"
+                _run(job, [str(py), "-m", "pip", "install", f"torch=={req_torch}.*", "torchvision", "--index-url", idx])
+
             _step(job, f"Downloading {plan['wheel']}")
             from huggingface_hub import hf_hub_download
             WHEELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -535,3 +549,422 @@ def register_extras_routes(app) -> None:
         get_settings().update(extras_python=path or None)
         invalidate_probe()
         return {"env": await asyncio.to_thread(inspect_env, True)}
+
+
+# ------------------------------------------------------------
+# Extras Worker (Nunchaku vitoom + OrbitQuant inference + LoRA)
+# ------------------------------------------------------------
+_STEP_RE = re.compile(r"\[step\s+(\d+)/(\d+)\]")
+_STATUS_RE = re.compile(r"\[status\]\s*(.+)")
+_ERROR_RE = re.compile(r"\[error\]\s*(.+)")
+
+
+class ExtrasWorker:
+    """Executes Nunchaku (tonera/vitoom-nunchaku) and OrbitQuant inference in the managed extras venv."""
+
+    def __init__(self):
+        self._cancel_flag = threading.Event()
+        self._current_process: Optional[subprocess.Popen] = None
+
+    def cancel(self):
+        self._cancel_flag.set()
+        if self._current_process:
+            try:
+                self._current_process.terminate()
+            except Exception:
+                pass
+
+    def generate(self, request, model, gpu_info, progress_callback=None):
+        import tempfile
+        from .cache import CacheManager
+        from .security import validate_filename, validate_int, validate_prompt, validate_resolution
+        from .worker import GenerateResult, JobStatus, ProgressEvent
+
+        self._cancel_flag.clear()
+
+        def emit(event: ProgressEvent):
+            if progress_callback:
+                progress_callback(event)
+
+        engine = getattr(model, "engine", "nunchaku")
+        py = extras_python()
+        if not py or not py.is_file():
+            raise RuntimeError(
+                f"Extras runtime environment for {engine.upper()} is not installed. "
+                "Please install it in Settings → Engines."
+            )
+
+        emit(ProgressEvent(status=JobStatus.INITIALIZING, message=f"Validating inputs for {engine.upper()}..."))
+        prompt = validate_prompt(request.prompt)
+        if not prompt:
+            raise ValueError("Prompt is empty after validation")
+
+        seed = request.seed if request.seed is not None and request.seed >= 0 else int(time.time()) & 0x7FFFFFFF
+        seed = validate_int(seed, "seed", 0, 2**31 - 1)
+        width, height = validate_resolution(request.width, request.height)
+
+        settings = get_settings()
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        out_filename = request.output_filename or f"{engine}_{timestamp}_{seed}.png"
+        validate_filename(out_filename)
+        output_path = settings.output_dir / out_filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cache = CacheManager()
+        primary_repo = model.sources.primary.repo_id if model.sources else ""
+        repo_dir = cache.repo_dir_for(primary_repo) if primary_repo else settings.models_dir
+
+        # Resolve transformer weight file
+        tr_rel = model.engine_args.get("diffusion_model") if getattr(model, "engine_args", None) else None
+        variant_id = getattr(request, "variant_id", None)
+        for t in getattr(model, "transformers", []):
+            if variant_id and t.id == variant_id:
+                tr_rel = t.path
+                break
+            if not tr_rel and t.recommended:
+                tr_rel = t.path
+        if not tr_rel and getattr(model, "transformers", None):
+            tr_rel = model.transformers[0].path
+
+        tr_path = (repo_dir / tr_rel) if tr_rel else repo_dir
+        if tr_rel and not tr_path.exists():
+            # Fallback: look for any svdq-*.safetensors in repo_dir for nunchaku
+            cands = list(repo_dir.glob("*.safetensors")) if repo_dir.exists() else []
+            if cands:
+                tr_path = cands[0]
+
+        ref_image_path = None
+        if getattr(request, "init_image_path", None):
+            rp = Path(request.init_image_path)
+            if not rp.is_absolute():
+                rp = settings.output_dir / rp
+            if rp.exists():
+                ref_image_path = str(rp)
+
+        lora_paths = [str(p) for p in (getattr(request, "lora_paths", None) or [])]
+        lora_strengths = [float(s) for s in (getattr(request, "lora_strengths", None) or [])]
+        steps = int(request.steps or 4)
+        cfg = float(getattr(request, "cfg", None) if getattr(request, "cfg", None) is not None else model.get_default_cfg())
+
+        # Resolve Text Encoder (Priority: custom path -> model text_encoders / author shared repo -> repo local)
+        te_path = None
+        custom_te = getattr(request, "custom_text_encoder_path", None)
+        if custom_te and Path(custom_te).exists():
+            te_path = str(Path(custom_te))
+        else:
+            te_id = getattr(request, "text_encoder_id", None)
+            te_spec = model.get_text_encoder(te_id) if hasattr(model, "get_text_encoder") else None
+            if not te_spec and getattr(model, "text_encoders", None):
+                te_spec = next((t for t in model.text_encoders if t.get("recommended")), model.text_encoders[0])
+            if te_spec:
+                source = te_spec.get("source", {})
+                te_repo = source.get("repo_id") if isinstance(source, dict) else None
+                te_file = te_spec.get("file", "")
+                if te_repo and te_file:
+                    shared_p = cache.repo_dir_for(te_repo) / te_file
+                    if shared_p.exists():
+                        te_path = str(shared_p)
+                    else:
+                        # Auto-download into shared author repository folder (zero duplication!)
+                        emit(ProgressEvent(
+                            status=JobStatus.DOWNLOADING,
+                            progress=0.15,
+                            message=f"Downloading shared text encoder ({te_file})...",
+                        ))
+                        from .sources import get_source
+                        src_inst = get_source("huggingface", token=settings.huggingface_token)
+                        shared_dir = cache.repo_dir_for(te_repo)
+                        shared_dir.mkdir(parents=True, exist_ok=True)
+                        src_inst.download_file(
+                            repo_id=te_repo,
+                            file_path=source.get("file_path", te_file),
+                            local_dir=shared_dir,
+                            revision="main",
+                        )
+                        te_path = str(shared_p)
+                elif te_file:
+                    cand = repo_dir / te_file
+                    if cand.exists():
+                        te_path = str(cand)
+
+        # Base model fallback
+        base_model_repo = getattr(model, "base_repo_id", None)
+        if not base_model_repo and getattr(model, "base_models", None):
+            gpu_tier = gpu_info.tier if gpu_info else "50x-above"
+            base_model_repo = model.base_models.get(gpu_tier) or model.base_models.get("50x-above") or model.base_models.get("50x-below")
+
+        payload = {
+            "engine": engine,
+            "family": getattr(model, "family", "klein"),
+            "repo_id": primary_repo,
+            "model_dir": str(repo_dir),
+            "transformer_path": str(tr_path),
+            "text_encoder_path": te_path,
+            "base_model_repo": base_model_repo,
+            "prompt": prompt,
+            "negative_prompt": getattr(request, "negative_prompt", None),
+            "steps": steps,
+            "cfg": cfg,
+            "seed": seed,
+            "width": width,
+            "height": height,
+            "output_path": str(output_path),
+            "init_image_path": ref_image_path,
+            "lora_paths": lora_paths,
+            "lora_strengths": lora_strengths,
+        }
+
+        fd, job_json_path = tempfile.mkstemp(prefix=f"{engine}_job_", suffix=".json")
+        os.close(fd)
+        Path(job_json_path).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join([str(PROJECT_ROOT)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+        env["PYTHONIOENCODING"] = "utf-8"
+        if settings.huggingface_token:
+            env["HF_TOKEN"] = settings.huggingface_token
+            env["HUGGING_FACE_HUB_TOKEN"] = settings.huggingface_token
+
+        cmd = [str(py), "-u", "-m", "backend.extras", "--run-job", job_json_path]
+        start_time = time.time()
+        sampler = getattr(request, "sampler", None) or "euler"
+        eta = float(getattr(request, "noise", 0.0) or 0.0)
+        print(f"[INFO] [SVDQ] Launching {engine.upper()}: {width}x{height}, steps={steps}, cfg={cfg}, sampler={sampler}, eta={eta}, seed={seed}", flush=True)
+        emit(ProgressEvent(status=JobStatus.LOADING, progress=0.05, message=f"Starting {engine.upper()} pipeline..."))
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        self._current_process = proc
+        captured_lines: list[str] = []
+
+        try:
+            for line in proc.stdout:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                captured_lines.append(line_str)
+                if self._cancel_flag.is_set():
+                    proc.terminate()
+                    raise RuntimeError("Generation cancelled by user")
+
+                m_step = _STEP_RE.search(line_str)
+                if m_step:
+                    cur_s, tot_s = int(m_step.group(1)), int(m_step.group(2))
+                    pct = min(0.95, max(0.10, cur_s / max(tot_s, 1)))
+                    emit(ProgressEvent(
+                        status=JobStatus.GENERATING,
+                        progress=pct,
+                        step=cur_s,
+                        total_steps=tot_s,
+                        message=f"Sampling step {cur_s}/{tot_s} ({int(pct * 100)}%)",
+                    ))
+                    continue
+
+                m_status = _STATUS_RE.match(line_str)
+                if m_status:
+                    emit(ProgressEvent(status=JobStatus.LOADING, progress=0.08, message=m_status.group(1).strip()))
+                    continue
+
+                m_err = _ERROR_RE.match(line_str)
+                if m_err:
+                    raise RuntimeError(f"{engine.upper()} error: {m_err.group(1).strip()}")
+            proc.wait()
+        finally:
+            self._current_process = None
+            Path(job_json_path).unlink(missing_ok=True)
+
+        if proc.returncode != 0 or not output_path.exists():
+            tail = "\n".join(captured_lines[-40:]) if captured_lines else "(no output)"
+            raise RuntimeError(f"{engine.upper()} process exited with code {proc.returncode}.\n{tail}")
+
+        elapsed = time.time() - start_time
+        sidecar_path = output_path.with_suffix(".json")
+        try:
+            meta = {
+                "filename": output_path.name,
+                "prompt": prompt,
+                "negative_prompt": getattr(request, "negative_prompt", None),
+                "model_id": request.model_id,
+                "variant_id": variant_id,
+                "seed": seed,
+                "width": width,
+                "height": height,
+                "steps": steps,
+                "cfg": cfg,
+                "backend": engine,
+                "engine": engine,
+                "loras": [{"name": Path(p).name, "strength": s} for p, s in zip(lora_paths, lora_strengths)],
+                "owner_id": getattr(request, "owner_id", "host"),
+                "owner_name": getattr(request, "owner_name", "Хост"),
+                "shared": getattr(request, "shared", True),
+                "generation_time_sec": round(elapsed, 2),
+                "timestamp": int(time.time()),
+            }
+            sidecar_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+        emit(ProgressEvent(status=JobStatus.COMPLETE, progress=1.0, image_path=str(output_path), message=f"Done in {elapsed:.1f}s"))
+        return GenerateResult(
+            image_path=output_path,
+            seed_used=seed,
+            generation_time_sec=elapsed,
+            model_id=request.model_id,
+            backend=engine,
+            steps=steps,
+            prompt=prompt,
+        )
+
+
+def _run_extras_job_cli(job_json_path: str) -> int:
+    try:
+        import torch
+        from PIL import Image
+
+        payload = json.loads(Path(job_json_path).read_text(encoding="utf-8"))
+        engine = payload["engine"]
+        family = (payload.get("family") or "klein").lower()
+        model_dir = Path(payload["model_dir"])
+        tr_path = Path(payload["transformer_path"])
+        repo_id = payload.get("repo_id") or str(model_dir)
+        prompt = payload["prompt"]
+        steps = int(payload.get("steps", 4))
+        cfg = float(payload.get("cfg", 1.0))
+        seed = int(payload.get("seed", 42))
+        width = int(payload.get("width", 1024))
+        height = int(payload.get("height", 1024))
+        output_path = Path(payload["output_path"])
+        init_image_path = payload.get("init_image_path")
+        lora_paths = payload.get("lora_paths") or []
+        lora_strengths = payload.get("lora_strengths") or []
+
+        base_source = str(model_dir) if (model_dir / "model_index.json").exists() else (payload.get("base_model_repo") or repo_id)
+        te_path_str = payload.get("text_encoder_path")
+        te_path = Path(te_path_str) if te_path_str else None
+
+        te_obj = None
+        if te_path and te_path.exists():
+            print(f"[status] Loading Text Encoder from {te_path.name}...", flush=True)
+            if "qwen3-vl" in te_path.name.lower() or "qwen2-vl" in te_path.name.lower():
+                try:
+                    from nunchaku.models.text_encoders import NunchakuQwen2VLTextEncoderModel
+                    te_obj = NunchakuQwen2VLTextEncoderModel.from_pretrained(str(te_path), torch_dtype=torch.bfloat16)
+                except Exception as e:
+                    print(f"[warning] Could not load NunchakuQwen2VLTextEncoderModel: {e}", flush=True)
+            elif "qwen3" in te_path.name.lower():
+                try:
+                    from nunchaku.models.text_encoders import NunchakuQwen3TextEncoderModel
+                    te_obj = NunchakuQwen3TextEncoderModel.from_pretrained(str(te_path), torch_dtype=torch.bfloat16)
+                except Exception as e:
+                    print(f"[warning] Could not load NunchakuQwen3TextEncoderModel: {e}", flush=True)
+
+        if engine == "nunchaku":
+            print("[status] Loading Nunchaku (vitoom) SVDQ Transformer...", flush=True)
+            import nunchaku
+            is_flux3 = "flux3" in family or "flux-3" in family or "flux-3" in str(repo_id).lower() or "flux3" in str(repo_id).lower()
+            if "qwen" in family:
+                from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel as TrCls
+            elif "z" in family:
+                from nunchaku.models.transformers.transformer_zimage import NunchakuZImageTransformer2DModel as TrCls
+            elif is_flux3:
+                if not hasattr(nunchaku, "NunchakuFlux3Transformer2DModel"):
+                    try:
+                        import importlib.metadata
+                        ver = importlib.metadata.version("nunchaku")
+                    except Exception:
+                        ver = getattr(nunchaku, "__version__", "unknown")
+                    raise RuntimeError(
+                        f"NunchakuFlux3Transformer2DModel is not available in the installed Nunchaku package ({ver}). "
+                        "FLUX.3 SVDQuant requires Nunchaku >= 1.4.0. Please use 'Flux.2 Klein (Nunchaku)' or update your Nunchaku environment."
+                    )
+                TrCls = getattr(nunchaku, "NunchakuFlux3Transformer2DModel")
+            elif "flux2" in family or "klein" in family:
+                from nunchaku import NunchakuFlux2Transformer2DModel as TrCls
+            else:
+                from nunchaku import NunchakuFluxTransformer2dModel as TrCls
+
+            tr_arg = str(tr_path) if tr_path.is_file() else f"{repo_id}/{tr_path.name}"
+            transformer = TrCls.from_pretrained(tr_arg, torch_dtype=torch.bfloat16)
+
+            # Native vitoom-nunchaku LoRA injection (SVDQLoRAMixin)
+            if lora_paths:
+                print(f"[status] Applying {len(lora_paths)} LoRA adapter(s) to Nunchaku Transformer...", flush=True)
+                if len(lora_paths) == 1:
+                    s_val = float(lora_strengths[0]) if lora_strengths else 1.0
+                    transformer.update_lora_params(str(lora_paths[0]), strength=s_val)
+                else:
+                    try:
+                        from nunchaku.lora.flux.compose import compose_lora
+                        pairs = [(str(p), float(s)) for p, s in zip(lora_paths, lora_strengths)]
+                        composed_sd = compose_lora(pairs)
+                        transformer.update_lora_params(composed_sd, strength=1.0)
+                    except Exception:
+                        s_val = float(lora_strengths[0]) if lora_strengths else 1.0
+                        transformer.update_lora_params(str(lora_paths[0]), strength=s_val)
+
+            print(f"[status] Loading Diffusers pipeline from base '{base_source}'...", flush=True)
+            pipe_kwargs = {
+                "transformer": transformer,
+                "torch_dtype": torch.bfloat16,
+            }
+            if te_obj is not None:
+                pipe_kwargs["text_encoder"] = te_obj
+
+            if "klein" in family or "flux" in family:
+                from diffusers import Flux2KleinPipeline
+                pipe = Flux2KleinPipeline.from_pretrained(base_source, **pipe_kwargs)
+            else:
+                from diffusers import DiffusionPipeline
+                pipe = DiffusionPipeline.from_pretrained(base_source, **pipe_kwargs)
+            pipe.enable_model_cpu_offload()
+        else:
+            print(f"[status] Loading OrbitQuant W4A4 pipeline from base '{base_source}'...", flush=True)
+            import orbitquant  # noqa: F401
+            from diffusers import DiffusionPipeline
+            pipe_kwargs = {
+                "torch_dtype": torch.bfloat16,
+            }
+            if te_obj is not None:
+                pipe_kwargs["text_encoder"] = te_obj
+            pipe = DiffusionPipeline.from_pretrained(base_source, **pipe_kwargs)
+            pipe.enable_model_cpu_offload()
+
+        def on_step_end(pipe_inst, step_idx, timestep, callback_kwargs):
+            print(f"[step {step_idx + 1}/{steps}]", flush=True)
+            return callback_kwargs
+
+        call_kwargs = {
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "num_inference_steps": steps,
+            "guidance_scale": cfg,
+            "generator": torch.Generator(device="cpu").manual_seed(seed),
+            "callback_on_step_end": on_step_end,
+        }
+        if init_image_path and Path(init_image_path).is_file():
+            call_kwargs["image"] = Image.open(init_image_path).convert("RGB")
+
+        print(f"[status] Sampling ({steps} steps)...", flush=True)
+        out = pipe(**call_kwargs).images[0]
+        out.save(str(output_path))
+        return 0
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[error] {e}", flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--run-job":
+        sys.exit(_run_extras_job_cli(sys.argv[2]))

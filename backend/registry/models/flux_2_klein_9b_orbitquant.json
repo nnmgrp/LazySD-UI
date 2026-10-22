@@ -19,8 +19,8 @@
     }
   },
   "base_models": {
-    "50x-above": ".",
-    "50x-below": "."
+    "50x-above": "black-forest-labs/FLUX.2-klein-9b",
+    "50x-below": "black-forest-labs/FLUX.2-klein-9b"
   },
   "transformers": [
     {
@@ -34,9 +34,16 @@
       "size_bytes": 4831838208,
       "recommended": true,
       "recommended_for_gpu": [
-        "RTX 3060", "RTX 3080", "RTX 3090",
-        "RTX 4070", "RTX 4080", "RTX 4090",
-        "RTX 5060 Ti", "RTX 5070", "RTX 5080", "RTX 5090"
+        "RTX 3060",
+        "RTX 3080",
+        "RTX 3090",
+        "RTX 4070",
+        "RTX 4080",
+        "RTX 4090",
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
       ],
       "note": "OrbitQuant W4A4 (~4.5 GB transformer)"
     }
@@ -56,5 +63,33 @@
       "cfg": 1.0,
       "sampler": "euler"
     }
-  }
+  },
+  "text_encoders": [
+    {
+      "id": "qwen3_4b_text_nunchaku",
+      "name": "Qwen3-4B Text Encoder (Tonera SVDQ INT4)",
+      "file": "svdq-int4-Qwen3-4B-text-Nunchaku.safetensors",
+      "precision": "int4",
+      "size_gb": 2.68,
+      "size_bytes": 2872610792,
+      "recommended": true,
+      "source": {
+        "repo_id": "tonera/Qwen3-4B-text-Nunchaku",
+        "file_path": "svdq-int4-Qwen3-4B-text-Nunchaku.safetensors"
+      }
+    },
+    {
+      "id": "qwen3_8b_q8_0",
+      "name": "Qwen3-8B Q8_0 GGUF (~8.1 GB, High Fidelity)",
+      "file": "Qwen3-8B-Q8_0.gguf",
+      "precision": "q8_0",
+      "size_gb": 8.11,
+      "size_bytes": 8709519168,
+      "recommended": false,
+      "source": {
+        "repo_id": "unsloth/Qwen3-8B-GGUF",
+        "file_path": "Qwen3-8B-Q8_0.gguf"
+      }
+    }
+  ]
 }

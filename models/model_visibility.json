@@ -1,3 +1,8 @@
 {
-  "hidden_models": {}
+  "hidden_models": {
+    "qwen_image_2_1": {
+      "hidden_for_guests": false,
+      "hidden_from_host": true
+    }
+  }
 }

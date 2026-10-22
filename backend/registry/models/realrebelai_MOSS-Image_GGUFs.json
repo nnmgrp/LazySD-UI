@@ -1,8 +1,8 @@
 {
-  "id": "realrebelai/MOSS-Image_GGUFs",
-  "name": "MOSS-Image (GGUF)",
-  "family": "MOSS-Image",
-  "pipeline": "image_to_image",
+  "id": "moss_image_sft_gguf",
+  "name": "MOSS-Image SFT (GGUF)",
+  "family": "moss-image",
+  "pipeline": "text_to_image",
   "engine": "sd_cpp",
   "engine_version": "sd_cpp",
   "description": "MOSS-Image-SFT via stable-diffusion.cpp. Powered by Qwen3.5-9B UD-Q4_K_XL encoder and Flux2 VAE.",
@@ -23,7 +23,10 @@
     "vae": "flux2-vae.safetensors",
     "vae_repo": "unsloth/FLUX.2-VAE",
     "vae_remote": "split_files/vae/flux2-vae.safetensors",
-    "vae_format": "flux2"
+    "vae_format": "flux2",
+    "tokenizer": "tokenizer.json",
+    "tokenizer_repo": "OpenMOSS-Team/MOSS-Image-Base",
+    "tokenizer_remote": "tokenizer/tokenizer.json"
   },
   "text_encoders": [
     {

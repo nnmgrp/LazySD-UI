@@ -89,30 +89,31 @@ const App = {
   async init() {
     console.log("[app] LazySD UI initializing...");
 
-    // Initialize sidebar & Topaz inspector states
-    this.initSidebar();
-    this.initInspector();
+    try { this.initSidebar(); } catch (e) { console.warn("[init] initSidebar error:", e); }
+    try { this.initInspector(); } catch (e) { console.warn("[init] initInspector error:", e); }
 
-    // Load i18n first
-    await window.initI18n();
+    if (window.initI18n) {
+      try { await window.initI18n(); } catch (e) { console.warn("[init] initI18n error:", e); }
+    }
 
-    // Load initial config & presets from backend
-    await this.loadConfig();
-    await this.loadPresets();
+    try { await this.loadConfig(); } catch (e) { console.warn("[init] loadConfig error:", e); }
+    try { await this.loadPresets(); } catch (e) { console.warn("[init] loadPresets error:", e); }
 
-    // Render initial UI
-    this.renderGpuIndicator();
-    this.renderSystemStats(this.state.config?.system_stats);
-    this.startStatsPolling();
-    this.renderModels();
-    this.updateEngineStatusUI();
-    this.updateDockPills();
-    this.initDockSettings();
-    this.loadLoras();
-    this.initCompareEvents();
-    this.loadShareStatus();
-    this.refreshExtrasStatus();
-    this.bindEvents();
+    try { this.renderGpuIndicator(); } catch (e) { console.warn("[init] renderGpuIndicator error:", e); }
+    try { this.renderSystemStats(this.state.config?.system_stats); } catch (e) { console.warn("[init] renderSystemStats error:", e); }
+    try { this.startStatsPolling(); } catch (e) { console.warn("[init] startStatsPolling error:", e); }
+    try { this.renderModels(); } catch (e) { console.warn("[init] renderModels error:", e); }
+    try { this.updateEngineStatusUI(); } catch (e) { console.warn("[init] updateEngineStatusUI error:", e); }
+    try { this.updateDockPills(); } catch (e) { console.warn("[init] updateDockPills error:", e); }
+    try { this.initDockSettings(); } catch (e) { console.warn("[init] initDockSettings error:", e); }
+    try { this.loadLoras(); } catch (e) { console.warn("[init] loadLoras error:", e); }
+    try { this.initCompareEvents(); } catch (e) { console.warn("[init] initCompareEvents error:", e); }
+    try { this.loadShareStatus(); } catch (e) { console.warn("[init] loadShareStatus error:", e); }
+    try { this.refreshExtrasStatus(); } catch (e) { console.warn("[init] refreshExtrasStatus error:", e); }
+    try { this.loadHistory(); } catch (e) { console.warn("[init] loadHistory error:", e); }
+    try { this.bindEvents(); } catch (e) { console.warn("[init] bindEvents error:", e); }
+    try { this.initAllViewportZoomPan(); } catch (e) { console.warn("[init] initAllViewportZoomPan error:", e); }
+    try { this.initViewportHudOpacity(); } catch (e) { console.warn("[init] initViewportHudOpacity error:", e); }
 
     console.log("[app] Ready. GPU:", this.state.gpuInfo?.name || "not detected");
   },
@@ -293,8 +294,13 @@ const App = {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
       // Inject into window for i18n detection
+      window.QF_INITIAL_CONFIG = config;
       window.QF_SETTINGS = config.settings;
       this.updateAccountRoleUI();
+      const hideUninstalledChk = document.getElementById("setting-hide-uninstalled-gen");
+      if (hideUninstalledChk && config.settings) {
+        hideUninstalledChk.checked = Boolean(config.settings.hide_uninstalled_in_generator);
+      }
     } catch (e) {
       console.error("[app] Failed to load config:", e);
       this.toast("error", t("errors.network_error") + ": " + e.message);
@@ -314,6 +320,7 @@ const App = {
       if (config.settings?.qwen_vae_type) {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
+      window.QF_INITIAL_CONFIG = config;
       window.QF_SETTINGS = config.settings;
       this.updateAccountRoleUI();
       this.renderGpuIndicator();
@@ -476,8 +483,14 @@ const App = {
     // Filter models compatible with current GPU
     const gpuSm = this.state.gpuInfo?.sm || 0;
     let compatible = this.state.models.filter(m =>
-      m.requirements.gpu_min_sm <= gpuSm
+      !m.hidden_from_host && m.requirements.gpu_min_sm <= gpuSm
     );
+    if (this.state.settings?.hide_uninstalled_in_generator) {
+      const installedOnly = compatible.filter(m => m.installed);
+      if (installedOnly.length > 0) {
+        compatible = installedOnly;
+      }
+    }
 
     // Graceful fallback: if GPU SM is not detected or no models match, show all models
     if (!compatible.length) {
@@ -1138,7 +1151,17 @@ const App = {
       historySearch.addEventListener("input", () => this.renderHistory());
     }
 
-    // Dropzone setup for Img2Img upload
+    // Global dragover & drop prevention so dropped files NEVER open in the browser
+    window.addEventListener("dragover", (e) => {
+      e.preventDefault();
+    }, false);
+    window.addEventListener("drop", (e) => {
+      if (!e.target.closest("#tab-generate") && !e.target.closest("#ht-dropzone") && !e.target.closest("#manga-dropzone")) {
+        e.preventDefault();
+      }
+    }, false);
+
+    // Dropzone setup for Generator tab
     const previewArea = document.getElementById("tab-generate");
     if (previewArea && window.Dropzone) {
       this.dropzone = new window.Dropzone(previewArea, {
@@ -1146,7 +1169,31 @@ const App = {
           this.uploadImg2ImgFile(fileInfo.file);
         },
         acceptedTypes: ["image/png", "image/jpeg", "image/webp"],
-        maxSizeMb: 25,
+        maxSizeMb: 50,
+      });
+    }
+
+    // Dropzone setup for Halftone Studio tab
+    const htArea = document.getElementById("ht-dropzone");
+    if (htArea && window.Dropzone) {
+      this.dropzoneHt = new window.Dropzone(htArea, {
+        onFile: (fileInfo) => {
+          this.loadHalftoneSource(fileInfo.dataUrl, fileInfo.name);
+        },
+        acceptedTypes: ["image/png", "image/jpeg", "image/webp"],
+        maxSizeMb: 50,
+      });
+    }
+
+    // Dropzone setup for Manga Screen AI tab
+    const mangaArea = document.getElementById("manga-dropzone");
+    if (mangaArea && window.Dropzone) {
+      this.dropzoneManga = new window.Dropzone(mangaArea, {
+        onFile: (fileInfo) => {
+          this.loadMangaSource(fileInfo.dataUrl, fileInfo.name);
+        },
+        acceptedTypes: ["image/png", "image/jpeg", "image/webp"],
+        maxSizeMb: 50,
       });
     }
 
@@ -1248,6 +1295,10 @@ const App = {
       this.renderModelsTab();
     } else if (tabName === "templates") {
       this.renderPresetsUI();
+    } else if (tabName === "halftone") {
+      this.initHalftoneStudio();
+    } else if (tabName === "manga") {
+      this.initMangaStudio();
     }
   },
 
@@ -1364,18 +1415,32 @@ const App = {
         }
         if (teHint) teHint.style.display = "none";
 
-        let activeTe = null;
-        for (const te of modelState.text_encoders) {
+        // Sort text encoders: installed first, then recommended, then others
+        const sortedEncoders = [...modelState.text_encoders].sort((a, b) => {
+          if (Boolean(a.installed) !== Boolean(b.installed)) {
+            return a.installed ? -1 : 1;
+          }
+          if (Boolean(a.recommended) !== Boolean(b.recommended)) {
+            return a.recommended ? -1 : 1;
+          }
+          return 0;
+        });
+
+        // Determine active encoder: pick first installed if available
+        let activeTe = sortedEncoders.find(te => te.id === this.state.selectedTextEncoder);
+        if (!activeTe || (!activeTe.installed && sortedEncoders.some(te => te.installed))) {
+          activeTe = sortedEncoders.find(te => te.installed) || sortedEncoders.find(te => te.recommended) || sortedEncoders[0];
+          if (activeTe) {
+            this.state.selectedTextEncoder = activeTe.id;
+          }
+        }
+
+        for (const te of sortedEncoders) {
           const opt = document.createElement("option");
           opt.value = te.id;
           opt.textContent = `${te.name} (${te.installed ? '✓' : '⬇'})`;
           if (this.state.selectedTextEncoder === te.id) {
             opt.selected = true;
-            activeTe = te;
-          } else if (!this.state.selectedTextEncoder && te.recommended) {
-            opt.selected = true;
-            this.state.selectedTextEncoder = te.id;
-            activeTe = te;
           }
           teSelect.appendChild(opt);
         }
@@ -1560,37 +1625,51 @@ const App = {
   },
 
   updateDownloadButton(showButton, modelState) {
-    // Place download button inside Gemini Dock right actions (next to Generate)
-    let dlBtn = document.getElementById("download-model-btn");
-    const activeModelObj = this.state.models.find(m => m.id === modelState.model_id);
-    if (!showButton || (activeModelObj && activeModelObj.disabled)) {
-      if (dlBtn) dlBtn.style.display = "none";
-      return;
+    // Hide intrusive separate button inside dock
+    const dlBtn = document.getElementById("download-model-btn");
+    if (dlBtn) dlBtn.style.display = "none";
+
+    // Manage canvas floating notice (#gen-uninstalled-notice)
+    const notice = document.getElementById("gen-uninstalled-notice");
+    const noticeText = document.getElementById("gen-uninstalled-notice-text");
+    if (notice) {
+      const activeModelObj = this.state.models.find(m => m.id === (modelState?.model_id || this.state.selectedModel));
+      const activeTe = modelState?.text_encoders?.find(t => t.id === this.state.selectedTextEncoder);
+      if (showButton) {
+        if (activeModelObj && !activeModelObj.installed) {
+          if (noticeText) noticeText.textContent = `Модель «${activeModelObj.name}» не скачана. Скачайте её в Model Hub перед генерацией.`;
+        } else if (activeTe && !activeTe.installed && this.state.selectedTextEncoder !== "custom") {
+          if (noticeText) noticeText.textContent = `Текстовый энкодер «${activeTe.name}» не скачан. Скачайте его в Model Hub.`;
+        } else if (modelState && !modelState.base_model_installed) {
+          if (noticeText) noticeText.textContent = `Базовые веса модели не скачаны. Скачайте их в Model Hub.`;
+        } else {
+          if (noticeText) noticeText.textContent = `Компоненты модели не скачаны. Перейдите в Model Hub для загрузки.`;
+        }
+        notice.style.display = "flex";
+      } else {
+        notice.style.display = "none";
+      }
     }
-    if (!dlBtn) {
-      const container = document.getElementById("dock-actions-right") || document.querySelector(".controls-row");
-      if (!container) return;
-      dlBtn = document.createElement("button");
-      dlBtn.id = "download-model-btn";
-      dlBtn.className = "dock-generate-btn";
-      dlBtn.style.cssText = "background: var(--info); height: 34px; padding: 0 14px; font-size: 12px; border-radius: 999px;";
-      dlBtn.textContent = "⬇ Download model";
-      dlBtn.addEventListener("click", () => this.downloadModel());
-      container.insertBefore(dlBtn, container.firstChild);
-    }
-    dlBtn.style.display = "inline-flex";
-    const activeVar = (modelState.transformers || []).find(v => v.id === this.state.selectedVariant) || (modelState.transformers || [])[0];
-    const varSize = (activeVar && (activeVar.state === "missing" || activeVar.state === "downloadable" || activeVar.state === "corrupted")) ? (activeVar.size_gb || 0) : 0;
-    const teMissing = modelState?.text_encoders?.find(te => te.id === this.state.selectedTextEncoder && !te.installed);
-    const teSize = teMissing ? (teMissing.size_gb || 0) : 0;
-    const baseSize = (!modelState.base_model_installed && activeModelObj?.engine === "sdnq") ? 0.65 : 0;
-    dlBtn.textContent = `⬇ Скачать (~${(varSize + teSize + baseSize).toFixed(1)} GB)`;
   },
 
   async downloadModel() {
     if (!this.state.selectedModel) return;
     const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
     if (activeModel && activeModel.disabled) {
+      this.toast("error", activeModel.disabled_reason || "Модель отключена");
+      return;
+    }
+    if (activeModel && !activeModel.installed) {
+      const notice = document.getElementById("gen-uninstalled-notice");
+      const noticeText = document.getElementById("gen-uninstalled-notice-text");
+      if (notice) {
+        if (noticeText) noticeText.textContent = `Модель «${activeModel.name}» не скачана. Перейдите в Model Hub для загрузки.`;
+        notice.style.display = "flex";
+      }
+      this.toast("warning", `Модель «${activeModel.name}» не скачана. Скачайте её в Model Hub.`);
+      return;
+    }
+    if (false) {
       this.toast("warning", activeModel.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
       return;
     }
@@ -1682,6 +1761,31 @@ const App = {
     const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
     if (activeModel && activeModel.disabled) {
       this.toast("error", activeModel.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
+      return;
+    }
+
+    if (activeModel && activeModel.installed === false) {
+      this.toast("warning", `Модель "${activeModel.name}" не скачана. Перейдите в Model Hub для загрузки.`);
+      const noticeEl = document.getElementById("gen-uninstalled-notice");
+      const noticeText = document.getElementById("gen-uninstalled-notice-text");
+      if (noticeText) noticeText.textContent = `Модель «${activeModel.name}» не скачана. Перейдите в Model Hub для загрузки.`;
+      if (noticeEl) noticeEl.style.display = "flex";
+      return;
+    }
+
+    const teSelect = document.getElementById("text-encoder-select");
+    const activeTe = this.state.modelState?.text_encoders?.find(t => t.id === teSelect?.value);
+    if (activeTe && !activeTe.installed && teSelect?.value !== "custom") {
+      this.toast("warning", `Текстовый энкодер "${activeTe.name}" не скачан. Скачайте его в Model Hub.`);
+      const noticeEl = document.getElementById("gen-uninstalled-notice");
+      const noticeText = document.getElementById("gen-uninstalled-notice-text");
+      if (noticeText) noticeText.textContent = `Текстовый энкодер «${activeTe.name}» не скачан. Скачайте его в Model Hub.`;
+      if (noticeEl) noticeEl.style.display = "flex";
+      return;
+    }
+
+    if (activeModel?.family === "flux3" && this.state.extrasStatus?.env?.nunchaku && this.state.extrasStatus?.env?.has_flux3 === false) {
+      this.toast("error", "FLUX.3 SVDQuant требует Nunchaku >= 1.4.0. Обновите Nunchaku в Настройки → Движки или выберите 'Flux.2 Klein (Nunchaku)'.");
       return;
     }
     const engineType = activeModel?.engine || "quantfunc";
@@ -2970,10 +3074,12 @@ const App = {
   async loadPresets() {
     try {
       const res = await this.apiGet("/api/presets");
-      this.state.presets = res.presets || [];
+      this.state.presets = (res && res.presets) ? res.presets : (Array.isArray(res) ? res : []);
       this.renderPresetsUI();
     } catch (e) {
       console.warn("[app] Failed to load presets:", e);
+      this.state.presets = [];
+      this.renderPresetsUI();
     }
   },
 
@@ -3752,6 +3858,70 @@ const App = {
   // ============================================================
   // Dock Box Controls (Position, Transparency, Minimized)
   // ============================================================
+  initDockDrag() {
+    const wrap = document.getElementById("gemini-dock-wrap");
+    const handle = document.getElementById("dock-drag-handle");
+    if (!wrap || this._dockDragInit) return;
+    this._dockDragInit = true;
+
+    if (handle) {
+      handle.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        this.setDockPosition("center");
+        this.toast("info", "Док сброшен в нижний центр");
+      });
+    }
+
+    let isDragging = false;
+    let startX = 0, startY = 0, origX = 0, origY = 0;
+
+    wrap.addEventListener("pointerdown", (e) => {
+      const isFromHandle = handle && (e.target === handle || handle.contains(e.target));
+      if (!isFromHandle && !this.state.dockDragEnabled) return;
+      if (e.target.closest("button") || e.target.closest("input") || e.target.closest("textarea") || e.target.closest("select")) {
+        return;
+      }
+      this.state.dockDragEnabled = true;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = wrap.getBoundingClientRect();
+      origX = rect.left;
+      origY = rect.top;
+      try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+      wrap.classList.add("dock-dragging");
+      wrap.classList.add("dock-free-drag");
+    });
+
+    wrap.addEventListener("pointermove", (e) => {
+      if (!isDragging || !this.state.dockDragEnabled) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const maxX = window.innerWidth - wrap.offsetWidth;
+      const maxY = window.innerHeight - wrap.offsetHeight;
+      const nx = Math.max(8, Math.min(maxX - 8, origX + dx));
+      const ny = Math.max(8, Math.min(maxY - 8, origY + dy));
+      this.state.dockCustomX = Math.round(nx);
+      this.state.dockCustomY = Math.round(ny);
+      wrap.style.left = `${this.state.dockCustomX}px`;
+      wrap.style.top = `${this.state.dockCustomY}px`;
+      wrap.style.transform = "none";
+      wrap.style.bottom = "auto";
+      wrap.style.right = "auto";
+    });
+
+    const stopDrag = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      wrap.classList.remove("dock-dragging");
+      try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
+      this.saveDockSettings();
+    };
+
+    wrap.addEventListener("pointerup", stopDrag);
+    wrap.addEventListener("pointercancel", stopDrag);
+  },
+
   initDockSettings() {
     try {
       const raw = localStorage.getItem("lazysd_dock");
@@ -3763,16 +3933,31 @@ const App = {
     } catch (_) {}
 
     this.applyDockSettings();
+    this.initDockDrag();
   },
 
   applyDockSettings() {
     const wrap = document.getElementById("gemini-dock-wrap");
     if (!wrap) return;
 
-    wrap.classList.remove("dock-pos-left", "dock-pos-right", "dock-pos-bottom", "dock-pos-center", "dock-minimized");
+    wrap.classList.remove("dock-pos-left", "dock-pos-right", "dock-pos-bottom", "dock-pos-center", "dock-minimized", "dock-free-drag");
 
-    if (this.state.dockPosition && this.state.dockPosition !== "center") {
-      wrap.classList.add(`dock-pos-${this.state.dockPosition}`);
+    if (this.state.dockDragEnabled && this.state.dockCustomX !== undefined && this.state.dockCustomY !== undefined) {
+      wrap.classList.add("dock-free-drag");
+      wrap.style.left = `${this.state.dockCustomX}px`;
+      wrap.style.top = `${this.state.dockCustomY}px`;
+      wrap.style.transform = "none";
+      wrap.style.bottom = "auto";
+      wrap.style.right = "auto";
+    } else {
+      wrap.style.left = "";
+      wrap.style.top = "";
+      wrap.style.transform = "";
+      wrap.style.bottom = "";
+      wrap.style.right = "";
+      if (this.state.dockPosition && this.state.dockPosition !== "center") {
+        wrap.classList.add(`dock-pos-${this.state.dockPosition}`);
+      }
     }
     if (this.state.dockMinimized) {
       wrap.classList.add("dock-minimized");
@@ -4453,10 +4638,3505 @@ window.clearImg2ImgRef = () => App.clearImg2ImgRef();
 window.updateStrengthLabel = (val) => App.updateStrengthLabel(val);
 window.sendCurrentPreviewToImg2Img = () => App.sendCurrentPreviewToImg2Img();
 
-// ---------- Boot ----------
-document.addEventListener("DOMContentLoaded", () => {
-  App.init();
+
+
+// ============================================================
+// --- INTEGRATED ZOOM & PAN ENGINE ---
+// ============================================================
+(function() {
+/* ============================================================
+   QuantFunc WebUI — Viewport Zoom & Pan Engine
+   Smooth cursor-centered zoom, pan, floating HUD, and scrollbars.
+   Shared across Generation, Halftone Studio GT, and Manga Studio.
+   ============================================================ */
+
+
+const viewports = {};
+let viewportsInitialized = false;
+let spacePressed = false;
+
+function initAllViewportZoomPan(appRef = null) {
+  if (viewportsInitialized) return;
+  viewportsInitialized = true;
+
+  initViewportZoomPan("generate", {
+    areaSelector: "#tab-generate .preview-area",
+    wrapId: "preview-image-wrap",
+    hudId: "gen-zoom-hud",
+    labelId: "gen-zoom-label",
+    scrollXId: "gen-scrollbar-x",
+    thumbXId: "gen-scrollbar-thumb-x",
+    scrollYId: "gen-scrollbar-y",
+    thumbYId: "gen-scrollbar-thumb-y",
+  }, appRef);
+
+  initViewportZoomPan("halftone", {
+    areaId: "ht-dropzone",
+    wrapId: "ht-preview-wrap",
+    hudId: "ht-zoom-hud",
+    labelId: "ht-zoom-label",
+    scrollXId: "ht-scrollbar-x",
+    thumbXId: "ht-scrollbar-thumb-x",
+    scrollYId: "ht-scrollbar-y",
+    thumbYId: "ht-scrollbar-thumb-y",
+  }, appRef);
+
+  initViewportZoomPan("manga", {
+    areaId: "manga-dropzone",
+    wrapId: "manga-preview-wrap",
+    hudId: "manga-zoom-hud",
+    labelId: "manga-zoom-label",
+    scrollXId: "manga-scrollbar-x",
+    thumbXId: "manga-scrollbar-thumb-x",
+    scrollYId: "manga-scrollbar-y",
+    thumbYId: "manga-scrollbar-thumb-y",
+  }, appRef);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+      spacePressed = true;
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space") {
+      spacePressed = false;
+    }
+  });
+}
+
+function initViewportZoomPan(mode, cfg, appRef = null) {
+  const area = cfg.areaId ? document.getElementById(cfg.areaId) : document.querySelector(cfg.areaSelector);
+  const wrap = document.getElementById(cfg.wrapId);
+  if (!area || !wrap) return;
+
+  const vp = {
+    mode,
+    area,
+    wrap,
+    hud: document.getElementById(cfg.hudId),
+    label: document.getElementById(cfg.labelId),
+    scrollX: document.getElementById(cfg.scrollXId),
+    thumbX: document.getElementById(cfg.thumbXId),
+    scrollY: document.getElementById(cfg.scrollYId),
+    thumbY: document.getElementById(cfg.thumbYId),
+    zoom: 1.0,
+    minZoom: 0.5,
+    maxZoom: 8.0,
+    panX: 0,
+    panY: 0,
+    hideTimer: null,
+  };
+
+  viewports[mode] = vp;
+
+  // 1. Mouse Wheel Zoom centered around cursor
+  area.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.16 : 1 / 1.16;
+    const nextZoom = Math.max(vp.minZoom, Math.min(vp.maxZoom, vp.zoom * factor));
+    if (Math.abs(nextZoom - vp.zoom) < 0.001) {
+      showViewportHudAndScrollbars(vp);
+      return;
+    }
+
+    const areaRect = area.getBoundingClientRect();
+    const cx = e.clientX - (areaRect.left + areaRect.width * 0.5);
+    const cy = e.clientY - (areaRect.top + areaRect.height * 0.5);
+    const ratio = nextZoom / vp.zoom;
+
+    vp.panX = cx - (cx - vp.panX) * ratio;
+    vp.panY = cy - (cy - vp.panY) * ratio;
+    vp.zoom = nextZoom;
+
+    applyViewportTransform(vp, true);
+  }, { passive: false });
+
+  // 2. Pointer Pan & Zoom-Tool Click/Drag
+  let isPanning = false;
+  let startX = 0;
+  let startY = 0;
+  let startPanX = 0;
+  let startPanY = 0;
+  let movedDist = 0;
+  let isZoomToolClick = false;
+
+  area.addEventListener("pointerdown", (e) => {
+    if (
+      e.target.closest(".viewport-zoom-hud") ||
+      e.target.closest(".viewport-scrollbar-x") ||
+      e.target.closest(".viewport-scrollbar-y") ||
+      e.target.closest(".preview-toolbar") ||
+      e.target.closest(".compare-slider-bar")
+    ) {
+      return;
+    }
+
+    const htTool = (appRef?.state?.halftone?.tool || window.App?.state?.halftone?.tool) || "view";
+    const isMiddle = e.button === 1;
+    const isRight = e.button === 2;
+    const isLeft = e.button === 0;
+
+    if (mode === "halftone" && htTool === "zoom" && (isLeft || isRight)) {
+      isPanning = true;
+      isZoomToolClick = true;
+    } else if (isMiddle || (isLeft && spacePressed)) {
+      isPanning = true;
+      isZoomToolClick = false;
+    } else if (isLeft && mode === "halftone" && htTool === "view") {
+      isPanning = true;
+      isZoomToolClick = false;
+    } else if (isLeft && (mode === "manga" || mode === "generate")) {
+      isPanning = true;
+      isZoomToolClick = false;
+    } else {
+      return;
+    }
+
+    e.preventDefault();
+    startX = e.clientX;
+    startY = e.clientY;
+    startPanX = vp.panX;
+    startPanY = vp.panY;
+    movedDist = 0;
+
+    area.classList.add("panning-active");
+    try { area.setPointerCapture(e.pointerId); } catch (_) {}
+    showViewportHudAndScrollbars(vp);
+  });
+
+  area.addEventListener("pointermove", (e) => {
+    if (!isPanning) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    movedDist = Math.hypot(dx, dy);
+
+    vp.panX = startPanX + dx;
+    vp.panY = startPanY + dy;
+    applyViewportTransform(vp, true);
+  });
+
+  const endPan = (e) => {
+    if (!isPanning) return;
+    isPanning = false;
+    area.classList.remove("panning-active");
+    try { area.releasePointerCapture(e.pointerId); } catch (_) {}
+
+    if (isZoomToolClick && movedDist < 6) {
+      const zoomOut = e.altKey || e.button === 2;
+      const factor = zoomOut ? 1 / 1.35 : 1.35;
+      const nextZoom = Math.max(vp.minZoom, Math.min(vp.maxZoom, vp.zoom * factor));
+      const areaRect = area.getBoundingClientRect();
+      const cx = e.clientX - (areaRect.left + areaRect.width * 0.5);
+      const cy = e.clientY - (areaRect.top + areaRect.height * 0.5);
+      const ratio = nextZoom / vp.zoom;
+
+      vp.panX = cx - (cx - vp.panX) * ratio;
+      vp.panY = cy - (cy - vp.panY) * ratio;
+      vp.zoom = nextZoom;
+
+      applyViewportTransform(vp, true);
+    }
+    isZoomToolClick = false;
+  };
+
+  area.addEventListener("pointerup", endPan);
+  area.addEventListener("pointercancel", endPan);
+  area.addEventListener("contextmenu", (e) => {
+    const htTool = (appRef?.state?.halftone?.tool || window.App?.state?.halftone?.tool);
+    if (mode === "halftone" && htTool === "zoom") {
+      e.preventDefault();
+    }
+  });
+
+  // Double-click resets zoom to 100% Fit
+  area.addEventListener("dblclick", (e) => {
+    if (
+      e.target.closest(".viewport-zoom-hud") ||
+      e.target.closest(".preview-toolbar")
+    ) {
+      return;
+    }
+    const htTool = (appRef?.state?.halftone?.tool || window.App?.state?.halftone?.tool);
+    if (mode !== "halftone" || htTool === "view") {
+      resetViewportZoom(mode);
+    }
+  });
+
+  // 3. Interactive Draggable Floating Scrollbars
+  bindScrollbarDrag(vp, "x");
+  bindScrollbarDrag(vp, "y");
+}
+
+function bindScrollbarDrag(vp, axis) {
+  const track = axis === "x" ? vp.scrollX : vp.scrollY;
+  const thumb = axis === "x" ? vp.thumbX : vp.thumbY;
+  if (!track || !thumb) return;
+
+  let dragging = false;
+  let startPos = 0;
+  let startPan = 0;
+
+  thumb.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    dragging = true;
+    startPos = axis === "x" ? e.clientX : e.clientY;
+    startPan = axis === "x" ? vp.panX : vp.panY;
+
+    try { thumb.setPointerCapture(e.pointerId); } catch (_) {}
+    showViewportHudAndScrollbars(vp);
+  });
+
+  thumb.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const delta = (axis === "x" ? e.clientX : e.clientY) - startPos;
+    const bounds = getViewportPanBounds(vp);
+    const maxPan = axis === "x" ? bounds.maxPanX : bounds.maxPanY;
+    const trackLen = axis === "x" ? track.clientWidth : track.clientHeight;
+    const thumbLen = axis === "x" ? thumb.offsetWidth : thumb.offsetHeight;
+    const avail = Math.max(1, trackLen - thumbLen);
+
+    if (maxPan > 0) {
+      const panDelta = -(delta / avail) * (maxPan * 2);
+      if (axis === "x") vp.panX = startPan + panDelta;
+      else vp.panY = startPan + panDelta;
+      applyViewportTransform(vp, true);
+    }
+  });
+
+  const stopThumb = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    try { thumb.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+
+  thumb.addEventListener("pointerup", stopThumb);
+  thumb.addEventListener("pointercancel", stopThumb);
+}
+
+function getViewportPanBounds(vp) {
+  const vw = vp.area.clientWidth || 1;
+  const vh = vp.area.clientHeight || 1;
+  const baseW = vp.wrap.offsetWidth || vw * 0.8;
+  const baseH = vp.wrap.offsetHeight || vh * 0.8;
+  const cw = baseW * vp.zoom;
+  const ch = baseH * vp.zoom;
+
+  const marginX = Math.min(vw, baseW) * 0.28;
+  const marginY = Math.min(vh, baseH) * 0.28;
+  const maxPanX = vp.zoom <= 1.0
+    ? marginX * 0.5
+    : Math.max(marginX * 0.5, (cw - vw) * 0.5 + marginX);
+  const maxPanY = vp.zoom <= 1.0
+    ? marginY * 0.5
+    : Math.max(marginY * 0.5, (ch - vh) * 0.5 + marginY);
+
+  return { vw, vh, baseW, baseH, cw, ch, maxPanX, maxPanY };
+}
+
+function applyViewportTransform(vp, showHud = true) {
+  if (!vp || !vp.wrap) return;
+  const bounds = getViewportPanBounds(vp);
+
+  vp.panX = Math.max(-bounds.maxPanX, Math.min(bounds.maxPanX, vp.panX));
+  vp.panY = Math.max(-bounds.maxPanY, Math.min(bounds.maxPanY, vp.panY));
+
+  if (Math.abs(vp.zoom - 1.0) < 0.01 && Math.hypot(vp.panX, vp.panY) < 4) {
+    vp.zoom = 1.0;
+    vp.panX = 0;
+    vp.panY = 0;
+  }
+
+  vp.wrap.style.transform = `translate3d(${vp.panX.toFixed(1)}px, ${vp.panY.toFixed(1)}px, 0) scale(${vp.zoom.toFixed(4)})`;
+
+  if (vp.label) {
+    vp.label.textContent = `🔍 ${Math.round(vp.zoom * 100)}%`;
+  }
+
+  const showScroll = vp.zoom > 1.03;
+  if (vp.scrollX && vp.thumbX) {
+    if (showScroll && bounds.maxPanX > 1) {
+      const trackW = vp.scrollX.clientWidth || 200;
+      const ratioW = Math.max(0.15, Math.min(0.85, bounds.vw / Math.max(bounds.cw, bounds.vw)));
+      const thumbW = Math.max(28, Math.round(trackW * ratioW));
+      const normX = Math.max(0, Math.min(1, (bounds.maxPanX - vp.panX) / (2 * bounds.maxPanX)));
+      const leftPx = Math.round(normX * (trackW - thumbW));
+      vp.thumbX.style.width = `${thumbW}px`;
+      vp.thumbX.style.left = `${leftPx}px`;
+    }
+  }
+
+  if (vp.scrollY && vp.thumbY) {
+    if (showScroll && bounds.maxPanY > 1) {
+      const trackH = vp.scrollY.clientHeight || 200;
+      const ratioH = Math.max(0.15, Math.min(0.85, bounds.vh / Math.max(bounds.ch, bounds.vh)));
+      const thumbH = Math.max(28, Math.round(trackH * ratioH));
+      const normY = Math.max(0, Math.min(1, (bounds.maxPanY - vp.panY) / (2 * bounds.maxPanY)));
+      const topPx = Math.round(normY * (trackH - thumbH));
+      vp.thumbY.style.height = `${thumbH}px`;
+      vp.thumbY.style.top = `${topPx}px`;
+    }
+  }
+
+  if (showHud) {
+    showViewportHudAndScrollbars(vp);
+  }
+}
+
+function showViewportHudAndScrollbars(vp) {
+  if (!vp) return;
+  if (vp.hud) vp.hud.classList.add("visible");
+
+  const showScroll = vp.zoom > 1.03;
+  if (vp.scrollX) vp.scrollX.classList.toggle("visible", showScroll);
+  if (vp.scrollY) vp.scrollY.classList.toggle("visible", showScroll);
+
+  if (vp.hideTimer) clearTimeout(vp.hideTimer);
+  vp.hideTimer = setTimeout(() => {
+    if (vp.hud) vp.hud.classList.remove("visible");
+    if (vp.scrollX) vp.scrollX.classList.remove("visible");
+    if (vp.scrollY) vp.scrollY.classList.remove("visible");
+  }, 1450);
+}
+
+function initViewportHudOpacity() {
+  const saved = localStorage.getItem("lazysd_zoom_hud_opacity");
+  if (saved) {
+    document.documentElement.style.setProperty("--zoom-hud-opacity", saved);
+  }
+}
+
+function cycleViewportHudOpacity() {
+  const cur = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--zoom-hud-opacity")) || 0.92;
+  let next = 0.92;
+  if (cur > 0.85) next = 0.65;
+  else if (cur > 0.55) next = 0.40;
+  else if (cur > 0.30) next = 0.18;
+  else next = 0.95;
+
+  document.documentElement.style.setProperty("--zoom-hud-opacity", String(next));
+  try {
+    localStorage.setItem("lazysd_zoom_hud_opacity", String(next));
+  } catch (_) {}
+  toast("info", `Прозрачность панели зума: ${Math.round(next * 100)}%`);
+}
+
+function stepViewportZoom(mode, dir) {
+  initAllViewportZoomPan();
+  const vp = viewports[mode];
+  if (!vp) return;
+  const factor = dir > 0 ? 1.25 : 1 / 1.25;
+  vp.zoom = Math.max(vp.minZoom, Math.min(vp.maxZoom, vp.zoom * factor));
+  applyViewportTransform(vp, true);
+}
+
+function setViewportZoom(mode, targetZoom, showHud = true) {
+  initAllViewportZoomPan();
+  const vp = viewports[mode];
+  if (!vp) return;
+  vp.zoom = Math.max(vp.minZoom, Math.min(vp.maxZoom, Number(targetZoom) || 1.0));
+  applyViewportTransform(vp, showHud);
+}
+
+function resetViewportZoom(mode) {
+  initAllViewportZoomPan();
+  const vp = viewports[mode];
+  if (!vp) return;
+  vp.zoom = 1.0;
+  vp.panX = 0;
+  vp.panY = 0;
+  applyViewportTransform(vp, true);
+}
+
+
+  Object.assign(App, {
+    initAllViewportZoomPan,
+    initViewportZoomPan,
+    getViewportPanBounds,
+    applyViewportTransform,
+    showViewportHudAndScrollbars,
+    initViewportHudOpacity,
+    cycleViewportHudOpacity,
+    stepViewportZoom,
+    setViewportZoom,
+    resetViewportZoom,
+  });
+})();
+
+// ============================================================
+// --- INTEGRATED HALFTONE STUDIO GT ENGINE (WebGL2 + 100% Full-Res) ---
+// ============================================================
+(function() {
+  const apiPost = (url, body) => App.apiPost(url, body);
+  const apiGet = (url) => App.apiGet(url);
+  const toast = (type, msg) => App.toast(type, msg);
+
+/* ============================================================
+   QuantFunc WebUI — Halftone Studio GT Engine
+   Multi-layer screentone system, polygon lasso/brush masking,
+   and Real-Time WebGL2 GPU Shader Engine (60–144 FPS, <0.3ms latency).
+   100% WYSIWYG parity with Python backend CPU engine.
+   ============================================================ */
+
+
+const halftoneBaseExtraParams = {
+  satellite_enabled: false,
+  satellite_count: 4,
+  satellite_size_ratio: 0.45,
+  satellite_distance: 0.42,
+  satellite_angle: 0.0,
+  satellite_shape: "circle",
+  satellite_stretch: 0.0,
+  merge_factor: 0.0,
+  aspect_x: 1.0,
+  aspect_y: 1.0,
+  row_offset: 0.0,
+  jitter_pos: 0.0,
+  jitter_size: 0.0,
+  grad_type: "none",
+  grad_angle: 45.0,
+  grad_strength: 0.0,
+  qualityMode: "full",
+};
+
+const halftonePresets = {
+  manga: {
+    mode: "manga", cell_size: 8, dot_shape: "circle", angle: 45, max_radius_ratio: 0.9,
+    contrast: 1.25, gamma: 1.05, brightness: 0.0, black_threshold: 0.18, white_threshold: 0.86,
+    invert: false, intensity: 1.0, dot_color: "#121212", bg_color: "#ffffff", antialias: 2,
+    dither_type: "none", seed: 42, pre_blur: 0.0, preserve_lines: true, line_threshold: 0.24,
+    paper_texture: 0.0, invert_mask: false, ...halftoneBaseExtraParams
+  },
+  classic: {
+    mode: "classic", cell_size: 10, dot_shape: "circle", angle: 45, max_radius_ratio: 0.82,
+    contrast: 1.05, gamma: 1.0, brightness: 0.0, black_threshold: 0.06, white_threshold: 0.94,
+    invert: false, intensity: 1.0, dot_color: "#111111", bg_color: "#ffffff", antialias: 2,
+    dither_type: "none", seed: 42, pre_blur: 0.3, preserve_lines: false, line_threshold: 0.22,
+    paper_texture: 0.0, invert_mask: false, ...halftoneBaseExtraParams
+  },
+  newspaper: {
+    mode: "newspaper", cell_size: 12, dot_shape: "circle", angle: 45, max_radius_ratio: 0.88,
+    contrast: 1.15, gamma: 0.95, brightness: 0.0, black_threshold: 0.10, white_threshold: 0.90,
+    invert: false, intensity: 1.0, dot_color: "#1f1e1c", bg_color: "#f4efe4", antialias: 2,
+    dither_type: "noise", seed: 42, pre_blur: 0.4, preserve_lines: false, line_threshold: 0.25,
+    paper_texture: 0.35, invert_mask: false, ...halftoneBaseExtraParams
+  },
+  color: {
+    mode: "color", cell_size: 9, dot_shape: "circle", angle: 45, max_radius_ratio: 0.85,
+    contrast: 1.10, gamma: 1.0, brightness: 0.0, black_threshold: 0.05, white_threshold: 0.95,
+    invert: false, intensity: 1.0, dot_color: "#111111", bg_color: "#ffffff", antialias: 2,
+    dither_type: "none", seed: 42, pre_blur: 0.2, preserve_lines: false, line_threshold: 0.22,
+    paper_texture: 0.0, invert_mask: false, ...halftoneBaseExtraParams
+  },
+  custom: {
+    mode: "custom", cell_size: 8, dot_shape: "circle", angle: 45, max_radius_ratio: 0.85,
+    contrast: 1.0, gamma: 1.0, brightness: 0.0, black_threshold: 0.10, white_threshold: 0.90,
+    invert: false, intensity: 1.0, dot_color: "#111111", bg_color: "#ffffff", antialias: 2,
+    dither_type: "none", seed: 42, pre_blur: 0.0, preserve_lines: true, line_threshold: 0.22,
+    paper_texture: 0.0, invert_mask: false, ...halftoneBaseExtraParams
+  }
+};
+
+let glContext = null;
+let glProgram = null;
+let glSourceTexture = null;
+let glMaskTexture = null;
+let glUniformLocations = {};
+// Ping-pong FBOs used by the multi-layer WebGL2 compositor.
+let glFboTextures = [null, null];
+let glFbos = [null, null];
+let glFboSize = { w: 0, h: 0 };
+
+// Zero-allocation reusable buffers for CPU compositor fallback
+const _htBuffers = {
+  _htAccR: null,
+  _htBufN: 0,
+};
+
+// ============================================================
+// WebGL2 Screentone Shader Sources (Ported from GenTonik & Python)
+// ============================================================
+const VS_SOURCE = `#version 300 es
+in vec2 a_position;
+uniform int u_flip_v;
+out vec2 v_uv;
+void main() {
+    v_uv = (a_position + 1.0) * 0.5;
+    // Image textures are uploaded top-row-first, while FBO textures are
+    // bottom-row-first. Layer passes render into FBOs with u_flip_v=0 and the
+    // final blit to the canvas uses u_flip_v=1, keeping both orientations exact.
+    if (u_flip_v == 1) v_uv.y = 1.0 - v_uv.y;
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+
+const FS_SOURCE = `#version 300 es
+precision highp float;
+
+in vec2 v_uv;
+out vec4 outColor;
+
+uniform sampler2D u_image;
+uniform sampler2D u_base;
+uniform sampler2D u_mask;
+uniform int u_has_mask;
+uniform int u_invert_mask;
+
+uniform vec2 u_resolution;
+uniform float u_cell_size;
+uniform int u_dot_shape; // 0..12 geometry shapes
+uniform float u_angle; // radians
+uniform float u_max_radius_ratio;
+uniform float u_contrast;
+uniform float u_gamma;
+uniform float u_brightness;
+uniform float u_black_threshold;
+uniform float u_white_threshold;
+uniform int u_invert;
+uniform float u_intensity;
+uniform vec3 u_dot_color;
+uniform vec3 u_bg_color;
+uniform int u_preserve_lines;
+uniform float u_line_threshold;
+uniform vec2 u_aspect;
+uniform float u_row_offset;
+uniform float u_jitter_pos;
+uniform float u_jitter_size;
+
+// GenTonik Planets & Satellites
+uniform int u_satEnabled;
+uniform int u_satCount;
+uniform float u_satSizeRatio;
+uniform float u_satDist;
+uniform float u_satAngleBase;
+uniform float u_satStretch;
+uniform int u_satShape;
+uniform float u_mergeFactor;
+
+// Spatial Gradients
+uniform int u_gradType; // 0=none, 1=linear, 2=radial, 3=vignette
+uniform float u_gradAngle; // radians
+uniform float u_gradStrength;
+
+// Layer Opacity, Blend Mode & AA
+uniform float u_opacity;
+uniform int u_blend_mode; // 0=normal, 1=multiply, 2=screen, 3=overlay, 4=darken, 5=lighten
+uniform int u_antialias;  // 1=1x (hard 1-bit), 2..4=AA
+uniform int u_mode;       // 0=classic, 1=manga, 2=color (CMYK)
+uniform int u_pass_mode;  // 0=halftone layer, 1=blit composite to canvas
+
+// 13 Geometry Shapes distance field (exact 1:1 math match with backend/halftone.py)
+float evalShapeDist(vec2 p, float halfR, int shape, out bool isLinear) {
+    isLinear = false;
+    vec2 ap = abs(p);
+
+    // 0: circle
+    if (shape == 0) {
+        return length(p) / (halfR * 1.128379);
+    }
+    // 1: square
+    if (shape == 1) {
+        return max(ap.x, ap.y) / halfR;
+    }
+    // 2: diamond
+    if (shape == 2) {
+        return (ap.x + ap.y) / (halfR * 1.41421356);
+    }
+    // 3: line
+    if (shape == 3) {
+        isLinear = true;
+        return ap.y / halfR;
+    }
+    // 4: crosshatch
+    if (shape == 4) {
+        isLinear = true;
+        return min(ap.x, ap.y) / halfR;
+    }
+    // 5: hexagon
+    if (shape == 5) {
+        float hexD = max(ap.x * 0.8660254 + ap.y * 0.5, ap.y);
+        return hexD / (halfR * 0.95);
+    }
+    // 6: cross
+    if (shape == 6) {
+        float d = min(max(ap.x * 2.6, ap.y * 0.85), max(ap.x * 0.85, ap.y * 2.6));
+        return d / (halfR * 0.9);
+    }
+    // 7: ellipse
+    if (shape == 7) {
+        return length(vec2(p.x * 0.82, p.y * 1.22)) / (halfR * 1.05);
+    }
+    // 8: triangle
+    if (shape == 8) {
+        float ty = p.y + 0.08 * (halfR * 2.0);
+        float triD = max(ap.x * 1.73205 + ty, -ty * 2.0) / 1.5;
+        return max(0.0, triD) / (halfR * 0.95);
+    }
+    // 9: star
+    if (shape == 9) {
+        float r = length(p);
+        float theta = atan(p.y, p.x);
+        float starMod = 0.68 + 0.32 * cos(5.0 * theta - 1.570796327);
+        return r / (halfR * 1.22 * max(starMod, 0.2));
+    }
+    // 10: heart
+    if (shape == 10) {
+        float hx = p.x / (halfR * 1.15);
+        float hy = -p.y / (halfR * 1.15) + 0.15;
+        float r = length(vec2(hx, hy - 0.35 * sqrt(abs(hx) + 0.0001)));
+        return r / 0.85;
+    }
+    // 11: concentric
+    if (shape == 11) {
+        isLinear = true;
+        float r = length(p) / (halfR * 1.2);
+        return abs((r * 2.0) - floor(r * 2.0) - 0.5) * 2.0;
+    }
+    // 12: ring
+    if (shape == 12) {
+        isLinear = true;
+        float r = length(p) / (halfR * 1.1);
+        return abs(r - 0.52) * 2.3;
+    }
+    // Default circle
+    return length(p) / (halfR * 1.128379);
+}
+
+float coverageAA(float d, float targetR, int aa, float fallbackFw) {
+    if (aa <= 1) {
+        return (d < targetR) ? 1.0 : 0.0;
+    }
+    float fw = max(fwidth(d), fallbackFw) * (float(aa) * 0.45);
+    fw = max(fw, 0.0001);
+    return clamp(0.5 - (d - targetR) / fw, 0.0, 1.0);
+}
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+vec3 blendLayerRgb(vec3 b, vec3 t, int mode) {
+    if (mode == 1) return b * t;                                  // multiply
+    if (mode == 2) return 1.0 - (1.0 - b) * (1.0 - t);            // screen
+    if (mode == 3) {                                              // overlay
+        vec3 res;
+        res.r = (b.r < 0.5) ? (2.0 * b.r * t.r) : (1.0 - 2.0 * (1.0 - b.r) * (1.0 - t.r));
+        res.g = (b.g < 0.5) ? (2.0 * b.g * t.g) : (1.0 - 2.0 * (1.0 - b.g) * (1.0 - t.g));
+        res.b = (b.b < 0.5) ? (2.0 * b.b * t.b) : (1.0 - 2.0 * (1.0 - b.b) * (1.0 - t.b));
+        return clamp(res, 0.0, 1.0);
+    }
+    if (mode == 4) return min(b, t);                              // darken
+    if (mode == 5) return max(b, t);                              // lighten
+    return t;                                                     // normal
+}
+
+float evalDotInk(vec2 pixelPos, vec2 center, float cov, float angleRad, vec2 pitch, float halfR, int shape, int aa, float rowOff) {
+    if (cov <= 0.0001) return 0.0;
+    if (cov >= 0.9999) return 1.0;
+    vec2 d = pixelPos - center;
+    float cosA = cos(angleRad);
+    float sinA = sin(angleRad);
+    float u = (d.x * cosA + d.y * sinA) / pitch.x;
+    float v = (-d.x * sinA + d.y * cosA) / pitch.y;
+    float cellV = floor(v);
+    if (abs(rowOff) > 0.0001) {
+        float oddRow = mod(abs(cellV), 2.0);
+        u = u + oddRow * rowOff;
+    }
+    float cellU = floor(u);
+    float du = (u - cellU) - 0.5;
+    float dv = (v - cellV) - 0.5;
+    bool isLinear = false;
+    float dist = evalShapeDist(vec2(du, dv), halfR, shape, isLinear);
+    float targetR = isLinear ? clamp(cov, 0.0, 1.0) : sqrt(clamp(cov, 0.0, 1.0));
+    float cellPx = 1.0 / min(pitch.x, pitch.y);
+    float fallbackFw = cellPx / max(halfR, 0.02);
+    return coverageAA(dist, targetR, aa, fallbackFw);
+}
+
+void main() {
+    vec4 srcColor = texture(u_image, v_uv);
+
+    // Final pass: present the composited FBO to the canvas without re-toning.
+    if (u_pass_mode == 1) {
+        outColor = vec4(texture(u_base, v_uv).rgb, 1.0);
+        return;
+    }
+
+    vec3 toneColor = vec3(0.0);
+
+    // If CMYK Mode (u_mode == 2): Multi-channel subtractive halftoning
+    if (u_mode == 2) {
+        vec3 rgbNorm = srcColor.rgb;
+        if (u_invert == 1) rgbNorm = 1.0 - rgbNorm;
+        rgbNorm = clamp(rgbNorm + u_brightness, 0.0, 1.0);
+        float span = max(0.001, u_white_threshold - u_black_threshold);
+        rgbNorm = clamp((rgbNorm - u_black_threshold) / span, 0.0, 1.0);
+        rgbNorm = pow(clamp(rgbNorm, 0.0, 1.0), vec3(1.0 / max(0.01, u_gamma)));
+        rgbNorm = clamp((rgbNorm - 0.5) * u_contrast + 0.5, 0.0, 1.0);
+
+        float kChan = clamp((1.0 - max(max(rgbNorm.r, rgbNorm.g), rgbNorm.b)) * 0.85, 0.0, 1.0);
+        float denom = max(1.0 - kChan, 0.0001);
+        float cChan = clamp((1.0 - rgbNorm.r - kChan) / denom, 0.0, 1.0);
+        float mChan = clamp((1.0 - rgbNorm.g - kChan) / denom, 0.0, 1.0);
+        float yChan = clamp((1.0 - rgbNorm.b - kChan) / denom, 0.0, 1.0);
+
+        vec2 pixelPos = v_uv * u_resolution;
+        vec2 center = u_resolution * 0.5;
+        vec2 pitch = max(vec2(1.5), vec2(u_cell_size) * u_aspect);
+        float halfR = max(0.05, 0.5 * u_max_radius_ratio);
+        float effRowOffset = (u_dot_shape == 5 && abs(u_row_offset) < 0.0001) ? 0.5 : u_row_offset;
+
+        // Screen each channel at standard offset angles: C: 15°, M: 75°, Y: 0°, K: 45°
+        float cDot = evalDotInk(pixelPos, center, cChan, u_angle + 0.261799, pitch, halfR, u_dot_shape, u_antialias, effRowOffset);
+        float mDot = evalDotInk(pixelPos, center, mChan, u_angle + 1.308997, pitch, halfR, u_dot_shape, u_antialias, effRowOffset);
+        float yDot = evalDotInk(pixelPos, center, yChan, u_angle + 0.000000, pitch, halfR, u_dot_shape, u_antialias, effRowOffset);
+        float kDot = evalDotInk(pixelPos, center, kChan, u_angle + 0.785398, pitch, halfR, u_dot_shape, u_antialias, effRowOffset);
+
+        vec3 cmykRgb = vec3(
+            u_bg_color.r * (1.0 - cDot) * (1.0 - kDot),
+            u_bg_color.g * (1.0 - mDot) * (1.0 - kDot),
+            u_bg_color.b * (1.0 - yDot) * (1.0 - kDot)
+        );
+
+        if (u_preserve_lines == 1) {
+            vec2 texel = 1.0 / u_resolution;
+            float lCenter = dot(srcColor.rgb, vec3(0.299, 0.587, 0.114));
+            float lLeft   = dot(texture(u_image, v_uv - vec2(texel.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+            float lRight  = dot(texture(u_image, v_uv + vec2(texel.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+            float lUp     = dot(texture(u_image, v_uv - vec2(0.0, texel.y)).rgb, vec3(0.299, 0.587, 0.114));
+            float lDown   = dot(texture(u_image, v_uv + vec2(0.0, texel.y)).rgb, vec3(0.299, 0.587, 0.114));
+            float edgeMag = length(vec2(lRight - lLeft, lDown - lUp));
+            if ((edgeMag > 0.08 && lCenter < 0.65) || lCenter < u_line_threshold) {
+                cmykRgb = vec3(0.0);
+            }
+        }
+
+        toneColor = cmykRgb;
+    } else {
+    // Monochromatic & Manga Modes (u_mode 0 or 1)
+    float gray = dot(srcColor.rgb, vec3(0.299, 0.587, 0.114));
+    float g = (u_invert == 1) ? (1.0 - gray) : gray;
+    g = clamp(g + u_brightness, 0.0, 1.0);
+    float span = max(0.001, u_white_threshold - u_black_threshold);
+    g = clamp((g - u_black_threshold) / span, 0.0, 1.0);
+    g = pow(clamp(g, 0.0, 1.0), 1.0 / max(0.01, u_gamma));
+    g = clamp((g - 0.5) * u_contrast + 0.5, 0.0, 1.0);
+
+    float inkAmount = 1.0 - g;
+    if (u_mode == 1) {
+        if (g >= 0.94) inkAmount = 0.0;
+        if (g <= 0.06) inkAmount = 1.0;
+    }
+
+    float covMod = inkAmount;
+    if (u_gradType > 0 && abs(u_gradStrength) > 0.001) {
+        vec2 gCoord = v_uv - 0.5;
+        float gMap = 0.5;
+        if (u_gradType == 1) {
+            gMap = (gCoord.x * cos(u_gradAngle) + gCoord.y * sin(u_gradAngle)) + 0.5;
+        } else if (u_gradType == 2) {
+            gMap = clamp(1.0 - length(gCoord) * 1.41421356, 0.0, 1.0);
+        } else if (u_gradType == 3) {
+            gMap = clamp(pow(length(gCoord) * 1.41421356, 1.6) - 0.25, 0.0, 1.0);
+        }
+        covMod = clamp(mix(covMod, covMod * gMap, u_gradStrength), 0.0, 1.0);
+    }
+
+    vec2 pixelPos = v_uv * u_resolution;
+    vec2 center = u_resolution * 0.5;
+    vec2 d = pixelPos - center;
+    float cosA = cos(u_angle);
+    float sinA = sin(u_angle);
+    vec2 pitch = max(vec2(1.5), vec2(u_cell_size) * u_aspect);
+
+    float u = (d.x * cosA + d.y * sinA) / pitch.x;
+    float v = (-d.x * sinA + d.y * cosA) / pitch.y;
+
+    float cellV = floor(v);
+    float effRowOffset = (u_dot_shape == 5 && abs(u_row_offset) < 0.0001) ? 0.5 : u_row_offset;
+    if (abs(effRowOffset) > 0.0001) {
+        float oddRow = mod(abs(cellV), 2.0);
+        u = u + oddRow * effRowOffset;
+    }
+    float cellU = floor(u);
+    float du = (u - cellU) - 0.5;
+    float dv = (v - cellV) - 0.5;
+
+    vec2 cellCoord = vec2(cellU, cellV);
+    if (u_jitter_pos > 0.001) {
+        float jx = (hash21(cellCoord + 11.0) - 0.5) * u_jitter_pos * 0.55;
+        float jy = (hash21(cellCoord + 29.0) - 0.5) * u_jitter_pos * 0.55;
+        du -= jx;
+        dv -= jy;
+    }
+
+    float halfR = max(0.05, 0.5 * u_max_radius_ratio);
+    bool isLinear = false;
+    float dist = evalShapeDist(vec2(du, dv), halfR, u_dot_shape, isLinear);
+    float targetR = isLinear ? clamp(covMod, 0.0, 1.0) : sqrt(clamp(covMod, 0.0, 1.0));
+    if (u_jitter_size > 0.001) {
+        targetR *= (1.0 + (hash21(cellCoord) - 0.5) * u_jitter_size);
+    }
+    float cellPx = 1.0 / min(pitch.x, pitch.y);
+    float fallbackFw = cellPx / max(halfR, 0.02);
+    float ink = coverageAA(dist, targetR, u_antialias, fallbackFw);
+
+    // GenTonik Planets & Satellites (1..8 slot orbit)
+    if (u_satEnabled == 1 && u_satCount > 0) {
+        float satDist = max(0.12, u_satDist * (1.0 - u_mergeFactor * 0.5));
+        float satMaxR = max(0.08, halfR * u_satSizeRatio * (1.0 + u_mergeFactor * 0.45));
+        int effCount = clamp(u_satCount, 1, 8);
+        float stepAng = 6.283185307 / float(effCount);
+        float satFallbackFw = cellPx / max(satMaxR, 0.02);
+
+        for (int i = 0; i < 8; i++) {
+            if (i >= effCount) break;
+            float theta = u_satAngleBase + float(i) * stepAng;
+            float rsx = satDist * cos(theta);
+            float rsy = satDist * sin(theta);
+            vec2 sPos = vec2(du - rsx, dv - rsy);
+
+            if (u_satStretch > 0.001 && (abs(rsx) > 0.00001 || abs(rsy) > 0.00001)) {
+                float dirAngle = atan(-rsy, -rsx);
+                float cd = cos(dirAngle);
+                float sd = sin(dirAngle);
+                float rotU = (sPos.x * cd + sPos.y * sd) / (1.0 + u_satStretch);
+                float rotV = -sPos.x * sd + sPos.y * cd;
+                sPos.x = rotU * cd - rotV * sd;
+                sPos.y = rotU * sd + rotV * cd;
+            }
+
+            bool sLinear = false;
+            float sDist = evalShapeDist(sPos, satMaxR, u_satShape, sLinear);
+            float sTarget = sLinear ? clamp(covMod, 0.0, 1.0) : sqrt(clamp(covMod, 0.0, 1.0));
+            float satInk = coverageAA(sDist, sTarget, u_antialias, satFallbackFw);
+            ink = max(ink, satInk);
+        }
+    }
+
+    if (covMod <= 0.0001) ink = 0.0;
+    if (u_mode == 1 && g <= 0.04) ink = 1.0;
+    if (u_max_radius_ratio >= 0.92 && covMod >= 0.96) ink = 1.0;
+
+    if (u_preserve_lines == 1) {
+        vec2 texel = 1.0 / u_resolution;
+        float lCenter = dot(srcColor.rgb, vec3(0.299, 0.587, 0.114));
+        float lLeft   = dot(texture(u_image, v_uv - vec2(texel.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+        float lRight  = dot(texture(u_image, v_uv + vec2(texel.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+        float lUp     = dot(texture(u_image, v_uv - vec2(0.0, texel.y)).rgb, vec3(0.299, 0.587, 0.114));
+        float lDown   = dot(texture(u_image, v_uv + vec2(0.0, texel.y)).rgb, vec3(0.299, 0.587, 0.114));
+        float edgeMag = length(vec2(lRight - lLeft, lDown - lUp));
+        if ((edgeMag > 0.08 && lCenter < 0.65) || lCenter < u_line_threshold) {
+            ink = max(ink, 1.0);
+        }
+    }
+
+    toneColor = mix(u_bg_color, u_dot_color, ink);
+    }
+
+    // Multi-pass layer compositor: blend this raster layer over the previous
+    // composite (u_base), then apply the layer mask and opacity.
+    vec4 baseColor = texture(u_base, v_uv);
+    float maskFactor = 1.0;
+    if (u_has_mask == 1) {
+        vec4 mPix = texture(u_mask, v_uv);
+        maskFactor = max(mPix.a, dot(mPix.rgb, vec3(0.299, 0.587, 0.114)));
+        if (u_invert_mask == 1) maskFactor = 1.0 - maskFactor;
+    }
+    vec3 layerRgb = mix(srcColor.rgb, toneColor, clamp(u_intensity, 0.0, 1.0));
+    vec3 blended = blendLayerRgb(baseColor.rgb, layerRgb, u_blend_mode);
+    float totalAlpha = clamp(u_opacity * maskFactor, 0.0, 1.0);
+    outColor = vec4(mix(baseColor.rgb, blended, totalAlpha), 1.0);
+}`;
+
+const HT_ORIGINAL_LAYER_ID = "hl_original";
+
+function createHalftoneLayer(name, paramsObj = null, options = {}) {
+  const opts = options || {};
+  return {
+    id: "hl_" + Date.now() + "_" + Math.floor(Math.random() * 10000),
+    name: name || "Слой растра",
+    visible: true,
+    opacity: 1.0,
+    blend_mode: "normal",
+    params: { ...(paramsObj || halftonePresets.manga) },
+    maskCanvas: null,
+    maskDirty: false,
+    hasMask: Boolean(opts.hasMask),
+    isBase: Boolean(opts.isBase),
+    isOriginal: false,
+    locked: false,
+  };
+}
+
+function createHalftoneOriginalLayer() {
+  return {
+    id: HT_ORIGINAL_LAYER_ID,
+    name: "Исходное фото",
+    visible: true,
+    opacity: 1.0,
+    blend_mode: "normal",
+    params: { ...halftonePresets.manga },
+    maskCanvas: null,
+    maskDirty: false,
+    hasMask: false,
+    isBase: false,
+    isOriginal: true,
+    locked: true,
+  };
+}
+
+function ensureHalftoneLayerStack(st) {
+  if (!st) return null;
+  st.layers = Array.isArray(st.layers) ? st.layers.filter(Boolean) : [];
+  let original = st.layers.find((l) => l.isOriginal || l.id === HT_ORIGINAL_LAYER_ID);
+  if (!original) {
+    original = createHalftoneOriginalLayer();
+    st.layers.unshift(original);
+  } else {
+    original.id = HT_ORIGINAL_LAYER_ID;
+    original.isOriginal = true;
+    original.locked = true;
+    original.isBase = false;
+  }
+  st.layers.forEach((l) => {
+    if (l === original) return;
+    l.isOriginal = false;
+    l.locked = false;
+    if (typeof l.hasMask !== "boolean") l.hasMask = Boolean(l.maskCanvas);
+  });
+  if (!st.layers.some((l) => !l.isOriginal)) {
+    const base = createHalftoneLayer("Базовый растр", st.params || halftonePresets.manga, { isBase: true });
+    st.layers.push(base);
+  }
+  if (!st.layers.some((l) => l.isBase)) {
+    const firstRaster = st.layers.find((l) => !l.isOriginal);
+    if (firstRaster) firstRaster.isBase = true;
+  }
+  const active = st.layers.find((l) => l.id === st.activeLayerId);
+  if (!active || active.isOriginal) {
+    const firstRaster = st.layers.find((l) => !l.isOriginal);
+    st.activeLayerId = firstRaster ? firstRaster.id : null;
+  }
+  return st.layers;
+}
+
+function resetHalftoneLayerStack(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const baseParams = { ...(st.params || halftonePresets.manga) };
+  const base = createHalftoneLayer("Базовый растр", baseParams, { isBase: true });
+  st.layers = [createHalftoneOriginalLayer(), base];
+  st.activeLayerId = base.id;
+  st.params = { ...baseParams };
+  st.comparing = false;
+  st.tool = "view";
+  const maskCanvas = document.getElementById("ht-mask-canvas");
+  if (maskCanvas) {
+    const ctx = maskCanvas.getContext("2d");
+    ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+  }
+  renderHalftoneLayersUI(app);
+  return st.layers;
+}
+
+function initHalftoneStudio(appRef) {
+  const app = appRef || window.App;
+  if (!app) return;
+  if (!app.state.halftone) {
+    app.state.halftone = {
+      params: { ...halftonePresets.manga },
+      layers: [],
+      activeLayerId: null,
+      sourcePath: null,
+      sourceUrl: null,
+      sourceDataUrl: null,
+      resultDataUrl: null,
+      comparing: false,
+      tool: "view",
+      brushSize: 24,
+      lassoMode: "replace",
+      lassoPoints: [],
+      isDrawingLasso: false,
+      isDrawingBrush: false,
+      maskDirty: false,
+      liveReady: false,
+      liveActive: false,
+      qualityMode: "full",
+      debounceTimer: null,
+      _htAccR: null,
+      _htBufN: 0,
+    };
+  }
+
+  ensureHalftoneLayerStack(app.state.halftone);
+  ensureWebGLCanvas(app);
+  renderHalftoneLayersUI(app);
+  syncHalftoneControlsFromParams(app.state.halftone.params);
+}
+
+function ensureWebGLCanvas(appRef) {
+  const app = appRef || window.App;
+  let canvas = document.getElementById("ht-live-canvas");
+  if (!canvas) {
+    const wrap = document.getElementById("ht-preview-wrap");
+    if (!wrap) return null;
+    canvas = document.createElement("canvas");
+    canvas.id = "ht-live-canvas";
+    canvas.className = "ht-live-canvas";
+    canvas.style.position = "absolute";
+    canvas.style.top = "0";
+    canvas.style.left = "0";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.pointerEvents = "none";
+    canvas.style.display = "none";
+    canvas.style.zIndex = "2";
+    wrap.appendChild(canvas);
+  }
+
+  if (!glContext) {
+    try {
+      glContext = canvas.getContext("webgl2", { alpha: false, depth: false, antialias: false, preserveDrawingBuffer: true });
+      if (glContext) {
+        initWebGLProgram(glContext);
+      }
+    } catch (e) {
+      console.warn("WebGL2 initialization failed, falling back to 2D:", e);
+    }
+  }
+  return canvas;
+}
+
+function initWebGLProgram(gl) {
+  const compileShader = (src, type) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(s));
+      gl.deleteShader(s);
+      return null;
+    }
+    return s;
+  };
+
+  const vs = compileShader(VS_SOURCE, gl.VERTEX_SHADER);
+  const fs = compileShader(FS_SOURCE, gl.FRAGMENT_SHADER);
+  if (!vs || !fs) return;
+
+  glProgram = gl.createProgram();
+  gl.attachShader(glProgram, vs);
+  gl.attachShader(glProgram, fs);
+  gl.linkProgram(glProgram);
+
+  if (!gl.getProgramParameter(glProgram, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(glProgram));
+    return;
+  }
+
+  // Setup full-screen quad [-1, 1]
+  const quadBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1,
+  ]), gl.STATIC_DRAW);
+
+  const posLoc = gl.getAttribLocation(glProgram, "a_position");
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  // Cache uniform locations
+  const uniforms = [
+    "u_image", "u_resolution", "u_cell_size", "u_dot_shape", "u_angle",
+    "u_max_radius_ratio", "u_contrast", "u_gamma", "u_brightness",
+    "u_black_threshold", "u_white_threshold", "u_invert", "u_intensity",
+    "u_dot_color", "u_bg_color", "u_preserve_lines", "u_line_threshold",
+    "u_aspect", "u_row_offset", "u_jitter_pos", "u_jitter_size",
+    "u_satEnabled", "u_satCount", "u_satSizeRatio", "u_satDist",
+    "u_satAngleBase", "u_satStretch", "u_satShape", "u_mergeFactor",
+    "u_gradType", "u_gradAngle", "u_gradStrength",
+    "u_opacity", "u_blend_mode", "u_antialias", "u_mode", "u_mask", "u_has_mask", "u_invert_mask",
+    "u_base", "u_flip_v", "u_pass_mode"
+  ];
+  glUniformLocations = {};
+  for (const u of uniforms) {
+    glUniformLocations[u] = gl.getUniformLocation(glProgram, u);
+  }
+}
+
+function setHalftoneQualityMode(mode, appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app.state.halftone;
+  if (!st) return;
+
+  st.qualityMode = mode || "full";
+
+  const btnFull = document.getElementById("ht-quality-full");
+  const btnLive = document.getElementById("ht-quality-live");
+  if (btnFull) btnFull.classList.toggle("active", st.qualityMode === "full");
+  if (btnLive) btnLive.classList.toggle("active", st.qualityMode === "live");
+
+  const canvas = document.getElementById("ht-live-canvas");
+  const imgEl = document.getElementById("ht-preview-img");
+
+  if (st.qualityMode === "full") {
+    if (canvas) canvas.style.display = "none";
+    if (imgEl) imgEl.style.visibility = "visible";
+    runHalftonePreview(true, app);
+  } else {
+    if (imgEl) imgEl.style.visibility = "hidden";
+    if (canvas) canvas.style.display = "block";
+    renderHalftoneWebGL(app);
+  }
+  if (app.toast) {
+    app.toast("info", st.qualityMode === "live" ? "⚡ Включён движок WebGL2 GPU (Живой)" : "🎨 Включён движок Точный CPU (Canvas 2D)");
+  }
+}
+
+function prepareHalftoneLiveSource(srcUrl, appRef) {
+  if (!srcUrl) return;
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => {
+    st.liveWidth = img.naturalWidth || img.width;
+    st.liveHeight = img.naturalHeight || img.height;
+    st.liveReady = true;
+
+    const canvas = ensureWebGLCanvas(app);
+    if (canvas && glContext && glProgram) {
+      // Full natural resolution up to 4096px
+      const maxSide = 4096;
+      let w = st.liveWidth;
+      let h = st.liveHeight;
+      if (Math.max(w, h) > maxSide) {
+        const sc = maxSide / Math.max(w, h);
+        w = Math.round(w * sc);
+        h = Math.round(h * sc);
+      }
+      canvas.width = w;
+      canvas.height = h;
+      glContext.viewport(0, 0, canvas.width, canvas.height);
+
+      if (!glSourceTexture) {
+        glSourceTexture = glContext.createTexture();
+      }
+      glContext.activeTexture(glContext.TEXTURE0);
+      glContext.bindTexture(glContext.TEXTURE_2D, glSourceTexture);
+      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_WRAP_S, glContext.CLAMP_TO_EDGE);
+      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_WRAP_T, glContext.CLAMP_TO_EDGE);
+      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_MIN_FILTER, glContext.NEAREST);
+      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_MAG_FILTER, glContext.NEAREST);
+      glContext.texImage2D(glContext.TEXTURE_2D, 0, glContext.RGBA, glContext.RGBA, glContext.UNSIGNED_BYTE, img);
+      syncHalftoneMaskCanvasSize(st.liveWidth, st.liveHeight, app);
+
+      if (st.qualityMode === "live") {
+        renderHalftoneWebGL(app);
+      }
+    }
+  };
+  img.src = srcUrl;
+}
+
+function triggerHalftoneLiveUpdate(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || (!st.sourcePath && !st.sourceDataUrl)) return;
+
+  const canvas = document.getElementById("ht-live-canvas");
+  const imgEl = document.getElementById("ht-preview-img");
+
+  if (st.qualityMode === "full") {
+    if (canvas) canvas.style.display = "none";
+    if (imgEl) imgEl.style.visibility = "visible";
+    if (st.debounceTimer) clearTimeout(st.debounceTimer);
+    st.debounceTimer = setTimeout(() => {
+      runHalftonePreview(false, app);
+    }, 120);
+    return;
+  }
+
+  // Live GPU mode
+  if (canvas) canvas.style.display = "block";
+  if (imgEl) imgEl.style.visibility = "hidden";
+
+  if (st.liveReady && glContext) {
+    if (!st._rafPending) {
+      st._rafPending = true;
+      requestAnimationFrame(() => {
+        st._rafPending = false;
+        renderHalftoneWebGL(app);
+      });
+    }
+
+    if (st.debounceTimer) clearTimeout(st.debounceTimer);
+    st.debounceTimer = setTimeout(() => {
+      syncHalftoneBackendSilent(app);
+    }, 500);
+  } else {
+    if (st.debounceTimer) clearTimeout(st.debounceTimer);
+    st.debounceTimer = setTimeout(() => {
+      runHalftonePreview(false, app);
+    }, 120);
+  }
+}
+
+function ensureHalftoneFramebuffers(gl, w, h) {
+  const width = Math.max(1, Math.round(Number(w) || 1));
+  const height = Math.max(1, Math.round(Number(h) || 1));
+  if (
+    glFboSize.w === width &&
+    glFboSize.h === height &&
+    glFbos[0] && glFbos[1] &&
+    glFboTextures[0] && glFboTextures[1]
+  ) {
+    return true;
+  }
+
+  for (let i = 0; i < 2; i++) {
+    if (glFbos[i]) {
+      gl.deleteFramebuffer(glFbos[i]);
+      glFbos[i] = null;
+    }
+    if (glFboTextures[i]) {
+      gl.deleteTexture(glFboTextures[i]);
+      glFboTextures[i] = null;
+    }
+  }
+
+  for (let i = 0; i < 2; i++) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      console.warn("Halftone Studio: incomplete WebGL2 framebuffer");
+    }
+    glFboTextures[i] = tex;
+    glFbos[i] = fbo;
+  }
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  glFboSize = { w: width, h: height };
+  return true;
+}
+
+function bindHalftoneLayerMask(gl, lyr) {
+  const maskUnit = 1;
+  gl.activeTexture(gl.TEXTURE0 + maskUnit);
+  gl.uniform1i(glUniformLocations.u_mask, maskUnit);
+
+  if (!lyr || !lyr.hasMask || !lyr.maskCanvas) {
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.uniform1i(glUniformLocations.u_has_mask, 0);
+    return;
+  }
+
+  if (!lyr._glMaskTexture) {
+    lyr._glMaskTexture = gl.createTexture();
+  }
+  gl.bindTexture(gl.TEXTURE_2D, lyr._glMaskTexture);
+  if (lyr.maskDirty || lyr._glMaskCanvas !== lyr.maskCanvas) {
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, lyr.maskCanvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    lyr._glMaskCanvas = lyr.maskCanvas;
+    lyr.maskDirty = false;
+  }
+  gl.uniform1i(glUniformLocations.u_has_mask, 1);
+}
+
+function applyHalftoneLayerParams(gl, p, st, width, height) {
+  const params = p || {};
+  gl.uniform2f(glUniformLocations.u_resolution, width, height);
+
+  // Cell size scaled to natural dimensions
+  const scaleFactor = st.origWidth ? (width / Math.max(st.origWidth, 1)) : 1.0;
+  const cell = Math.max(2.5, (Number(params.cell_size) || 8) * Math.max(0.45, scaleFactor));
+  gl.uniform1f(glUniformLocations.u_cell_size, cell);
+
+  // 13 Geometry shapes map
+  const shapeMap = {
+    circle: 0,
+    square: 1,
+    diamond: 2,
+    line: 3,
+    crosshatch: 4,
+    hexagon: 5,
+    cross: 6,
+    ellipse: 7,
+    triangle: 8,
+    star: 9,
+    heart: 10,
+    concentric: 11,
+    ring: 12,
+    stipple: 0,
+    stochastic: 0,
+  };
+  gl.uniform1i(glUniformLocations.u_dot_shape, shapeMap[params.dot_shape] ?? 0);
+
+  const angleRad = ((Number(params.angle) || 45) * Math.PI) / 180.0;
+  gl.uniform1f(glUniformLocations.u_angle, angleRad);
+
+  gl.uniform1f(glUniformLocations.u_max_radius_ratio, Number(params.max_radius_ratio) || 0.9);
+  gl.uniform1f(glUniformLocations.u_contrast, Number(params.contrast ?? 1.25));
+  gl.uniform1f(glUniformLocations.u_gamma, Number(params.gamma ?? 1.05));
+  gl.uniform1f(glUniformLocations.u_brightness, Number(params.brightness ?? 0.0));
+  gl.uniform1f(glUniformLocations.u_black_threshold, Number(params.black_threshold ?? 0.18));
+  gl.uniform1f(glUniformLocations.u_white_threshold, Number(params.white_threshold ?? 0.86));
+  gl.uniform1i(glUniformLocations.u_invert, params.invert ? 1 : 0);
+  gl.uniform1f(glUniformLocations.u_intensity, Number(params.intensity ?? 1.0));
+
+  const parseRgb = (hex, def) => {
+    const s = String(hex || "").replace("#", "");
+    if (s.length === 6) {
+      return [parseInt(s.slice(0, 2), 16) / 255, parseInt(s.slice(2, 4), 16) / 255, parseInt(s.slice(4, 6), 16) / 255];
+    }
+    return def;
+  };
+  const dotRgb = parseRgb(params.dot_color, [0.07, 0.07, 0.07]);
+  const bgRgb = parseRgb(params.bg_color, [1.0, 1.0, 1.0]);
+  gl.uniform3f(glUniformLocations.u_dot_color, dotRgb[0], dotRgb[1], dotRgb[2]);
+  gl.uniform3f(glUniformLocations.u_bg_color, bgRgb[0], bgRgb[1], bgRgb[2]);
+
+  gl.uniform1i(glUniformLocations.u_preserve_lines, params.preserve_lines ? 1 : 0);
+  gl.uniform1f(glUniformLocations.u_line_threshold, Number(params.line_threshold ?? 0.22));
+  gl.uniform2f(glUniformLocations.u_aspect, Number(params.aspect_x ?? 1.0), Number(params.aspect_y ?? 1.0));
+  gl.uniform1f(glUniformLocations.u_row_offset, Number(params.row_offset ?? 0.0));
+  gl.uniform1f(glUniformLocations.u_jitter_pos, Number(params.jitter_pos ?? 0.0));
+  gl.uniform1f(glUniformLocations.u_jitter_size, Number(params.jitter_size ?? 0.0));
+
+  // GenTonik Planets & Satellites uniforms
+  const satEnabled = Boolean(params.satellite_enabled);
+  gl.uniform1i(glUniformLocations.u_satEnabled, satEnabled ? 1 : 0);
+  gl.uniform1i(glUniformLocations.u_satCount, Number(params.satellite_count ?? 4));
+  gl.uniform1f(glUniformLocations.u_satSizeRatio, Number(params.satellite_size_ratio ?? 0.45));
+  gl.uniform1f(glUniformLocations.u_satDist, Number(params.satellite_distance ?? 0.42));
+  const satAngleRad = ((Number(params.satellite_angle) || 0) * Math.PI) / 180.0;
+  gl.uniform1f(glUniformLocations.u_satAngleBase, satAngleRad);
+  gl.uniform1f(glUniformLocations.u_satStretch, Number(params.satellite_stretch ?? 0.0));
+  gl.uniform1i(glUniformLocations.u_satShape, shapeMap[params.satellite_shape] ?? 0);
+  gl.uniform1f(glUniformLocations.u_mergeFactor, Number(params.merge_factor ?? 0.0));
+
+  // Spatial Gradients uniforms
+  const gradMap = { none: 0, linear: 1, radial: 2, vignette: 3 };
+  gl.uniform1i(glUniformLocations.u_gradType, gradMap[params.grad_type] ?? 0);
+  const gradAngleRad = ((Number(params.grad_angle) || 45) * Math.PI) / 180.0;
+  gl.uniform1f(glUniformLocations.u_gradAngle, gradAngleRad);
+  gl.uniform1f(glUniformLocations.u_gradStrength, Number(params.grad_strength ?? 0.0));
+
+  gl.uniform1i(glUniformLocations.u_antialias, Number(params.antialias) || 2);
+  const modeVal = params.mode === "manga" ? 1 : (params.mode === "color" ? 2 : 0);
+  gl.uniform1i(glUniformLocations.u_mode, modeVal);
+}
+
+function renderHalftoneWebGL(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !st.liveReady || !glContext || !glProgram || !glSourceTexture) return;
+
+  const gl = glContext;
+  const canvas = document.getElementById("ht-live-canvas");
+  if (!canvas || !canvas.width || !canvas.height) return;
+
+  const width = canvas.width;
+  const height = canvas.height;
+  if (!ensureHalftoneFramebuffers(gl, width, height) || !glFbos[0] || !glFbos[1]) return;
+
+  gl.useProgram(glProgram);
+  gl.viewport(0, 0, width, height);
+
+  // The original source texture is the same base the CPU backend composites over.
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, glSourceTexture);
+  gl.uniform1i(glUniformLocations.u_image, 0);
+
+  const rasterLayers = (Array.isArray(st.layers) ? st.layers : [])
+    .filter((l) => l && !l.isOriginal && l.visible !== false);
+
+  const blendModes = { normal: 0, multiply: 1, screen: 2, overlay: 3, darken: 4, lighten: 5 };
+  let baseTexture = glSourceTexture;
+  let writeIndex = 0;
+
+  for (const lyr of rasterLayers) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, glFbos[writeIndex]);
+    gl.viewport(0, 0, width, height);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, baseTexture);
+    gl.uniform1i(glUniformLocations.u_base, 2);
+
+    const p = lyr.params || st.params || {};
+    applyHalftoneLayerParams(gl, p, st, width, height);
+    gl.uniform1i(glUniformLocations.u_pass_mode, 0);
+    gl.uniform1i(glUniformLocations.u_flip_v, 0);
+    gl.uniform1f(glUniformLocations.u_opacity, typeof lyr.opacity === "number" ? Math.max(0, Math.min(1, lyr.opacity)) : 1.0);
+    gl.uniform1i(glUniformLocations.u_blend_mode, blendModes[lyr.blend_mode] ?? 0);
+    gl.uniform1i(glUniformLocations.u_invert_mask, p.invert_mask ? 1 : 0);
+    bindHalftoneLayerMask(gl, lyr);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    baseTexture = glFboTextures[writeIndex];
+    writeIndex = 1 - writeIndex;
+  }
+
+  // Final blit to the default framebuffer. Source/FBO textures are sampled
+  // bottom-row-first, so flip V exactly once here to display the image upright.
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, width, height);
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, baseTexture);
+  gl.uniform1i(glUniformLocations.u_base, 2);
+  gl.uniform1i(glUniformLocations.u_pass_mode, 1);
+  gl.uniform1i(glUniformLocations.u_flip_v, 1);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.activeTexture(gl.TEXTURE0);
+}
+
+
+async function syncHalftoneBackendSilent(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || (!st.sourcePath && !st.sourceDataUrl)) return;
+
+  try {
+    const layersPayload = buildHalftoneLayersPayload(st);
+    const payload = {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: st.params,
+      layers: layersPayload,
+      save: false,
+      preview_max_side: 0,
+    };
+    const res = await apiPost("/api/halftone/process", payload);
+    if (res && res.preview_data_url) {
+      st.resultDataUrl = res.preview_data_url;
+      const imgEl = document.getElementById("ht-preview-img");
+      if (imgEl) imgEl.src = res.preview_data_url;
+    }
+  } catch (_) {}
+}
+
+async function runHalftonePreview(immediate = false, appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app.state.halftone;
+  if (!st.sourcePath && !st.sourceDataUrl) {
+    if (immediate) toast("warning", "Сначала выберите или загрузите изображение");
+    return;
+  }
+
+  const metaEl = document.getElementById("ht-meta-info");
+  const loadOverlay = document.getElementById("ht-loading-overlay");
+  if (metaEl) metaEl.textContent = "⏳ Обработка...";
+  if (loadOverlay) loadOverlay.style.display = "flex";
+
+  try {
+    const layersPayload = buildHalftoneLayersPayload(st);
+    const res = await apiPost("/api/halftone/process", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: st.params,
+      layers: layersPayload,
+      save: false,
+      preview_max_side: 0, // 100% Full-Res WYSIWYG
+    });
+
+    st.resultDataUrl = res.preview_data_url;
+    st.origWidth = res.orig_width || res.width;
+    st.origHeight = res.orig_height || res.height;
+    syncHalftoneMaskCanvasSize(st.origWidth, st.origHeight, app);
+
+    const emptyEl = document.getElementById("ht-empty-state");
+    const wrapEl = document.getElementById("ht-preview-wrap");
+    const imgEl = document.getElementById("ht-preview-img");
+    const canvas = document.getElementById("ht-live-canvas");
+
+    if (emptyEl) emptyEl.style.display = "none";
+    if (wrapEl) wrapEl.style.display = "inline-flex";
+
+    if (imgEl) {
+      imgEl.src = res.preview_data_url;
+    }
+
+    if (st.qualityMode === "full") {
+      if (canvas) canvas.style.display = "none";
+      if (imgEl) imgEl.style.visibility = "visible";
+    } else {
+      if (imgEl) imgEl.style.visibility = "hidden";
+      if (canvas) canvas.style.display = "block";
+    }
+
+    prepareHalftoneLiveSource(st.sourceUrl || res.preview_data_url, app);
+  } catch (e) {
+    toast("error", "Halftone error: " + e.message);
+  } finally {
+    if (loadOverlay) loadOverlay.style.display = "none";
+  }
+}
+
+function selectHalftoneMode(mode, appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const preset = halftonePresets[mode] || halftonePresets.custom;
+  app.state.halftone.params = { ...app.state.halftone.params, ...preset, mode };
+  const activeLyr = getActiveHalftoneLayer(app);
+  if (activeLyr) activeLyr.params = app.state.halftone.params;
+  syncHalftoneControlsFromParams(app.state.halftone.params);
+  triggerHalftoneLiveUpdate(app);
+}
+
+function syncHalftoneControlsFromParams(p) {
+  if (!p) return;
+  document.querySelectorAll("#ht-mode-pills .studio-mode-pill").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === p.mode);
+  });
+  const setPair = (rId, nId, val) => {
+    const r = document.getElementById(rId);
+    const n = document.getElementById(nId);
+    if (r && val !== undefined) r.value = val;
+    if (n && val !== undefined) n.value = val;
+  };
+  setPair("ht-cell-size", "ht-cell-size-num", p.cell_size);
+  setPair("ht-angle", "ht-angle-num", p.angle);
+  setPair("ht-contrast", "ht-contrast-num", p.contrast);
+  setPair("ht-gamma", "ht-gamma-num", p.gamma);
+  setPair("ht-brightness", "ht-brightness-num", p.brightness);
+  setPair("ht-max-radius", "ht-max-radius-num", p.max_radius_ratio);
+  setPair("ht-black-point", "ht-black-point-num", p.black_threshold);
+  setPair("ht-white-cut", "ht-white-cut-num", p.white_threshold);
+  setPair("ht-intensity", "ht-intensity-num", p.intensity);
+
+  const dotShapeSel = document.getElementById("ht-dot-shape");
+  if (dotShapeSel && p.dot_shape) dotShapeSel.value = p.dot_shape;
+  const invertChk = document.getElementById("ht-invert");
+  if (invertChk) invertChk.checked = Boolean(p.invert);
+  const linesChk = document.getElementById("ht-preserve-lines");
+  if (linesChk) linesChk.checked = Boolean(p.preserve_lines);
+
+  // Satellite & Planets controls sync
+  const satBox = document.getElementById("ht-sat-controls");
+  if (satBox) satBox.style.display = p.satellite_enabled ? "flex" : "none";
+  const satChk = document.getElementById("ht-sat-enabled");
+  if (satChk) satChk.checked = Boolean(p.satellite_enabled);
+  const satCountSel = document.getElementById("ht-sat-count");
+  if (satCountSel && p.satellite_count !== undefined) satCountSel.value = String(p.satellite_count);
+  const satShapeSel = document.getElementById("ht-sat-shape");
+  if (satShapeSel && p.satellite_shape) satShapeSel.value = p.satellite_shape;
+  setPair("ht-sat-dist", "ht-sat-dist-num", p.satellite_distance);
+  setPair("ht-sat-size", "ht-sat-size-num", p.satellite_size_ratio);
+  setPair("ht-sat-angle", "ht-sat-angle-num", p.satellite_angle);
+  setPair("ht-sat-stretch", "ht-sat-stretch-num", p.satellite_stretch);
+  setPair("ht-merge-factor", "ht-merge-factor-num", p.merge_factor);
+
+  // Grid Geometry & Gradient sync
+  const aspX = document.getElementById("ht-aspect-x");
+  if (aspX && p.aspect_x !== undefined) aspX.value = p.aspect_x;
+  const aspY = document.getElementById("ht-aspect-y");
+  if (aspY && p.aspect_y !== undefined) aspY.value = p.aspect_y;
+  setPair("ht-row-offset", "ht-row-offset-num", p.row_offset);
+  const jitPos = document.getElementById("ht-jitter-pos");
+  if (jitPos && p.jitter_pos !== undefined) jitPos.value = p.jitter_pos;
+  const jitSize = document.getElementById("ht-jitter-size");
+  if (jitSize && p.jitter_size !== undefined) jitSize.value = p.jitter_size;
+  const gradTypeSel = document.getElementById("ht-grad-type");
+  if (gradTypeSel && p.grad_type) gradTypeSel.value = p.grad_type;
+  setPair("ht-grad-angle", "ht-grad-angle-num", p.grad_angle);
+  setPair("ht-grad-strength", "ht-grad-strength-num", p.grad_strength);
+
+  // Antialias and Dither sync
+  const aaSel = document.getElementById("ht-antialias");
+  if (aaSel && p.antialias !== undefined) aaSel.value = String(p.antialias);
+  const ditherSel = document.getElementById("ht-dither-type");
+  if (ditherSel && p.dither_type) ditherSel.value = p.dither_type;
+}
+
+function onHalftoneParamInput(key, rawVal, appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  let val = rawVal;
+  if (["cell_size", "angle", "seed", "satellite_count", "antialias"].includes(key)) {
+    val = parseInt(rawVal, 10);
+    if (isNaN(val)) return;
+  } else if (["contrast", "gamma", "brightness", "max_radius_ratio", "black_threshold", "white_threshold", "intensity", "satellite_distance", "satellite_size_ratio", "satellite_angle", "satellite_stretch", "aspect_x", "aspect_y", "row_offset", "jitter_pos", "jitter_size", "grad_angle", "grad_strength", "merge_factor"].includes(key)) {
+    val = parseFloat(rawVal);
+    if (isNaN(val)) return;
+  }
+
+  if (key === "satellite_enabled") {
+    const satBox = document.getElementById("ht-sat-controls");
+    if (satBox) satBox.style.display = val ? "flex" : "none";
+  }
+
+  app.state.halftone.params[key] = val;
+  const activeLyr = getActiveHalftoneLayer(app);
+  if (activeLyr) activeLyr.params[key] = val;
+
+  triggerHalftoneLiveUpdate(app);
+}
+
+function buildHalftoneLayersPayload(st) {
+  const layers = Array.isArray(st?.layers) ? st.layers : [];
+  return layers
+    .filter((l) => l && !l.isOriginal)
+    .map((l) => ({
+      id: l.id,
+      name: l.name,
+      visible: l.visible !== false,
+      opacity: typeof l.opacity === "number" ? Math.max(0, Math.min(1, l.opacity)) : 1.0,
+      blend_mode: l.blend_mode || "normal",
+      params: { ...(l.params || st.params || {}) },
+      hasMask: Boolean(l.hasMask && l.maskCanvas),
+      isBase: Boolean(l.isBase),
+      mask: (l.hasMask && l.maskCanvas) ? l.maskCanvas.toDataURL("image/png") : null,
+    }));
+}
+
+function getActiveHalftoneLayer(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !Array.isArray(st.layers)) return null;
+  const active = st.layers.find((l) => l.id === st.activeLayerId && !l.isOriginal);
+  if (active) return active;
+  return st.layers.find((l) => !l.isOriginal) || null;
+}
+
+function normalizeHalftoneAngle(angle) {
+  let a = Number(angle);
+  if (!Number.isFinite(a)) a = 45;
+  a = ((a % 180) + 180) % 180;
+  return Math.round(a * 10) / 10;
+}
+
+function halftoneAngleDistance(a, b) {
+  const d = Math.abs(normalizeHalftoneAngle(a) - normalizeHalftoneAngle(b));
+  return Math.min(d, 180 - d);
+}
+
+function applyHalftoneMoireProtection(lyr, st, appRef) {
+  if (!lyr || lyr.isOriginal || lyr.blend_mode !== "multiply" || !lyr.params) return false;
+  const selfAngle = normalizeHalftoneAngle(lyr.params.angle ?? st.params?.angle ?? 45);
+  const otherAngles = (st.layers || [])
+    .filter((o) => o && o !== lyr && !o.isOriginal && o.visible !== false)
+    .map((o) => normalizeHalftoneAngle(o.params?.angle ?? st.params?.angle ?? 45));
+
+  let angle = selfAngle;
+  for (let i = 0; i < 12; i++) {
+    if (!otherAngles.some((a) => halftoneAngleDistance(a, angle) < 7.5)) break;
+    angle = normalizeHalftoneAngle(angle + 15);
+  }
+
+  if (halftoneAngleDistance(angle, selfAngle) < 0.01) return false;
+
+  lyr.params = { ...lyr.params, angle };
+  if (lyr.id === st.activeLayerId) {
+    st.params = { ...st.params, angle };
+    syncHalftoneControlsFromParams(st.params);
+  }
+  const app = appRef || window.App;
+  if (app?.toast) {
+    app.toast("info", `🛡 Защита от муара: угол слоя «${lyr.name}» изменён на ${Math.round(angle)}°`);
+  }
+  return true;
+}
+
+function syncHalftoneLayerControls(appRef) {
+  const app = appRef || window.App;
+  const lyr = getActiveHalftoneLayer(app);
+  const opacityR = document.getElementById("ht-layer-opacity");
+  const opacityN = document.getElementById("ht-layer-opacity-num");
+  const blendSel = document.getElementById("ht-layer-blend");
+  const disabled = !lyr;
+
+  [opacityR, opacityN, blendSel].forEach((el) => {
+    if (el) el.disabled = disabled;
+  });
+  if (!lyr) return;
+
+  const pct = Math.round((typeof lyr.opacity === "number" ? lyr.opacity : 1.0) * 100);
+  if (opacityR) opacityR.value = pct;
+  if (opacityN) opacityN.value = pct;
+  if (blendSel) blendSel.value = lyr.blend_mode || "normal";
+}
+
+function renderHalftoneLayersUI(appRef) {
+  const app = appRef || window.App;
+  const listEl = document.getElementById("ht-layers-list");
+  const st = app?.state?.halftone;
+  if (!listEl || !st) return;
+
+  const layers = Array.isArray(st.layers) ? st.layers : [];
+  const blendLabels = {
+    normal: "Normal",
+    multiply: "Multiply",
+    screen: "Screen",
+    overlay: "Overlay",
+    darken: "Darken",
+    lighten: "Lighten",
+  };
+
+  listEl.innerHTML = layers.slice().reverse().map((layer) => {
+    const isOriginal = Boolean(layer.isOriginal);
+    const isAct = layer.id === st.activeLayerId && !isOriginal;
+    const index = layers.indexOf(layer);
+    const canUp = !isOriginal && index < layers.length - 1;
+    const canDown = !isOriginal && index > 1;
+    const badges = [];
+    if (isOriginal) badges.push('<span class="ht-layer-tag ht-layer-tag-lock">🔒 оригинал</span>');
+    if (layer.isBase) badges.push('<span class="ht-layer-tag ht-layer-tag-base">база</span>');
+    if (layer.hasMask) badges.push('<span class="ht-layer-tag ht-layer-tag-mask">маска</span>');
+    const meta = isOriginal
+      ? "Фон / база сравнения"
+      : `${blendLabels[layer.blend_mode] || "Normal"} · ${Math.round((typeof layer.opacity === "number" ? layer.opacity : 1.0) * 100)}%`;
+
+    return `
+      <div class="ht-layer-item ${isAct ? "active" : ""} ${isOriginal ? "locked" : ""}" onclick="App.selectHalftoneLayer('${layer.id}')" title="${escapeHtml(meta)}">
+        <div class="ht-layer-left">
+          ${isOriginal
+            ? '<span class="ht-layer-lock">🔒</span>'
+            : `<input type="checkbox" ${layer.visible !== false ? "checked" : ""} onclick="event.stopPropagation(); App.toggleHalftoneLayerVisible('${layer.id}')">`}
+          <span class="ht-layer-name">${escapeHtml(layer.name)}</span>
+          ${badges.join("")}
+        </div>
+        <div class="ht-layer-actions">
+          ${isOriginal ? "" : `
+            <button class="dock-ctrl-btn" onclick="event.stopPropagation(); App.moveHalftoneLayer('up', '${layer.id}')" title="Переместить слой вверх" ${canUp ? "" : "disabled"}>⬆</button>
+            <button class="dock-ctrl-btn" onclick="event.stopPropagation(); App.moveHalftoneLayer('down', '${layer.id}')" title="Переместить слой вниз" ${canDown ? "" : "disabled"}>⬇</button>
+            <button class="dock-ctrl-btn" onclick="event.stopPropagation(); App.duplicateHalftoneLayer('${layer.id}')" title="Дублировать слой">📋</button>
+            <button class="dock-ctrl-btn" onclick="event.stopPropagation(); App.removeHalftoneLayer('${layer.id}')" title="Удалить слой">✕</button>
+          `}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  syncHalftoneLayerControls(app);
+}
+
+function selectHalftoneLayer(id, appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const lyr = (st.layers || []).find((l) => l.id === id);
+  if (!lyr || lyr.isOriginal) {
+    renderHalftoneLayersUI(app);
+    return;
+  }
+
+  st.activeLayerId = id;
+  st.params = { ...(lyr.params || st.params || {}) };
+  syncHalftoneControlsFromParams(st.params);
+  renderHalftoneLayersUI(app);
+  triggerHalftoneLiveUpdate(app);
+}
+
+function addHalftoneLayer(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const rasterCount = (st.layers || []).filter((l) => l && !l.isOriginal).length;
+  const newLyr = createHalftoneLayer(`Слой ${rasterCount + 1}`, { ...(st.params || {}) }, { hasMask: true });
+  ensureLayerMaskCanvas(newLyr, false, app);
+  newLyr.hasMask = true;
+  newLyr.maskDirty = true;
+  st.layers.push(newLyr);
+  selectHalftoneLayer(newLyr.id, app);
+}
+
+function duplicateHalftoneLayer(id, appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const source = id
+    ? (st.layers || []).find((l) => l.id === id)
+    : getActiveHalftoneLayer(app);
+  if (!source || source.isOriginal) {
+    toast("warning", "Исходное фото нельзя дублировать");
+    return;
+  }
+
+  const copy = createHalftoneLayer(`${source.name} (копия)`, source.params, {
+    hasMask: Boolean(source.hasMask || source.maskCanvas),
+  });
+  copy.visible = source.visible !== false;
+  copy.opacity = typeof source.opacity === "number" ? source.opacity : 1.0;
+  copy.blend_mode = source.blend_mode || "normal";
+
+  if (source.maskCanvas) {
+    const srcCanvas = ensureLayerMaskCanvas(source, false, app);
+    const dstCanvas = ensureLayerMaskCanvas(copy, false, app);
+    dstCanvas.width = srcCanvas.width;
+    dstCanvas.height = srcCanvas.height;
+    const ctx = dstCanvas.getContext("2d");
+    ctx.clearRect(0, 0, dstCanvas.width, dstCanvas.height);
+    ctx.drawImage(srcCanvas, 0, 0);
+    copy.hasMask = true;
+    copy.maskDirty = true;
+  } else {
+    copy.hasMask = false;
+  }
+
+  const srcIndex = st.layers.indexOf(source);
+  st.layers.splice(srcIndex + 1, 0, copy);
+  selectHalftoneLayer(copy.id, app);
+}
+
+function removeHalftoneLayer(id, appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const target = id
+    ? (st.layers || []).find((l) => l.id === id)
+    : getActiveHalftoneLayer(app);
+  if (!target) return;
+  if (target.isOriginal) {
+    toast("warning", "Исходное фото заблокировано и не может быть удалено");
+    return;
+  }
+  if ((st.layers || []).filter((l) => l && !l.isOriginal).length <= 1) {
+    toast("warning", "Нельзя удалить единственный растровый слой");
+    return;
+  }
+
+  if (target._glMaskTexture && glContext) {
+    glContext.deleteTexture(target._glMaskTexture);
+    target._glMaskTexture = null;
+  }
+
+  const index = st.layers.indexOf(target);
+  st.layers = st.layers.filter((l) => l !== target);
+  if (!st.layers.some((l) => !l.isOriginal && l.isBase)) {
+    const firstRaster = st.layers.find((l) => !l.isOriginal);
+    if (firstRaster) firstRaster.isBase = true;
+  }
+
+  const fallback = st.layers[Math.min(index, st.layers.length - 1)];
+  const next = fallback && !fallback.isOriginal ? fallback : st.layers.find((l) => !l.isOriginal);
+  st.activeLayerId = next ? next.id : null;
+  if (next) st.params = { ...(next.params || st.params) };
+  syncHalftoneControlsFromParams(st.params);
+  renderHalftoneLayersUI(app);
+  triggerHalftoneLiveUpdate(app);
+}
+
+function moveHalftoneLayer(direction, id, appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const layer = id
+    ? (st.layers || []).find((l) => l.id === id)
+    : getActiveHalftoneLayer(app);
+  if (!layer || layer.isOriginal) return;
+
+  const index = st.layers.indexOf(layer);
+  const delta = direction === "up" ? 1 : (direction === "down" ? -1 : 0);
+  const target = index + delta;
+  if (!delta || target < 1 || target >= st.layers.length) return;
+
+  st.layers[index] = st.layers[target];
+  st.layers[target] = layer;
+  renderHalftoneLayersUI(app);
+  triggerHalftoneLiveUpdate(app);
+}
+
+function toggleHalftoneLayerVisible(id, appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const lyr = (st.layers || []).find((l) => l.id === id);
+  if (!lyr || lyr.isOriginal) return;
+  lyr.visible = !lyr.visible;
+  renderHalftoneLayersUI(app);
+  triggerHalftoneLiveUpdate(app);
+}
+
+function toggleHalftoneCompare(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !st.sourceUrl) return;
+  st.comparing = !st.comparing;
+  const canvas = document.getElementById("ht-live-canvas");
+  const img = document.getElementById("ht-preview-img");
+  const badge = document.getElementById("ht-compare-badge");
+
+  const btn = document.getElementById("ht-compare-btn");
+  if (btn) btn.classList.toggle("active", st.comparing);
+
+  if (st.comparing) {
+    if (canvas) canvas.style.display = "none";
+    if (img) {
+      img.style.visibility = "visible";
+      img.src = st.sourceUrl;
+    }
+    if (badge) badge.style.display = "block";
+  } else {
+    if (badge) badge.style.display = "none";
+    if (st.qualityMode === "live") {
+      if (img) img.style.visibility = "hidden";
+      if (canvas) canvas.style.display = "block";
+      renderHalftoneWebGL(app);
+    } else {
+      if (canvas) canvas.style.display = "none";
+      if (img) {
+        img.style.visibility = "visible";
+        img.src = st.resultDataUrl || st.sourceUrl;
+      }
+    }
+  }
+}
+
+function revertHalftoneToOriginal(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !st.sourceUrl) return;
+  st.comparing = true;
+  const canvas = document.getElementById("ht-live-canvas");
+  const img = document.getElementById("ht-preview-img");
+  const badge = document.getElementById("ht-compare-badge");
+
+  if (canvas) canvas.style.display = "none";
+  if (img) {
+    img.style.visibility = "visible";
+    img.src = st.sourceUrl;
+  }
+  if (badge) badge.style.display = "block";
+}
+
+async function saveHalftoneToGallery(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || (!st.sourcePath && !st.sourceDataUrl)) {
+    toast("warning", "Нет изображения для сохранения");
+    return;
+  }
+
+  const loadOverlay = document.getElementById("ht-loading-overlay");
+  if (loadOverlay) loadOverlay.style.display = "flex";
+
+  // If WebGL2 GPU Live mode is active, export directly from canvas for 100% WYSIWYG
+  if (st.qualityMode === "live") {
+    const canvas = document.getElementById("ht-live-canvas");
+    if (canvas && canvas.width > 0) {
+      try {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            toast("error", "Ошибка создания PNG");
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `halftone_gt_gpu_${Date.now()}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          toast("success", "PNG сохранён без рассинхрона (100% WYSIWYG WebGL2)");
+        }, "image/png");
+        if (loadOverlay) loadOverlay.style.display = "none";
+        return;
+      } catch (e) {
+        console.warn("Direct canvas export fallback:", e);
+      }
+    }
+  }
+
+  // If Full-Res CPU mode has rendered dataUrl, download immediately
+  if (st.qualityMode === "full" && st.resultDataUrl) {
+    try {
+      const a = document.createElement("a");
+      a.href = st.resultDataUrl;
+      a.download = `halftone_gt_cpu_${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast("success", "PNG сохранён (100% WYSIWYG CPU)");
+      if (loadOverlay) loadOverlay.style.display = "none";
+      return;
+    } catch (_) {}
+  }
+
+  // If WebGL2 GPU Live mode is active, pass the exact canvas dataUrl to gallery
+  let liveDataUrl = null;
+  if (st.qualityMode === "live") {
+    const canvas = document.getElementById("ht-live-canvas");
+    if (canvas && canvas.width > 0) {
+      try { liveDataUrl = canvas.toDataURL("image/png"); } catch (_) {}
+    }
+  }
+
+  try {
+    const layersPayload = buildHalftoneLayersPayload(st);
+    const res = await apiPost("/api/halftone/process", {
+      image_path: liveDataUrl ? null : st.sourcePath,
+      image_data: liveDataUrl || st.resultDataUrl || st.sourceDataUrl,
+      params: st.params,
+      layers: layersPayload,
+      save: true,
+      preview_max_side: 0,
+    });
+    if (res.saved) {
+      toast("success", `Сохранено в галерею: ${res.saved.name} ✓`);
+    }
+  } catch (e) {
+    toast("error", "Ошибка сохранения: " + e.message);
+  } finally {
+    if (loadOverlay) loadOverlay.style.display = "none";
+  }
+}
+
+async function downloadHalftonePng(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || (!st.sourcePath && !st.sourceDataUrl)) {
+    toast("warning", "Сначала выберите или загрузите изображение");
+    return;
+  }
+
+  const loadOverlay = document.getElementById("ht-loading-overlay");
+  if (loadOverlay) loadOverlay.style.display = "flex";
+  toast("info", "Рендеринг в полном разрешении для скачивания...");
+
+  try {
+    const layersPayload = buildHalftoneLayersPayload(st);
+    const res = await apiPost("/api/halftone/process", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: st.params,
+      layers: layersPayload,
+      save: false,
+      preview_max_side: 0,
+    });
+
+    const src = res?.preview_data_url || st.resultDataUrl;
+    if (!src) throw new Error("Не удалось получить результат рендеринга");
+
+    const a = document.createElement("a");
+    a.href = src;
+    a.download = `halftone_${res.width || "full"}x${res.height || "res"}_${Date.now()}.png`;
+    a.click();
+    toast("success", `Скачано в оригинальном разрешении ${res.width}×${res.height} px ✓`);
+  } catch (e) {
+    toast("error", "Ошибка скачивания: " + e.message);
+  } finally {
+    if (loadOverlay) loadOverlay.style.display = "none";
+  }
+}
+
+function syncHalftoneMaskCanvasSize(w, h, appRef = null) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !w || !h) return;
+  const maskCanvas = document.getElementById("ht-mask-canvas");
+  const lassoOverlay = document.getElementById("ht-lasso-overlay");
+  if (maskCanvas && (maskCanvas.width !== w || maskCanvas.height !== h)) {
+    maskCanvas.width = w;
+    maskCanvas.height = h;
+  }
+  if (lassoOverlay && (lassoOverlay.width !== w || lassoOverlay.height !== h)) {
+    lassoOverlay.width = w;
+    lassoOverlay.height = h;
+  }
+}
+
+function ensureLayerMaskCanvas(lyr, fillWhiteIfNew = false, appRef = null) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const w = st?.origWidth || st?.liveWidth || 800;
+  const h = st?.origHeight || st?.liveHeight || 800;
+  if (!lyr.maskCanvas) {
+    lyr.maskCanvas = document.createElement("canvas");
+    lyr.maskCanvas.width = w;
+    lyr.maskCanvas.height = h;
+    const ctx = lyr.maskCanvas.getContext("2d");
+    if (fillWhiteIfNew) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      ctx.clearRect(0, 0, w, h);
+    }
+  } else if (lyr.maskCanvas.width !== w || lyr.maskCanvas.height !== h) {
+    const old = lyr.maskCanvas;
+    const next = document.createElement("canvas");
+    next.width = w;
+    next.height = h;
+    const nCtx = next.getContext("2d");
+    if (fillWhiteIfNew && !lyr.hasMask) {
+      nCtx.fillStyle = "#ffffff";
+      nCtx.fillRect(0, 0, w, h);
+    } else {
+      nCtx.drawImage(old, 0, 0, w, h);
+    }
+    lyr.maskCanvas = next;
+  }
+  return lyr.maskCanvas;
+}
+
+function renderMaskOverlayVisual(lyr, appRef = null) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const maskCanvas = document.getElementById("ht-mask-canvas");
+  const badge = document.getElementById("ht-selection-badge");
+  if (!maskCanvas) return;
+  const ctx = maskCanvas.getContext("2d");
+  ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+  const hasMask = Boolean(lyr && lyr.hasMask && lyr.maskCanvas);
+  if (badge) {
+    badge.textContent = hasMask ? "Маска активна" : "Весь холст";
+    badge.style.color = hasMask ? "var(--accent, #a855f7)" : "var(--text-dim)";
+  }
+
+  const showOverlay = st?.showMaskOverlay !== false;
+  if (!showOverlay || !hasMask) {
+    return;
+  }
+
+  ctx.save();
+  ctx.drawImage(lyr.maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.fillStyle = "rgba(239, 68, 68, 0.45)";
+  ctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+  ctx.restore();
+}
+
+function initHalftoneMaskEvents(appRef = null) {
+  const app = appRef || window.App;
+  const maskCanvas = document.getElementById("ht-mask-canvas");
+  const lassoOverlay = document.getElementById("ht-lasso-overlay");
+  if (!maskCanvas || !lassoOverlay || maskCanvas._maskBound) return;
+  maskCanvas._maskBound = true;
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
+    return [
+      (e.clientX - rect.left) * scaleX,
+      (e.clientY - rect.top) * scaleY
+    ];
+  };
+
+  let isPainting = false;
+  let lastPos = null;
+
+  maskCanvas.addEventListener("pointerdown", (e) => {
+    const st = app?.state?.halftone;
+    if (!st || (st.tool !== "brush" && st.tool !== "eraser")) return;
+    const lyr = getActiveHalftoneLayer(app);
+    if (!lyr) return;
+
+    const fillWhite = (st.tool === "eraser" && !lyr.hasMask);
+    const mCanvas = ensureLayerMaskCanvas(lyr, fillWhite, app);
+
+    isPainting = true;
+    lastPos = getPos(e, maskCanvas);
+    try { maskCanvas.setPointerCapture(e.pointerId); } catch (_) {}
+
+    const ctx = mCanvas.getContext("2d");
+    const brushRadius = Math.max(2, ((st.brushSize || 24) * (mCanvas.width / 1000.0)) * 0.5);
+    ctx.lineWidth = brushRadius * 2.0;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    if (st.tool === "brush") {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = "#ffffff";
+      ctx.fillStyle = "#ffffff";
+    } else {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.strokeStyle = "rgba(0,0,0,1)";
+      ctx.fillStyle = "rgba(0,0,0,1)";
+    }
+
+    ctx.beginPath();
+    ctx.arc(lastPos[0], lastPos[1], brushRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    lyr.hasMask = true;
+    lyr.maskDirty = true;
+    renderMaskOverlayVisual(lyr, app);
+    triggerHalftoneLiveUpdate(app);
+  });
+
+  maskCanvas.addEventListener("pointermove", (e) => {
+    if (!isPainting) return;
+    const st = app?.state?.halftone;
+    const lyr = getActiveHalftoneLayer(app);
+    if (!lyr || !lyr.maskCanvas) return;
+    const pos = getPos(e, maskCanvas);
+    const ctx = lyr.maskCanvas.getContext("2d");
+    ctx.beginPath();
+    ctx.moveTo(lastPos[0], lastPos[1]);
+    ctx.lineTo(pos[0], pos[1]);
+    ctx.stroke();
+    lastPos = pos;
+    lyr.maskDirty = true;
+    renderMaskOverlayVisual(lyr, app);
+    triggerHalftoneLiveUpdate(app);
+  });
+
+  const stopPaint = (e) => {
+    if (!isPainting) return;
+    isPainting = false;
+    try { maskCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    const lyr = getActiveHalftoneLayer(app);
+    if (lyr) {
+      lyr.maskDirty = true;
+      renderMaskOverlayVisual(lyr, app);
+      triggerHalftoneLiveUpdate(app);
+    }
+  };
+  maskCanvas.addEventListener("pointerup", stopPaint);
+  maskCanvas.addEventListener("pointercancel", stopPaint);
+
+  let isLassoing = false;
+  let lassoPts = [];
+
+  lassoOverlay.addEventListener("pointerdown", (e) => {
+    const st = app?.state?.halftone;
+    if (!st || st.tool !== "lasso") return;
+    const lyr = getActiveHalftoneLayer(app);
+    if (!lyr) return;
+
+    isLassoing = true;
+    lassoPts = [getPos(e, lassoOverlay)];
+    try { lassoOverlay.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+
+  lassoOverlay.addEventListener("pointermove", (e) => {
+    if (!isLassoing) return;
+    lassoPts.push(getPos(e, lassoOverlay));
+    const ctx = lassoOverlay.getContext("2d");
+    ctx.clearRect(0, 0, lassoOverlay.width, lassoOverlay.height);
+    ctx.strokeStyle = "#a855f7";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(lassoPts[0][0], lassoPts[0][1]);
+    for (let i = 1; i < lassoPts.length; i++) {
+      ctx.lineTo(lassoPts[i][0], lassoPts[i][1]);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  const stopLasso = (e) => {
+    if (!isLassoing) return;
+    isLassoing = false;
+    try { lassoOverlay.releasePointerCapture(e.pointerId); } catch (_) {}
+    const ctx = lassoOverlay.getContext("2d");
+    ctx.clearRect(0, 0, lassoOverlay.width, lassoOverlay.height);
+
+    if (lassoPts.length > 2) {
+      const lyr = getActiveHalftoneLayer(app);
+      if (lyr) {
+        const mode = app?.state?.halftone?.lassoMode || "replace";
+        const fillWhite = (mode === "subtract" && !lyr.hasMask);
+        const mCanvas = ensureLayerMaskCanvas(lyr, fillWhite, app);
+        const mCtx = mCanvas.getContext("2d");
+
+        if (mode === "replace") {
+          mCtx.clearRect(0, 0, mCanvas.width, mCanvas.height);
+          mCtx.globalCompositeOperation = "source-over";
+          mCtx.fillStyle = "#ffffff";
+          mCtx.beginPath();
+          mCtx.moveTo(lassoPts[0][0], lassoPts[0][1]);
+          for (let i = 1; i < lassoPts.length; i++) mCtx.lineTo(lassoPts[i][0], lassoPts[i][1]);
+          mCtx.closePath();
+          mCtx.fill();
+        } else if (mode === "add") {
+          mCtx.globalCompositeOperation = "source-over";
+          mCtx.fillStyle = "#ffffff";
+          mCtx.beginPath();
+          mCtx.moveTo(lassoPts[0][0], lassoPts[0][1]);
+          for (let i = 1; i < lassoPts.length; i++) mCtx.lineTo(lassoPts[i][0], lassoPts[i][1]);
+          mCtx.closePath();
+          mCtx.fill();
+        } else if (mode === "subtract") {
+          mCtx.globalCompositeOperation = "destination-out";
+          mCtx.fillStyle = "rgba(0,0,0,1)";
+          mCtx.beginPath();
+          mCtx.moveTo(lassoPts[0][0], lassoPts[0][1]);
+          for (let i = 1; i < lassoPts.length; i++) mCtx.lineTo(lassoPts[i][0], lassoPts[i][1]);
+          mCtx.closePath();
+          mCtx.fill();
+        } else if (mode === "intersect") {
+          if (!lyr.hasMask) {
+            mCtx.clearRect(0, 0, mCanvas.width, mCanvas.height);
+            mCtx.globalCompositeOperation = "source-over";
+            mCtx.fillStyle = "#ffffff";
+            mCtx.beginPath();
+            mCtx.moveTo(lassoPts[0][0], lassoPts[0][1]);
+            for (let i = 1; i < lassoPts.length; i++) mCtx.lineTo(lassoPts[i][0], lassoPts[i][1]);
+            mCtx.closePath();
+            mCtx.fill();
+          } else {
+            const tC = document.createElement("canvas");
+            tC.width = mCanvas.width;
+            tC.height = mCanvas.height;
+            const tCtx = tC.getContext("2d");
+            tCtx.fillStyle = "#ffffff";
+            tCtx.beginPath();
+            tCtx.moveTo(lassoPts[0][0], lassoPts[0][1]);
+            for (let i = 1; i < lassoPts.length; i++) tCtx.lineTo(lassoPts[i][0], lassoPts[i][1]);
+            tCtx.closePath();
+            tCtx.fill();
+
+            mCtx.globalCompositeOperation = "destination-in";
+            mCtx.drawImage(tC, 0, 0);
+            mCtx.globalCompositeOperation = "source-over";
+          }
+        }
+        lyr.hasMask = true;
+        lyr.maskDirty = true;
+        renderMaskOverlayVisual(lyr, app);
+        triggerHalftoneLiveUpdate(app);
+      }
+    }
+    lassoPts = [];
+  };
+  lassoOverlay.addEventListener("pointerup", stopLasso);
+  lassoOverlay.addEventListener("pointercancel", stopLasso);
+}
+
+function setHalftoneTool(tool, appRef = null) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app?.state?.halftone;
+  if (!st) return;
+  st.tool = tool || "view";
+
+  const toolIds = ["ht-tool-view", "ht-tool-lasso", "ht-tool-brush", "ht-tool-eraser"];
+  toolIds.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle("active", id === `ht-tool-${st.tool}`);
+  });
+
+  const wrap = document.getElementById("ht-preview-wrap");
+  const maskCanvas = document.getElementById("ht-mask-canvas");
+  const lassoOverlay = document.getElementById("ht-lasso-overlay");
+
+  if (wrap) {
+    wrap.style.cursor = st.tool === "view" ? "grab" : "crosshair";
+  }
+
+  const isMaskPaint = (st.tool === "brush" || st.tool === "eraser");
+  const isLasso = (st.tool === "lasso");
+  const showMask = (st.showMaskOverlay !== false);
+
+  if (maskCanvas) {
+    maskCanvas.style.display = (showMask || isMaskPaint) ? "block" : "none";
+    maskCanvas.style.cursor = isMaskPaint ? "crosshair" : "default";
+    maskCanvas.style.pointerEvents = isMaskPaint ? "auto" : "none";
+  }
+
+  if (lassoOverlay) {
+    lassoOverlay.style.display = isLasso ? "block" : "none";
+    lassoOverlay.style.cursor = isLasso ? "crosshair" : "default";
+    lassoOverlay.style.pointerEvents = isLasso ? "auto" : "none";
+  }
+
+  initHalftoneMaskEvents(app);
+  renderMaskOverlayVisual(getActiveHalftoneLayer(app), app);
+  toast("info", `Инструмент: ${st.tool}`);
+}
+
+function setHalftoneBrushSize(size, appRef = null) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const val = parseInt(size, 10) || 24;
+  if (app?.state?.halftone) app.state.halftone.brushSize = val;
+  const sR = document.getElementById("ht-mask-brush");
+  const sN = document.getElementById("ht-mask-brush-num");
+  if (sR && sR.value != val) sR.value = val;
+  if (sN && sN.value != val) sN.value = val;
+}
+
+function setHalftoneLassoMode(mode, appRef = null) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const m = mode || "replace";
+  if (app?.state?.halftone) app.state.halftone.lassoMode = m;
+
+  ["replace", "add", "subtract", "intersect"].forEach(id => {
+    const btn = document.getElementById(`ht-sel-${id}`);
+    if (btn) btn.classList.toggle("active", id === m);
+  });
+
+  if (app?.state?.halftone?.tool === "view") {
+    setHalftoneTool("lasso", app);
+  }
+}
+
+function clearHalftoneMask(appRef = null) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const lyr = getActiveHalftoneLayer(app);
+  if (!lyr) return;
+
+  if (lyr.maskCanvas) {
+    const ctx = lyr.maskCanvas.getContext("2d");
+    ctx.clearRect(0, 0, lyr.maskCanvas.width, lyr.maskCanvas.height);
+  }
+  if (lyr.isBase) {
+    // Base raster returns to full-canvas coverage.
+    lyr.hasMask = false;
+  } else {
+    // Local layers stay masked; an empty mask means "not painted yet".
+    ensureLayerMaskCanvas(lyr, false, app);
+    lyr.hasMask = true;
+  }
+  lyr.maskDirty = true;
+
+  const maskCanvas = document.getElementById("ht-mask-canvas");
+  if (maskCanvas) {
+    const ctx = maskCanvas.getContext("2d");
+    ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+  }
+  renderMaskOverlayVisual(lyr, app);
+  renderHalftoneLayersUI(app);
+  triggerHalftoneLiveUpdate(app);
+  toast("info", lyr.isBase ? "Маска снята (скринтон на весь холст)" : "Маска очищена (локальный слой скрыт)");
+}
+
+function invertHalftoneMaskSelection(appRef = null) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const lyr = getActiveHalftoneLayer(app);
+  if (lyr && lyr.maskCanvas && lyr.hasMask) {
+    const ctx = lyr.maskCanvas.getContext("2d");
+    const imgData = ctx.getImageData(0, 0, lyr.maskCanvas.width, lyr.maskCanvas.height);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const newA = 255 - d[i + 3];
+      d[i] = newA;
+      d[i + 1] = newA;
+      d[i + 2] = newA;
+      d[i + 3] = newA;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    lyr.maskDirty = true;
+    renderMaskOverlayVisual(lyr, app);
+    triggerHalftoneLiveUpdate(app);
+    toast("info", "Выделение маски инвертировано");
+  } else if (app?.state?.halftone?.params) {
+    const p = app.state.halftone.params;
+    p.invert_mask = !p.invert_mask;
+    const chk = document.getElementById("ht-invert-mask");
+    if (chk) chk.checked = p.invert_mask;
+    triggerHalftoneLiveUpdate(app);
+    toast("info", "Инверсия маски слоя переключена");
+  }
+}
+
+function toggleHalftoneMaskOverlay(checked, appRef = null) {
+  const app = (typeof checked === "object" && checked && checked.state) ? checked : (appRef || window.App);
+  initHalftoneStudio(app);
+  const st = app?.state?.halftone;
+  if (!st) return;
+  st.showMaskOverlay = (typeof checked === "boolean") ? checked : !st.showMaskOverlay;
+  const chk = document.getElementById("ht-show-mask-overlay");
+  if (chk) chk.checked = st.showMaskOverlay;
+  setHalftoneTool(st.tool, app);
+}
+
+function toggleHalftoneMaskMode(checked, appRef = null) {
+  const app = (typeof checked === "object" && checked && checked.state) ? checked : (appRef || window.App);
+  initHalftoneStudio(app);
+  const isChecked = (typeof checked === "boolean") ? checked : true;
+  setHalftoneTool(isChecked ? "brush" : "view", app);
+}
+
+function toggleHalftoneMaskEraser(appRef = null) {
+  setHalftoneTool("eraser", appRef);
+}
+
+function resetHalftoneParams(appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const mode = st.params.mode || "manga";
+  const def = halftonePresets[mode] || halftonePresets.manga;
+  st.params = { ...def };
+  const lyr = getActiveHalftoneLayer(app);
+  if (lyr) lyr.params = { ...st.params };
+  syncHalftoneControlsFromParams(st.params);
+  triggerHalftoneLiveUpdate(app);
+  toast("info", "Параметры сброшены до значений пресета");
+}
+
+function onHalftoneFileUpload(input, appRef) {
+  const app = appRef || window.App;
+  const file = input?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    loadHalftoneSource(e.target.result, file.name, app);
+  };
+  reader.readAsDataURL(file);
+  input.value = "";
+}
+
+function loadHalftoneSource(dataUrl, filename = "image.png", appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app.state.halftone;
+  st.sourceDataUrl = dataUrl;
+  st.sourceUrl = dataUrl;
+  st.sourcePath = null;
+  resetHalftoneLayerStack(app);
+
+  const emptyEl = document.getElementById("ht-empty-state");
+  const wrapEl = document.getElementById("ht-preview-wrap");
+  const imgEl = document.getElementById("ht-preview-img");
+  if (emptyEl) emptyEl.style.display = "none";
+  if (wrapEl) wrapEl.style.display = "inline-flex";
+  if (imgEl) imgEl.src = dataUrl;
+
+  const metaEl = document.getElementById("ht-meta-info");
+  if (metaEl) metaEl.textContent = `Файл: ${filename}`;
+
+  prepareHalftoneLiveSource(dataUrl, app);
+  runHalftonePreview(true, app);
+}
+
+function onStudioDrop(e, target, appRef) {
+  e.preventDefault();
+  e.stopPropagation();
+  const app = appRef || window.App;
+  const files = e.dataTransfer?.files;
+  if (!files || !files.length) return;
+  const file = files[0];
+  if (!file.type.startsWith("image/")) {
+    toast("warning", "Пожалуйста, перетащите файл изображения (PNG, JPG, WEBP)");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const dataUrl = ev.target.result;
+    if (target === "halftone") {
+      loadHalftoneSource(dataUrl, file.name, app);
+    } else if (target === "manga") {
+      if (app.loadMangaSource) app.loadMangaSource(dataUrl, file.name);
+    } else {
+      if (app.uploadImg2ImgFile) app.uploadImg2ImgFile(file);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function sendHalftoneToManga(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const src = st?.resultDataUrl || st?.sourceDataUrl;
+  if (!src) {
+    toast("warning", "Нет результата Halftone Studio для передачи в Manga Screen AI");
+    return;
+  }
+  app.switchTab("manga");
+  if (app.loadMangaSource) {
+    app.loadMangaSource(src, "halftone_export.png");
+  }
+  toast("success", "Результат Halftone Studio передан в Manga Screen AI ✓");
+}
+
+let _galleryPickerTarget = "halftone";
+
+function onHalftoneLayerMetaChange(prop, val, appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app?.state?.halftone;
+  const lyr = getActiveHalftoneLayer(app);
+  if (!st || !lyr) return;
+  if (prop === "opacity") {
+    const v = parseFloat(val) / 100.0;
+    lyr.opacity = isNaN(v) ? 1.0 : Math.max(0, Math.min(1, v));
+  } else if (prop === "blend_mode") {
+    lyr.blend_mode = val || "normal";
+    if (lyr.blend_mode === "multiply") {
+      applyHalftoneMoireProtection(lyr, st, app);
+    }
+  }
+  syncHalftoneLayerControls(app);
+  renderHalftoneLayersUI(app);
+  triggerHalftoneLiveUpdate(app);
+}
+
+function openGalleryPicker(targetTool = "halftone", appRef) {
+  const app = appRef || window.App;
+  _galleryPickerTarget = targetTool;
+  const modal = document.getElementById("gallery-picker-modal");
+  const grid = document.getElementById("gallery-picker-grid");
+  const title = document.getElementById("gallery-picker-title");
+  if (!modal || !grid) return;
+
+  if (title) {
+    title.textContent = targetTool === "halftone"
+      ? "Выберите изображение для Halftone Studio GT"
+      : "Выберите изображение для Manga Screen AI";
+  }
+
+  const items = app?.state?.historyItems || [];
+  if (!items.length) {
+    grid.innerHTML = '<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: var(--text-dim);">Галерея генераций пуста</div>';
+  } else {
+    grid.innerHTML = items.map(it => {
+      const thumbUrl = it.thumb_url || it.image_url || it.url;
+      const fullUrl = it.image_url || it.url || thumbUrl;
+      return `
+        <div class="gallery-picker-item" onclick="App.selectGalleryPickerItem('${escapeHtml(fullUrl)}', '${escapeHtml(it.filename || '')}')" style="cursor: pointer; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); aspect-ratio: 1; background: var(--bg-surface); transition: transform 0.15s, border-color 0.15s;">
+          <img src="${thumbUrl}" alt="History item" style="width: 100%; height: 100%; object-fit: cover; display: block;" loading="lazy">
+        </div>
+      `;
+    }).join("");
+  }
+
+  modal.style.display = "flex";
+}
+
+function closeGalleryPicker() {
+  const modal = document.getElementById("gallery-picker-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function selectGalleryPickerItem(url, filename, appRef) {
+  closeGalleryPicker();
+  const app = appRef || window.App;
+  const target = _galleryPickerTarget || "halftone";
+  if (target === "halftone") {
+    loadHalftoneSource(url, filename || "gallery_item.png", app);
+  } else if (target === "manga") {
+    if (app.loadMangaSource) app.loadMangaSource(url, filename || "gallery_item.png");
+  }
+}
+
+function openHistoryItemInTool(tool, appRef) {
+  const app = appRef || window.App;
+  const it = app?.state?.selectedHistoryItem;
+  if (!it) return;
+  const url = it.image_url || it.url || it.thumb_url;
+  if (!url) return;
+  if (app.closeHistoryModal) app.closeHistoryModal();
+  app.switchTab(tool);
+  if (tool === "halftone") {
+    loadHalftoneSource(url, it.filename || "history_image.png", app);
+  } else if (tool === "manga") {
+    if (app.loadMangaSource) app.loadMangaSource(url, it.filename || "history_image.png");
+  }
+}
+
+function useCanvasImageInTool(tool, appRef) {
+  const app = appRef || window.App;
+  const curImg = app?.state?.lastPreviewUrl || document.getElementById("preview-img")?.src;
+  if (!curImg) {
+    toast("warning", "Нет сгенерированного изображения для передачи");
+    return;
+  }
+  app.switchTab(tool);
+  if (tool === "halftone") {
+    loadHalftoneSource(curImg, "generated_preview.png", app);
+  } else if (tool === "manga") {
+    if (app.loadMangaSource) app.loadMangaSource(curImg, "generated_preview.png");
+  }
+}
+
+
+  Object.assign(App, {
+    halftoneBaseExtraParams,
+    halftonePresets,
+    _htBuffers,
+    createHalftoneLayer,
+    initHalftoneStudio,
+    setHalftoneQualityMode,
+    prepareHalftoneLiveSource,
+    triggerHalftoneLiveUpdate,
+    renderHalftoneWebGL,
+    runHalftonePreview,
+    selectHalftoneMode,
+    syncHalftoneControlsFromParams,
+    onHalftoneParamInput,
+    getActiveHalftoneLayer,
+    renderHalftoneLayersUI,
+    selectHalftoneLayer,
+    addHalftoneLayer,
+    duplicateHalftoneLayer,
+    removeHalftoneLayer,
+    moveHalftoneLayer,
+    syncHalftoneLayerControls,
+    toggleHalftoneLayerVisible,
+    toggleHalftoneCompare,
+    revertHalftoneToOriginal,
+    saveHalftoneToGallery,
+    downloadHalftonePng,
+    syncHalftoneMaskCanvasSize,
+    ensureLayerMaskCanvas,
+    renderMaskOverlayVisual,
+    initHalftoneMaskEvents,
+    setHalftoneTool,
+    setHalftoneBrushSize,
+    setHalftoneLassoMode,
+    clearHalftoneMask,
+    invertHalftoneMaskSelection,
+    toggleHalftoneMaskOverlay,
+    toggleHalftoneMaskMode,
+    toggleHalftoneMaskEraser,
+    resetHalftoneParams,
+    onHalftoneLayerMetaChange,
+    onHalftoneFileUpload,
+    loadHalftoneSource,
+    onStudioDrop,
+    sendHalftoneToManga,
+    openGalleryPicker,
+    closeGalleryPicker,
+    selectGalleryPickerItem,
+    openHistoryItemInTool,
+    useCanvasImageInTool,
+  });
+})();
+
+// ============================================================
+// --- INTEGRATED MANGA SCREEN AI ENGINE ---
+// ============================================================
+(function() {
+  const apiPost = (url, body) => App.apiPost(url, body);
+  const apiGet = (url) => App.apiGet(url);
+  const toast = (type, msg) => App.toast(type, msg);
+
+/* ============================================================
+   QuantFunc WebUI — Manga Studio AI Controller
+   B&W stylization, G-pen lineart, AI reference pipeline, compare mode.
+   ============================================================ */
+
+
+function defaultMangaParams() {
+  return {
+    mode: "manga_lite",
+    ai_enabled: false,
+    model_id: "",
+    variant_id: "",
+    lora_name: "",
+    lora_strength: 0.85,
+    ai_prompt: "black and white Japanese manga illustration, clean G-pen ink lineart, high contrast screentone shading, monochrome comic art",
+    ai_negative_prompt: "color, blurry, photo, 3d render, watermark, muddy shading",
+    ai_denoise_strength: 0.65,
+    ai_steps: 0,
+    ai_cfg: 0.0,
+    ai_ref_mode: "control_ref",
+    levels_enabled: true,
+    levels_contrast: 1.25,
+    levels_gamma: 1.05,
+    levels_brightness: 0.0,
+    levels_descreen: 0.20,
+    lines_enabled: true,
+    line_strength: 1.15,
+    line_threshold: 0.28,
+    line_thickness: 1,
+    line_invert: false,
+    finish_enabled: true,
+    finish_preset: "clean",
+    finish_dot_size: 6,
+    finish_dot_shape: "circle",
+    finish_angle: 45.0,
+    finish_max_radius_ratio: 0.90,
+    finish_ink_threshold: 0.28,
+    finish_tone_gamma: 1.05,
+    finish_light_tone: 0.80,
+    finish_mid_tone: 0.50,
+    finish_black_point: 0.18,
+    finish_region_size: 6,
+    finish_gradation: 0.25,
+    finish_white_cut: 0.35,
+    finish_invert: false,
+    panel_enabled: false,
+    panel_aspect: "original",
+    panel_crop_x: 0.0,
+    panel_crop_y: 0.0,
+    panel_border: 4,
+    panel_margin: 18,
+    panel_paper_tone: "off-white",
+    panel_print_bleed: 0.15,
+    seed: 42,
+  };
+}
+
+function initMangaStudio(appRef) {
+  const app = appRef || window.App;
+  if (!app) return;
+  if (!app.state.manga) {
+    app.state.manga = {
+      params: defaultMangaParams(),
+      sourcePath: null,
+      sourceUrl: null,
+      sourceDataUrl: null,
+      resultDataUrl: null,
+      comparing: false,
+      debounceTimer: null,
+    };
+  }
+  populateMangaModelsAndLoras(app);
+  syncMangaControlsFromParams(app.state.manga.params);
+}
+
+function populateMangaModelsAndLoras(appRef) {
+  const app = appRef || window.App;
+  if (!app) return;
+
+  const modelSel = document.getElementById("manga-ai-model");
+  if (modelSel) {
+    const models = (app.state.models || []).filter(m => !m.disabled);
+    const curVal = app.state.manga?.params?.model_id || modelSel.value || app.state.selectedModel || "";
+    modelSel.innerHTML = models.map(m => {
+      const eng = (m.engine || "qf").toUpperCase();
+      const inst = m.installed ? "✓ " : "⬇ ";
+      return `<option value="${escapeHtml(m.id)}">${inst}${escapeHtml(m.name)} [${eng}]</option>`;
+    }).join("");
+
+    if (curVal && models.some(m => m.id === curVal)) {
+      modelSel.value = curVal;
+      if (app.state.manga) app.state.manga.params.model_id = curVal;
+    } else if (models.length) {
+      modelSel.value = models[0].id;
+      if (app.state.manga) app.state.manga.params.model_id = models[0].id;
+    }
+  }
+
+  const loraSel = document.getElementById("manga-ai-lora");
+  if (loraSel) {
+    const loras = app.state.loraLibrary || [];
+    const curLora = app.state.manga?.params?.lora_name || "";
+    const noneText = window.t ? (window.t("manga.ai_lora_none") || "Без LoRA (базовая модель)") : "Без LoRA (базовая модель)";
+    loraSel.innerHTML = `<option value="">${noneText}</option>` +
+      loras.map(l => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)} (${escapeHtml(l.family || "flux")})</option>`).join("");
+    loraSel.value = curLora;
+  }
+
+  checkMangaLoraCompatibility(app);
+}
+
+async function onMangaModelChange(modelId, appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  if (app.state.manga) app.state.manga.params.model_id = modelId;
+  await checkMangaLoraCompatibility(app);
+}
+
+async function onMangaLoraChange(loraName, appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  if (app.state.manga) app.state.manga.params.lora_name = loraName || "";
+  await checkMangaLoraCompatibility(app);
+}
+
+async function checkMangaLoraCompatibility(appRef) {
+  const app = appRef || window.App;
+  const badge = document.getElementById("manga-lora-compat-badge");
+  if (!badge || !app?.state?.manga) return;
+
+  const modelId = app.state.manga.params.model_id;
+  const loraName = app.state.manga.params.lora_name;
+  if (!modelId) {
+    badge.textContent = "";
+    return;
+  }
+
+  const modelObj = (app.state.models || []).find(m => m.id === modelId);
+  if (modelObj && modelObj.engine === "sdnq" && !loraName) {
+    badge.style.color = "var(--text-dim)";
+    badge.textContent = "ℹ️ Движок SDNQ использует мультимодальный Qwen-Image референс без внешних LoRA.";
+    return;
+  }
+  if (!loraName) {
+    badge.style.color = "var(--text-dim)";
+    badge.textContent = "✓ Работа без LoRA (семантическая стилизация базовой моделью)";
+    return;
+  }
+
+  try {
+    const res = await apiGet(`/api/loras/check-compatibility?model_id=${encodeURIComponent(modelId)}&lora_name=${encodeURIComponent(loraName)}`);
+    if (res.compatible) {
+      badge.style.color = "#34d399";
+      badge.textContent = `✓ Совместимо (${res.model_family || "Flux/Qwen"})`;
+    } else {
+      badge.style.color = "#f87171";
+      badge.textContent = `⚠️ Несовместимо: модель ${res.model_family}, а LoRA для ${res.lora_family}`;
+    }
+  } catch (_) {
+    badge.textContent = "";
+  }
+}
+
+function selectMangaMode(mode, appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const p = app.state.manga.params;
+  p.mode = mode;
+
+  if (mode === "manga_lite") {
+    p.ai_enabled = false;
+    p.levels_enabled = true;
+    p.lines_enabled = true;
+    p.finish_enabled = true;
+  } else if (mode === "finish_only") {
+    p.ai_enabled = false;
+    p.levels_enabled = false;
+    p.lines_enabled = false;
+    p.finish_enabled = true;
+  } else if (mode === "ai_manga") {
+    p.ai_enabled = true;
+    p.levels_enabled = false;
+    p.lines_enabled = false;
+    p.finish_enabled = false;
+  } else if (mode === "ai_manga_finish") {
+    p.ai_enabled = true;
+    p.levels_enabled = true;
+    p.lines_enabled = true;
+    p.finish_enabled = true;
+  }
+
+  const banner = document.getElementById("manga-fallback-banner");
+  if (banner && (mode === "manga_lite" || mode === "finish_only")) {
+    banner.style.display = "none";
+  }
+
+  syncMangaControlsFromParams(p);
+  if (mode === "manga_lite" || mode === "finish_only") {
+    runMangaPipeline(false, app);
+  }
+}
+
+function syncMangaControlsFromParams(p) {
+  if (!p) return;
+  document.querySelectorAll("#manga-mode-pills .studio-mode-pill").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === p.mode);
+  });
+
+  const stageACard = document.getElementById("manga-stage-a-card");
+  if (stageACard) {
+    stageACard.style.display = (p.mode === "ai_manga" || p.mode === "ai_manga_finish" || p.ai_enabled) ? "flex" : "none";
+  }
+
+  const setChk = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = Boolean(v);
+  };
+  setChk("manga-ai-enabled", p.ai_enabled);
+  setChk("manga-levels-enabled", p.levels_enabled);
+  setChk("manga-lines-enabled", p.lines_enabled);
+  setChk("manga-finish-enabled", p.finish_enabled);
+  setChk("manga-panel-enabled", p.panel_enabled);
+  setChk("manga-line-invert", p.line_invert);
+
+  const setPair = (rId, nId, val) => {
+    const r = document.getElementById(rId);
+    const n = document.getElementById(nId);
+    if (r && val !== undefined) r.value = val;
+    if (n && val !== undefined) n.value = val;
+  };
+  setPair("manga-ai-lora-weight", "manga-ai-lora-weight-num", p.lora_strength);
+  setPair("manga-ai-denoise", "manga-ai-denoise-num", p.ai_denoise_strength);
+  setPair("manga-levels-contrast", "manga-levels-contrast-num", p.levels_contrast);
+  setPair("manga-levels-gamma", "manga-levels-gamma-num", p.levels_gamma);
+  setPair("manga-levels-descreen", "manga-levels-descreen-num", p.levels_descreen);
+  setPair("manga-line-strength", "manga-line-strength-num", p.line_strength);
+  setPair("manga-line-threshold", "manga-line-threshold-num", p.line_threshold);
+  setPair("manga-line-thickness", "manga-line-thickness-num", p.line_thickness);
+  setPair("manga-finish-dot-size", "manga-finish-dot-size-num", p.finish_dot_size);
+  setPair("manga-finish-ink", "manga-finish-ink-num", p.finish_ink_threshold);
+  setPair("manga-finish-light-tone", "manga-finish-light-tone-num", p.finish_light_tone);
+  setPair("manga-finish-mid-tone", "manga-finish-mid-tone-num", p.finish_mid_tone);
+  setPair("manga-finish-black-point", "manga-finish-black-point-num", p.finish_black_point);
+  setPair("manga-finish-white-cut", "manga-finish-white-cut-num", p.finish_white_cut);
+  setPair("manga-panel-border", "manga-panel-border-num", p.panel_border);
+  setPair("manga-panel-margin", "manga-panel-margin-num", p.panel_margin);
+  setPair("manga-panel-bleed", "manga-panel-bleed-num", p.panel_print_bleed);
+
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val !== undefined) el.value = val;
+  };
+  setVal("manga-ai-ref-mode", p.ai_ref_mode);
+  setVal("manga-ai-prompt", p.ai_prompt);
+  setVal("manga-finish-preset", p.finish_preset);
+  setVal("manga-finish-dot-shape", p.finish_dot_shape);
+  setVal("manga-panel-aspect", p.panel_aspect);
+  setVal("manga-panel-paper", p.panel_paper_tone);
+}
+
+function onMangaParamInput(key, rawVal, appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  let val = rawVal;
+  if (["line_thickness", "finish_dot_size", "panel_border", "panel_margin", "seed"].includes(key)) {
+    val = parseInt(rawVal, 10);
+    if (isNaN(val)) return;
+  } else if ([
+    "lora_strength", "ai_denoise_strength", "levels_contrast", "levels_gamma", "levels_descreen",
+    "line_strength", "line_threshold", "finish_ink_threshold", "finish_light_tone",
+    "finish_mid_tone", "finish_black_point", "finish_white_cut", "panel_print_bleed"
+  ].includes(key)) {
+    val = parseFloat(rawVal);
+    if (isNaN(val)) return;
+  }
+
+  app.state.manga.params[key] = val;
+  syncMangaControlsFromParams(app.state.manga.params);
+
+  if (app.state.manga.params.mode === "manga_lite" || app.state.manga.params.mode === "finish_only") {
+    if (app.state.manga.debounceTimer) clearTimeout(app.state.manga.debounceTimer);
+    app.state.manga.debounceTimer = setTimeout(() => {
+      runMangaPipeline(false, app);
+    }, 220);
+  }
+}
+
+function resetMangaParams(appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const curMode = app.state.manga.params?.mode || "manga_lite";
+  app.state.manga.params = defaultMangaParams();
+  selectMangaMode(curMode, app);
+}
+
+async function runMangaPipeline(immediate = false, appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const st = app.state.manga;
+  if (!st.sourcePath && !st.sourceDataUrl) {
+    if (immediate) toast("warning", "Сначала загрузите изображение или выберите его из галереи");
+    return;
+  }
+
+  const p = st.params;
+  const isAi = (p.mode === "ai_manga" || p.mode === "ai_manga_finish") && p.ai_enabled;
+  const metaEl = document.getElementById("manga-meta-info");
+  const banner = document.getElementById("manga-fallback-banner");
+  const bannerMsg = document.getElementById("manga-fallback-msg");
+  const loadOverlay = document.getElementById("manga-loading-overlay");
+  const loadText = document.getElementById("manga-loading-text");
+
+  if (!isAi) {
+    if (metaEl) metaEl.textContent = "⏳ Обработка (CPU)...";
+    if (loadText) loadText.textContent = "Обработка манги (CPU)...";
+    if (loadOverlay) loadOverlay.style.display = "flex";
+
+    try {
+      const res = await apiPost("/api/manga/process", {
+        image_path: st.sourcePath,
+        image_data: st.sourceDataUrl,
+        params: p,
+        save: false,
+        preview_max_side: 0, // Full resolution: preserves fine manga lines
+      });
+
+      st.resultDataUrl = res.preview_data_url;
+      st.comparing = false;
+
+      const emptyEl = document.getElementById("manga-empty-state");
+      const wrapEl = document.getElementById("manga-preview-wrap");
+      const imgEl = document.getElementById("manga-preview-img");
+      const badgeEl = document.getElementById("manga-compare-badge");
+
+      if (emptyEl) emptyEl.style.display = "none";
+      if (wrapEl) wrapEl.style.display = "inline-flex";
+      if (imgEl) imgEl.src = res.preview_data_url;
+      if (badgeEl) badgeEl.style.display = "none";
+
+      if (metaEl) {
+        metaEl.textContent = `${res.width}×${res.height} px · ${(res.elapsed_sec * 1000).toFixed(0)} ms (CPU)`;
+      }
+    } catch (e) {
+      if (metaEl) metaEl.textContent = "Ошибка";
+      toast("error", "Manga pipeline error: " + e.message);
+    } finally {
+      if (loadOverlay) loadOverlay.style.display = "none";
+    }
+    return;
+  }
+
+  // AI GPU pipeline
+  if (metaEl) metaEl.textContent = "⏳ Запуск AI Manga (GPU)...";
+  if (loadText) loadText.textContent = "Запуск AI Manga (GPU)...";
+  if (loadOverlay) loadOverlay.style.display = "flex";
+  if (banner) banner.style.display = "none";
+
+  try {
+    const res = await apiPost("/api/manga/ai-job", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: p,
+    });
+
+    const jobId = res.job_id;
+    const poll = setInterval(async () => {
+      try {
+        const status = await apiGet(`/api/jobs/${jobId}`);
+        const msgText = status.message || `⏳ ${Math.round((status.progress || 0) * 100)}%`;
+        if (metaEl) metaEl.textContent = msgText;
+        if (loadText) loadText.textContent = msgText;
+
+        if (status.status === "complete") {
+          clearInterval(poll);
+          if (loadOverlay) loadOverlay.style.display = "none";
+          const filename = (status.image_path || "").split(/[\/\\]/).pop();
+          const url = `/outputs/${encodeURIComponent(filename)}?t=${Date.now()}`;
+          st.resultDataUrl = url;
+          st.comparing = false;
+
+          const emptyEl = document.getElementById("manga-empty-state");
+          const wrapEl = document.getElementById("manga-preview-wrap");
+          const imgEl = document.getElementById("manga-preview-img");
+          if (emptyEl) emptyEl.style.display = "none";
+          if (wrapEl) wrapEl.style.display = "inline-flex";
+          if (imgEl) imgEl.src = url;
+
+          if (metaEl) metaEl.textContent = status.message || "✓ Готово";
+          const savedMsg = window.t ? (window.t("manga.saved_toast") || "Результат сохранён в галерею ✓") : "Результат сохранён в галерею ✓";
+          toast("success", savedMsg);
+        } else if (status.status === "error") {
+          clearInterval(poll);
+          if (loadOverlay) loadOverlay.style.display = "none";
+          if (metaEl) metaEl.textContent = "Ошибка AI";
+          if (banner && bannerMsg) {
+            bannerMsg.textContent = `Ошибка AI-этапа: ${status.error || status.message}. Режим Manga Lite доступен без GPU.`;
+            banner.style.display = "flex";
+          }
+          toast("error", status.error || status.message || "AI Manga failed");
+        }
+      } catch (_) {
+        clearInterval(poll);
+        if (loadOverlay) loadOverlay.style.display = "none";
+      }
+    }, 400);
+  } catch (e) {
+    if (loadOverlay) loadOverlay.style.display = "none";
+    if (metaEl) metaEl.textContent = "Ошибка AI";
+    if (banner && bannerMsg) {
+      bannerMsg.textContent = `${e.message} — Вы можете переключиться в режим Manga Lite (CPU) без загрузки моделей.`;
+      banner.style.display = "flex";
+    }
+    toast("error", e.message);
+  }
+}
+
+function toggleMangaCompare(appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const st = app.state.manga;
+  if (!st.sourceUrl || !st.resultDataUrl) return;
+
+  st.comparing = !st.comparing;
+  const imgEl = document.getElementById("manga-preview-img");
+  const badgeEl = document.getElementById("manga-compare-badge");
+  const btnEl = document.getElementById("manga-compare-btn");
+
+  if (imgEl) imgEl.src = st.comparing ? st.sourceUrl : st.resultDataUrl;
+  if (badgeEl) badgeEl.style.display = st.comparing ? "block" : "none";
+  if (btnEl) btnEl.classList.toggle("active", st.comparing);
+}
+
+function revertMangaToOriginal(appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const st = app.state.manga;
+  if (!st.sourceUrl) return;
+
+  st.comparing = true;
+  const imgEl = document.getElementById("manga-preview-img");
+  const badgeEl = document.getElementById("manga-compare-badge");
+  if (imgEl) imgEl.src = st.sourceUrl;
+  if (badgeEl) badgeEl.style.display = "block";
+}
+
+async function saveMangaToGallery(appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const st = app.state.manga;
+  if (!st.sourcePath && !st.sourceDataUrl) {
+    toast("warning", "Нет изображения для сохранения");
+    return;
+  }
+
+  if (st.params.mode === "ai_manga" || st.params.mode === "ai_manga_finish") {
+    await runMangaPipeline(true, app);
+    return;
+  }
+
+  try {
+    const res = await apiPost("/api/manga/process", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: st.params,
+      save: true,
+    });
+    if (res.saved) {
+      st.resultDataUrl = res.preview_data_url;
+      const imgEl = document.getElementById("manga-preview-img");
+      if (imgEl) imgEl.src = res.preview_data_url;
+      const savedMsg = window.t ? (window.t("manga.saved_toast") || "Сохранено в галерею") : "Сохранено в галерею";
+      toast("success", `${savedMsg}: ${res.saved.name} ✓`);
+    }
+  } catch (e) {
+    toast("error", "Ошибка сохранения: " + e.message);
+  }
+}
+
+async function downloadMangaPng(appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const st = app.state.manga;
+  if (!st || (!st.sourcePath && !st.sourceDataUrl)) {
+    toast("warning", "Сначала выберите или загрузите изображение");
+    return;
+  }
+
+  const loadOverlay = document.getElementById("manga-loading-overlay");
+  if (loadOverlay) loadOverlay.style.display = "flex";
+  toast("info", "Рендеринг в полном разрешении для скачивания...");
+
+  try {
+    const p = { ...st.params, mode: "manga_screen", finish_enabled: false };
+    const res = await apiPost("/api/manga/process", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: p,
+      save: false,
+      preview_max_side: 0,
+    });
+
+    const src = res?.preview_data_url || st.resultDataUrl;
+    if (!src) throw new Error("Не удалось получить результат рендеринга");
+
+    const a = document.createElement("a");
+    a.href = src;
+    a.download = `manga_${res.width || "full"}x${res.height || "res"}_${Date.now()}.png`;
+    a.click();
+    toast("success", `Скачано в оригинальном разрешении ${res.width}×${res.height} px ✓`);
+  } catch (e) {
+    toast("error", "Ошибка скачивания: " + e.message);
+  } finally {
+    if (loadOverlay) loadOverlay.style.display = "none";
+  }
+}
+
+function onMangaFileUpload(input, appRef) {
+  const app = appRef || window.App;
+  const file = input?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    loadMangaSource(e.target.result, file.name, app);
+  };
+  reader.readAsDataURL(file);
+  input.value = "";
+}
+
+function loadMangaSource(dataUrl, filename = "image.png", appRef) {
+  const app = appRef || window.App;
+  initMangaStudio(app);
+  const st = app.state.manga;
+  st.sourceDataUrl = dataUrl;
+  st.sourceUrl = dataUrl;
+  st.sourcePath = null;
+
+  const emptyEl = document.getElementById("manga-empty-state");
+  const wrapEl = document.getElementById("manga-preview-wrap");
+  const imgEl = document.getElementById("manga-preview-img");
+  if (emptyEl) emptyEl.style.display = "none";
+  if (wrapEl) wrapEl.style.display = "inline-flex";
+  if (imgEl) imgEl.src = dataUrl;
+
+  const metaEl = document.getElementById("manga-meta-info");
+  if (metaEl) metaEl.textContent = `Файл: ${filename}`;
+
+  runMangaPipeline(true, app);
+}
+
+
+  Object.assign(App, {
+    defaultMangaParams,
+    initMangaStudio,
+    populateMangaModelsAndLoras,
+    onMangaModelChange,
+    onMangaLoraChange,
+    checkMangaLoraCompatibility,
+    selectMangaMode,
+    syncMangaControlsFromParams,
+    onMangaParamInput,
+    resetMangaParams,
+    runMangaPipeline,
+    toggleMangaCompare,
+    revertMangaToOriginal,
+    saveMangaToGallery,
+    downloadMangaPng,
+    onMangaFileUpload,
+    loadMangaSource,
+  });
+})();
+
+// ============================================================
+// --- UI HELPERS FOR INDEX.HTML INLINE CALLS ---
+// ============================================================
+Object.assign(App, {
+  onModelsTabSearch(query) {
+    this.state.modelsTabSearch = query || "";
+    this.renderModelsTab();
+  },
+
+  setModelsTabFilter(filter) {
+    this.state.modelsTabFilter = filter || "all";
+    document.querySelectorAll("#models-hub-filters .filter-pill").forEach(p => {
+      p.classList.toggle("active", p.dataset.filter === filter);
+    });
+    this.renderModelsTab();
+  },
+
+  switchModelsHubSubtab(subtab) {
+    this.state.modelsHubSubtab = subtab || "all";
+    document.querySelectorAll(".models-subtab-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.subtab === subtab);
+    });
+    const subtabs = ["all", "downloadable", "encoders", "custom"];
+    subtabs.forEach(s => {
+      const el = document.getElementById(`models-subtab-${s}`);
+      if (el) el.style.display = (s === subtab) ? "block" : "none";
+    });
+    if (subtab === "encoders") {
+      this.renderEncodersTab();
+    } else {
+      this.renderModelsTab();
+    }
+  },
+
+  goToModelInHub(modelId) {
+    this.switchTab("models");
+    this.state.modelsTabSearch = modelId || "";
+    const searchInput = document.getElementById("models-tab-search");
+    if (searchInput) searchInput.value = modelId || "";
+    this.renderModelsTab();
+  },
+
+  async scanLocalModelPath() {
+    const input = document.getElementById("custom-model-local-path");
+    const path = (input?.value || "").trim();
+    if (!path) {
+      this.toast("warning", "Укажите путь к файлу или папке модели");
+      return;
+    }
+    try {
+      this.toast("info", "Сканирование пути...");
+      const res = await this.apiPost("/api/custom-models/sniff", { path });
+      this.populateCustomFileSelects(res);
+      this.toast("success", `Обнаружено: ${res.detected_architecture || "модель"} ✓`);
+    } catch (e) {
+      this.toast("error", "Ошибка сканирования: " + e.message);
+    }
+  },
+
+  filterLoraLibrary(query) {
+    this.state.loraLibrarySearch = (query || "").toLowerCase();
+    this.renderLoraLibrary();
+  },
+
+  switchLoraModalTab(tab) {
+    document.querySelectorAll(".lora-modal-tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    const panes = ["active", "browse", "library"];
+    panes.forEach(p => {
+      const el = document.getElementById(`lora-pane-${p}`);
+      if (el) el.style.display = (p === tab) ? "flex" : "none";
+    });
+    if (tab === "library") this.loadLoras();
+  },
+
+  openLoraManageModal() {
+    const modal = document.getElementById("lora-manage-modal");
+    if (modal) {
+      modal.style.display = "flex";
+      this.switchLoraModalTab("active");
+    }
+  },
+
+  async inspectHfLora() {
+    const repoInput = document.getElementById("lora-hf-repo-input");
+    const repo = (repoInput?.value || "").trim();
+    if (!repo) {
+      this.toast("warning", "Укажите репозиторий HuggingFace");
+      return;
+    }
+    try {
+      this.toast("info", "Проверка репозитория...");
+      const res = await this.apiPost("/api/loras/inspect-hf", { repo_id: repo });
+      this.toast("success", `Найдено файлов LoRA: ${res.files?.length || 0}`);
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  async searchHfLoras(query) {
+    if (!query) return;
+    try {
+      const res = await this.apiGet(`/api/loras/search?q=${encodeURIComponent(query)}`);
+      this.renderLoraHubGrid(res.items || []);
+    } catch (_) {}
+  },
+
+  dismissUninstalledNotice() {
+    const notice = document.getElementById("gen-uninstalled-notice");
+    if (notice) notice.style.display = "none";
+    const banner = document.getElementById("uninstalled-models-notice");
+    if (banner) banner.style.display = "none";
+  },
+
+  async onSettingHideUninstalledChange(chk) {
+    const checked = (typeof chk === "boolean") ? chk : Boolean(chk?.checked ?? chk);
+    try {
+      await this.apiPatch("/api/settings", { hide_uninstalled_in_generator: checked });
+      if (this.state.settings) this.state.settings.hide_uninstalled_in_generator = checked;
+      this.renderModels();
+      this.updateDockPills();
+      this.toast("info", checked ? "Нескачанные модели скрыты из Дока" : "Отображаются все модели");
+    } catch (e) {
+      this.toast("error", e.message || "Ошибка сохранения настроек");
+    }
+  },
+
+  setHistoryPageSize(sz) {
+    this.state.historyPageSize = parseInt(sz, 10) || 50;
+    this.renderHistory();
+  },
 });
+
+
+// ---------- Resilient Boot ----------
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => App.init());
+} else {
+  App.init();
+}
 
 // Export for inline scripts
 window.App = App;

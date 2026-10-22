@@ -43,7 +43,9 @@ def detect_file_metadata(filename: str) -> dict[str, Any]:
 
     # Family detection
     family = "flux"
-    if "qwen" in name_lower:
+    if "moss" in name_lower:
+        family = "moss-image"
+    elif "qwen" in name_lower:
         family = "qwen"
     elif any(k in name_lower for k in ("sdxl", "sd_xl", "pony", "illustrious")):
         family = "sdxl"
@@ -64,6 +66,9 @@ def detect_file_metadata(filename: str) -> dict[str, Any]:
     if family == "sdxl":
         steps = 1 if is_distilled_fast else 20
         cfg = 1.0 if is_distilled_fast else 7.0
+    elif family == "moss-image":
+        steps = 8 if is_distilled_fast else 50
+        cfg = 1.0 if is_distilled_fast else 3.0
     elif family == "qwen":
         steps = 8 if is_distilled_fast else 20
         cfg = 1.0 if is_distilled_fast else 3.0
@@ -134,74 +139,160 @@ def slugify(text: str) -> str:
 
 
 def register_custom_model(data: dict) -> dict:
-    """Register a custom model configuration as a ModelSpec JSON manifest."""
-    name = data.get("name", "").strip()
-    if not name:
-        raise ValueError("Model name is required")
+    """Register a custom model configuration as a ModelSpec JSON manifest.
+    Supports passing either a file path OR a folder path (auto-binding sibling text encoders, VAE, and tokenizer).
+    """
+    from .model_sniffer import scan_local_path
 
-    model_file = data.get("model_file", "").strip().strip('"').strip("'")
+    name = data.get("name", "").strip()
+    model_file = (data.get("model_file") or data.get("local_path") or "").strip().strip('"').strip("'")
     if not model_file:
-        raise ValueError("Model file path is required")
+        raise ValueError("Model file or folder path is required")
 
     custom_dir = get_custom_models_dir()
     file_path = Path(model_file)
     if not file_path.is_absolute():
         resolved_file = custom_dir / model_file
         if not resolved_file.exists():
-            raise ValueError(f"File not found in models/custom/: {model_file}")
-        abs_file = resolved_file
+            raise ValueError(f"File or folder not found in models/custom/: {model_file}")
+        abs_target = resolved_file.resolve()
     else:
         if not file_path.exists():
-            raise ValueError(f"File not found: {file_path}")
-        abs_file = file_path
+            raise ValueError(f"File or folder not found: {file_path}")
+        abs_target = file_path.resolve()
+
+    # Scan target (file or folder) so sibling TE/VAE/variants in the same folder are auto-discovered
+    sniff_res: Optional[dict[str, Any]] = None
+    try:
+        sniff_res = scan_local_path(str(abs_target))
+    except Exception:
+        sniff_res = None
+
+    all_diff_files: list[Path] = []
+    if abs_target.is_dir():
+        base_folder = abs_target
+        if sniff_res:
+            comps = sniff_res.get("components", {})
+            diff_items = comps.get("diffusion_model", []) + comps.get("checkpoint", [])
+            for item in diff_items:
+                cand = (base_folder / item["path"]).resolve()
+                if cand.is_file():
+                    all_diff_files.append(cand)
+        if not all_diff_files:
+            for ext in ("*.gguf", "*.safetensors", "*.ckpt"):
+                for f in sorted(base_folder.rglob(ext)):
+                    if f.is_file() and detect_file_metadata(f.name)["role"] in ("diffusion_model", "checkpoint"):
+                        all_diff_files.append(f.resolve())
+        if not all_diff_files:
+            raise ValueError(f"В папке {abs_target} не найдено весов модели (.gguf / .safetensors)")
+        abs_file = all_diff_files[0]
+    else:
+        abs_file = abs_target
+        base_folder = abs_target.parent
+        all_diff_files = [abs_file]
+
+    if not name:
+        name = base_folder.name if abs_target.is_dir() else abs_file.stem
 
     st = abs_file.stat()
     size_gb = round(st.st_size / (1024 ** 3), 2)
     meta = detect_file_metadata(abs_file.name)
+    if sniff_res and sniff_res.get("suggested_family") and meta["family"] == "flux":
+        if sniff_res["suggested_family"] != "flux":
+            meta = detect_file_metadata(sniff_res["suggested_family"] + "_" + abs_file.name)
 
     raw_slug = slugify(name) or "model"
     model_id = f"custom_{raw_slug}"
 
-    engine = data.get("engine", "sd_cpp")
-    family = (data.get("family") or meta["family"] or "flux").lower()
+    engine = data.get("engine") or (sniff_res.get("suggested_engine") if sniff_res else None) or "sd_cpp"
+    family = (data.get("family") or (sniff_res.get("suggested_family") if sniff_res else None) or meta["family"] or "flux").lower()
     pipeline = data.get("pipeline", "text_to_image")
     steps = int(data.get("steps") or meta["steps"])
     cfg = float(data.get("cfg") if data.get("cfg") is not None else meta["cfg"])
     sampler = data.get("sampler", "euler")
     checkpoint_type = data.get("checkpoint_type") or ("checkpoint" if meta["role"] == "checkpoint" else "diffusion_model")
+    local_folder = (data.get("local_folder") or base_folder.name).strip()
 
     engine_args: dict[str, Any] = {}
-    if engine == "sd_cpp":
-        if checkpoint_type == "checkpoint":
-            engine_args["checkpoint"] = str(abs_file)
-        else:
-            engine_args["diffusion_model"] = str(abs_file)
+    if checkpoint_type == "checkpoint":
+        engine_args["checkpoint"] = str(abs_file)
+    else:
+        engine_args["diffusion_model"] = str(abs_file)
 
-        llm_path = (data.get("llm_file") or "").strip().strip('"').strip("'")
-        if llm_path:
-            p = Path(llm_path)
-            engine_args["llm"] = str(p if p.is_absolute() else (custom_dir / llm_path).resolve())
+    llm_path = (data.get("llm_file") or "").strip().strip('"').strip("'")
+    if llm_path:
+        p = Path(llm_path)
+        engine_args["llm"] = str(p if p.is_absolute() else (custom_dir / llm_path).resolve())
 
-        t5_path = (data.get("t5_file") or "").strip().strip('"').strip("'")
-        if t5_path:
-            p = Path(t5_path)
-            engine_args["t5xxl"] = str(p if p.is_absolute() else (custom_dir / t5_path).resolve())
+    t5_path = (data.get("t5_file") or "").strip().strip('"').strip("'")
+    if t5_path:
+        p = Path(t5_path)
+        engine_args["t5xxl"] = str(p if p.is_absolute() else (custom_dir / t5_path).resolve())
 
-        clip_path = (data.get("clip_file") or "").strip().strip('"').strip("'")
-        if clip_path:
-            p = Path(clip_path)
-            engine_args["clip_l"] = str(p if p.is_absolute() else (custom_dir / clip_path).resolve())
+    clip_path = (data.get("clip_file") or "").strip().strip('"').strip("'")
+    if clip_path:
+        p = Path(clip_path)
+        engine_args["clip_l"] = str(p if p.is_absolute() else (custom_dir / clip_path).resolve())
 
-        vae_path = (data.get("vae_file") or "").strip().strip('"').strip("'")
-        if vae_path:
-            p = Path(vae_path)
-            engine_args["vae"] = str(p if p.is_absolute() else (custom_dir / vae_path).resolve())
+    vae_path = (data.get("vae_file") or "").strip().strip('"').strip("'")
+    if vae_path:
+        p = Path(vae_path)
+        engine_args["vae"] = str(p if p.is_absolute() else (custom_dir / vae_path).resolve())
 
-        if data.get("vae_format"):
-            engine_args["vae_format"] = data["vae_format"]
+    # Auto-bind sibling text_encoder / vae / tokenizer discovered in the same directory if not manually set
+    sibling_tes: list[dict[str, Any]] = []
+    if sniff_res:
+        comps = sniff_res.get("components", {})
+        for te in comps.get("text_encoder", []):
+            te_abs = (base_folder / te["path"]).resolve()
+            if not te_abs.is_file():
+                continue
+            te_lower = te_abs.name.lower()
+            if "clip" in te_lower and not engine_args.get("clip_l"):
+                engine_args["clip_l"] = str(te_abs)
+            elif "t5" in te_lower and "umt5" not in te_lower and not engine_args.get("t5xxl") and family == "flux" and "klein" not in abs_file.name.lower():
+                engine_args["t5xxl"] = str(te_abs)
+            else:
+                if not engine_args.get("llm"):
+                    engine_args["llm"] = str(te_abs)
+                sibling_tes.append({
+                    "id": slugify(te_abs.stem) or "custom_llm",
+                    "name": f"{te_abs.name} ({te.get('size_gb', 0)} GB)",
+                    "file": str(te_abs),
+                    "precision": (te.get("quant") or "custom").lower(),
+                    "recommended": len(sibling_tes) == 0,
+                })
+        if not engine_args.get("vae"):
+            for v in comps.get("vae", []):
+                v_abs = (base_folder / v["path"]).resolve()
+                if v_abs.is_file():
+                    engine_args["vae"] = str(v_abs)
+                    break
 
-        if data.get("flow_shift"):
-            engine_args["flow_shift"] = float(data["flow_shift"])
+    tok_cand = base_folder / "tokenizer.json"
+    if tok_cand.is_file() and not engine_args.get("tokenizer"):
+        engine_args["tokenizer"] = str(tok_cand.resolve())
+
+    if data.get("vae_format"):
+        engine_args["vae_format"] = data["vae_format"]
+
+    if data.get("flow_shift"):
+        engine_args["flow_shift"] = float(data["flow_shift"])
+
+    transformers_list = []
+    for idx, df in enumerate(all_diff_files):
+        df_meta = detect_file_metadata(df.name)
+        df_size = round(df.stat().st_size / (1024 ** 3), 2)
+        transformers_list.append({
+            "id": slugify(df.stem) if len(all_diff_files) > 1 else (df_meta["quant"].lower() if df_meta["quant"] != "CUSTOM" else "custom"),
+            "path": str(df),
+            "tier": "universal",
+            "backend": df_meta["quant"].lower() if df_meta["quant"] != "CUSTOM" else engine,
+            "steps": steps,
+            "size_gb": df_size,
+            "recommended": idx == 0,
+            "note": f"Local file: {df.name} ({df_size} GB)",
+        })
 
     manifest = {
         "id": model_id,
@@ -209,23 +300,14 @@ def register_custom_model(data: dict) -> dict:
         "family": family,
         "pipeline": pipeline,
         "engine": engine,
-        "engine_version": "sd_cpp" if engine == "sd_cpp" else "0.0.17",
+        "engine_version": engine if engine != "quantfunc" else "0.0.17",
         "is_custom": True,
+        "model_path": str(abs_file),
+        "local_folder": local_folder,
         "default_cfg": cfg,
-        "description": data.get("description") or f"Custom {family.upper()} model ({abs_file.name}, {size_gb} GB).",
+        "description": data.get("description") or f"Custom {family.upper()} model ({abs_file.name}, {size_gb} GB, engine: {engine}).",
         "engine_args": engine_args,
-        "transformers": [
-            {
-                "id": meta["quant"].lower() if meta["quant"] != "CUSTOM" else "custom",
-                "path": str(abs_file),
-                "tier": "universal",
-                "backend": engine,
-                "steps": steps,
-                "size_gb": size_gb,
-                "recommended": True,
-                "note": f"Local file: {abs_file.name}",
-            }
-        ],
+        "transformers": transformers_list,
         "requirements": {
             "vram_min_gb": int(data.get("vram_min_gb", 8)),
             "vram_recommended_gb": 12,
@@ -241,7 +323,9 @@ def register_custom_model(data: dict) -> dict:
         },
     }
 
-    if engine_args.get("llm"):
+    if sibling_tes:
+        manifest["text_encoders"] = sibling_tes
+    elif engine_args.get("llm"):
         manifest["text_encoders"] = [
             {
                 "id": "custom_llm",
@@ -305,12 +389,10 @@ def search_hf_models(query: str, limit: int = 12) -> list[dict[str, Any]]:
 
 
 def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
-    """Inspect a Hugging Face repository and classify all weight files (.gguf / .safetensors)."""
-    clean_repo = (repo_id or "").strip().strip('"').strip("'").replace("https://huggingface.co/", "").strip("/")
-    if "/tree/" in clean_repo:
-        clean_repo = clean_repo.split("/tree/")[0]
-    if "/blob/" in clean_repo:
-        clean_repo = clean_repo.split("/blob/")[0]
+    """Inspect a Hugging Face repository: classify every weight by folder + name, detect layout/engine."""
+    from .model_sniffer import SUPPORTED_ENGINES, normalize_hf_repo, sniff_files
+
+    clean_repo = normalize_hf_repo(repo_id)
     if not clean_repo or "/" not in clean_repo:
         raise ValueError("Укажите корректный Hugging Face репозиторий в формате author/repo-name")
 
@@ -327,76 +409,88 @@ def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
     info = resp.json()
 
     siblings = info.get("siblings") or []
-    diffusion_files = []
-    text_encoder_files = []
-    vae_files = []
+    tags = [str(t) for t in (info.get("tags") or [])]
+    files = [{"path": s.get("rfilename") or "", "size": s.get("size") or 0} for s in siblings]
+    sniff = sniff_files(files, repo_id=clean_repo, tags=tags)
+    comps = sniff["components"]
 
     repo_meta = detect_file_metadata(clean_repo)
-
-    for sib in siblings:
-        rfilename = sib.get("rfilename") or ""
-        lower = rfilename.lower()
-        if not lower.endswith((".gguf", ".safetensors")):
-            continue
-        if "mmproj" in lower:
-            continue
-        size_bytes = sib.get("size") or 0
-        size_gb = round(size_bytes / (1024 ** 3), 2) if size_bytes else 0.0
-        meta = detect_file_metadata(Path(rfilename).name)
-        entry = {
-            "path": rfilename,
-            "name": Path(rfilename).name,
-            "size_gb": size_gb,
-            "quant": meta["quant"],
-            "role": meta["role"],
-            "steps": meta["steps"],
-            "cfg": meta["cfg"],
-        }
-        if meta["role"] == "vae":
-            vae_files.append(entry)
-        elif meta["role"] == "text_encoder":
-            text_encoder_files.append(entry)
-        else:
-            diffusion_files.append(entry)
-
-    suggested_name = clean_repo.split("/")[-1].replace("-", " ")
+    suggested_name = clean_repo.split("/")[-1].replace("-", " ").replace("_", " ")
+    card = info.get("cardData") or {}
     return {
         "repo_id": clean_repo,
         "name": suggested_name,
         "suggested_name": suggested_name,
-        "family": repo_meta["family"],
-        "suggested_family": repo_meta["family"],
+        "family": sniff["suggested_family"] or repo_meta["family"],
+        "suggested_family": sniff["suggested_family"] or repo_meta["family"],
         "steps": repo_meta["steps"],
         "suggested_steps": repo_meta["steps"],
         "cfg": repo_meta["cfg"],
         "suggested_cfg": repo_meta["cfg"],
-        "diffusion_files": diffusion_files,
-        "text_encoder_files": text_encoder_files,
-        "vae_files": vae_files,
+        "tags": tags[:20],
+        "base_model": card.get("base_model") if isinstance(card.get("base_model"), str) else "",
+        "license": card.get("license") or "",
+        # Legacy keys (older UI code paths)
+        "diffusion_files": comps["diffusion_model"] + comps["checkpoint"],
+        "text_encoder_files": comps["text_encoder"],
+        "vae_files": comps["vae"],
+        # Folder-aware analysis
+        "aux_files": comps["aux"],
+        "layout": sniff["layout"],
+        "has_model_index": sniff["has_model_index"],
+        "folders": sniff["folders"],
+        "suggested_engine": sniff["suggested_engine"],
+        "engine_reasons": sniff["engine_reasons"],
+        "missing": sniff["missing"],
+        "needs_manual": sniff["needs_manual"],
+        "warnings": sniff["warnings"],
+        "suggested_folder": sniff["suggested_folder"],
+        "defaults": sniff["defaults"],
+        "engines": [{"id": k, "label": v} for k, v in SUPPORTED_ENGINES.items()],
     }
 
 
 def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
-    """Register a downloadable model profile directly from a Hugging Face repository."""
+    """Register a downloadable model profile directly from a Hugging Face repository.
+    Preserves subfolder paths (e.g. text_encoder/..., vae/..., transformer/..., split_files/...)
+    and auto-binds repo-internal text encoders and VAEs when present.
+    """
+    from .model_sniffer import (
+        SUPPORTED_ENGINES, safe_folder_name, parse_hf_file_ref, normalize_hf_repo
+    )
+    from .cache import set_repo_folder_alias
+
     raw_repo = (data.get("repo_id") or "").strip().strip('"').strip("'")
-    repo_id = raw_repo.replace("https://huggingface.co/", "").strip("/")
+    repo_id = normalize_hf_repo(raw_repo) or raw_repo.replace("https://huggingface.co/", "").strip("/")
     if not repo_id or "/" not in repo_id:
         raise ValueError("Некорректный repo_id Hugging Face")
 
     name = (data.get("name") or repo_id.split("/")[-1]).strip()
     family = (data.get("family") or detect_file_metadata(repo_id)["family"] or "flux").lower()
-    steps = int(data.get("steps") or 20)
-    cfg = float(data.get("cfg") if data.get("cfg") is not None else 3.5)
+    steps = int(data.get("steps") or detect_file_metadata(repo_id)["steps"] or 20)
+    cfg = float(data.get("cfg") if data.get("cfg") is not None else detect_file_metadata(repo_id)["cfg"])
     selected_files: list[dict[str, Any]] = data.get("selected_files") or data.get("variants") or []
     if not selected_files:
         raise ValueError("Выберите хотя бы один файл модели (.gguf / .safetensors) из репозитория")
+
+    engine = (data.get("engine") or data.get("suggested_engine") or "sd_cpp").lower()
+    if engine not in SUPPORTED_ENGINES:
+        engine = "sd_cpp"
+
+    raw_folder = (data.get("local_folder") or data.get("folder_name") or repo_id.split("/")[-1]).strip()
+    local_folder = safe_folder_name(raw_folder, repo_id.split("/")[-1])
+    set_repo_folder_alias(repo_id, local_folder)
+
+    base_repo_id = (data.get("base_repo_id") or "").strip()
+    if base_repo_id:
+        base_repo_id = normalize_hf_repo(base_repo_id) or base_repo_id
 
     raw_slug = slugify(name) or slugify(repo_id.split("/")[-1])
     model_id = f"custom_hf_{raw_slug}"
 
     transformers = []
     for idx, vf in enumerate(selected_files):
-        fpath = vf.get("path") or vf.get("name")
+        fpath = (vf.get("path") or vf.get("name") or "").replace("\\", "/")
         if not fpath:
             continue
         meta = detect_file_metadata(fpath)
@@ -405,121 +499,230 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
             "id": vid,
             "path": fpath,
             "tier": "universal",
-            "backend": meta["quant"].lower() if meta["quant"] != "CUSTOM" else "gguf",
+            "backend": meta["quant"].lower() if meta["quant"] != "CUSTOM" else ("gguf" if fpath.endswith(".gguf") else engine),
             "steps": steps,
             "size_gb": float(vf.get("size_gb") or 4.0),
             "recommended": idx == 0,
             "repo_id": repo_id,
-            "note": f"{Path(fpath).name} ({meta['quant']})",
+            "source": {
+                "repo_id": repo_id,
+                "file_path": fpath,
+            },
+            "note": f"{fpath} ({meta['quant']})",
         })
 
-    # Default text encoders & VAE based on family if not overridden
-    text_encoders = data.get("text_encoders") or []
+    text_encoders = list(data.get("text_encoders") or [])
     engine_args: dict[str, Any] = {
         "diffusion_model": transformers[0]["path"],
     }
 
-    if family == "flux":
-        engine_args["vae"] = "ae.safetensors"
-        engine_args["vae_repo"] = "ffxvs/vae-flux"
-        engine_args["vae_file"] = "ae.safetensors"
-        if "klein" in repo_id.lower() or "klein" in name.lower():
+    # 1. Bind repo-internal Text Encoder files if discovered in repo or passed from UI
+    repo_te_files: list[dict[str, Any]] = data.get("selected_te_files") or data.get("text_encoder_files") or []
+    for idx, tef in enumerate(repo_te_files):
+        te_path = (tef.get("path") or tef.get("file") or tef.get("name") or "").replace("\\", "/")
+        if not te_path:
+            continue
+        te_meta = detect_file_metadata(te_path)
+        te_id = slugify(Path(te_path).stem) or f"te_{idx}"
+        te_size = float(tef.get("size_gb") or 0.0)
+        te_entry = {
+            "id": te_id,
+            "name": f"{Path(te_path).name} ({te_size} GB)" if te_size else Path(te_path).name,
+            "repo": repo_id,
+            "file": te_path,
+            "path": te_path,
+            "size_gb": te_size,
+            "precision": te_meta["quant"].lower() if te_meta["quant"] != "CUSTOM" else "bf16",
+            "recommended": idx == 0,
+            "source": {
+                "repo_id": repo_id,
+                "file_path": te_path,
+            },
+        }
+        text_encoders.append(te_entry)
+        if idx == 0 and not engine_args.get("llm"):
+            engine_args["llm"] = te_path
+            engine_args["llm_repo"] = repo_id
+            engine_args["llm_file"] = te_path
+
+    # 2. Bind repo-internal VAE files if discovered in repo or passed from UI
+    repo_vae_files: list[dict[str, Any]] = data.get("selected_vae_files") or data.get("vae_files") or []
+    for vf in repo_vae_files:
+        v_path = (vf.get("path") or vf.get("file") or vf.get("name") or "").replace("\\", "/")
+        if v_path:
+            engine_args["vae"] = v_path
+            engine_args["vae_repo"] = repo_id
+            engine_args["vae_file"] = v_path
+            engine_args["vae_remote"] = v_path
+            break
+
+    # 3. Handle manual / custom TE input from user (overrides repo-internal / defaults)
+    custom_te_ref = (data.get("custom_te_ref") or data.get("custom_te_url") or "").strip()
+    if custom_te_ref:
+        parsed_te = parse_hf_file_ref(custom_te_ref)
+        if parsed_te:
+            te_item = {
+                "id": slugify(Path(parsed_te["path"]).stem) or "custom_te",
+                "name": Path(parsed_te["path"]).name,
+                "repo": parsed_te["repo_id"],
+                "file": parsed_te["path"],
+                "path": parsed_te["path"],
+                "precision": "custom",
+                "recommended": True,
+                "source": {
+                    "repo_id": parsed_te["repo_id"],
+                    "file_path": parsed_te["path"],
+                },
+            }
+            text_encoders = [te_item]
+            engine_args["llm"] = parsed_te["path"]
+            engine_args["llm_repo"] = parsed_te["repo_id"]
+            engine_args["llm_file"] = parsed_te["path"]
+        else:
+            engine_args["llm"] = custom_te_ref
+
+    # 4. Handle manual / custom VAE input from user
+    custom_vae_ref = (data.get("custom_vae_ref") or data.get("custom_vae_url") or "").strip()
+    if custom_vae_ref:
+        parsed_vae = parse_hf_file_ref(custom_vae_ref)
+        if parsed_vae:
+            engine_args["vae"] = parsed_vae["path"]
+            engine_args["vae_repo"] = parsed_vae["repo_id"]
+            engine_args["vae_file"] = parsed_vae["path"]
+            engine_args["vae_remote"] = parsed_vae["path"]
+        else:
+            engine_args["vae"] = custom_vae_ref
+
+    # 5. Family defaults if still unset
+    if not engine_args.get("vae"):
+        if family == "moss-image":
             engine_args["vae"] = "flux2-vae.safetensors"
-            engine_args["vae_repo"] = "Lightricks/LTX-2-comfy"
-            engine_args["vae_file"] = "vae/flux2-vae.safetensors"
-            if not text_encoders:
-                is_9b = "9b" in repo_id.lower() or "9b" in name.lower()
-                if is_9b:
-                    text_encoders = [
-                        {
-                            "id": "qwen3_8b_q8_0",
-                            "name": "Qwen3-8B Q8_0 (8.7 GB, Максимальная точность)",
-                            "repo": "Qwen/Qwen3-8B-GGUF",
-                            "file": "Qwen3-8B-Q8_0.gguf",
-                            "size_gb": 8.7,
-                            "precision": "q8_0",
-                            "recommended": True,
+            engine_args["vae_repo"] = "unsloth/FLUX.2-VAE"
+            engine_args["vae_file"] = "flux2-vae.safetensors"
+            engine_args["vae_remote"] = "flux2-vae.safetensors"
+        elif family == "flux":
+            engine_args["vae"] = "ae.safetensors"
+            engine_args["vae_repo"] = "ffxvs/vae-flux"
+            engine_args["vae_file"] = "ae.safetensors"
+            engine_args["vae_remote"] = "ae.safetensors"
+            if "klein" in repo_id.lower() or "klein" in name.lower():
+                engine_args["vae"] = "flux2-vae.safetensors"
+                engine_args["vae_repo"] = "Lightricks/LTX-2-comfy"
+                engine_args["vae_file"] = "vae/flux2-vae.safetensors"
+                engine_args["vae_remote"] = "vae/flux2-vae.safetensors"
+        elif family == "qwen":
+            engine_args["vae"] = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+            engine_args["vae_repo"] = "madebyollin/texture-fix-vae-for-qwen-image-2.1"
+            engine_args["vae_file"] = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+            engine_args["vae_remote"] = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+
+    if not text_encoders and not engine_args.get("llm"):
+        if family == "moss-image":
+            text_encoders = [
+                {
+                    "id": "qwen3_5_9b_q4_k_xl",
+                    "name": "Qwen3.5-9B Q4_K_XL (5.6 GB, Рекомендуется)",
+                    "repo": "unsloth/Qwen3.5-9B-GGUF",
+                    "file": "Qwen3.5-9B-UD-Q4_K_XL.gguf",
+                    "path": "Qwen3.5-9B-UD-Q4_K_XL.gguf",
+                    "size_gb": 5.6,
+                    "precision": "q4_k_xl",
+                    "recommended": True,
+                    "source": {
+                        "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+                        "file_path": "Qwen3.5-9B-UD-Q4_K_XL.gguf",
+                    },
+                },
+            ]
+            engine_args["llm"] = text_encoders[0]["file"]
+            engine_args["llm_repo"] = text_encoders[0]["repo"]
+            engine_args["llm_file"] = text_encoders[0]["file"]
+            engine_args["tokenizer"] = "tokenizer.json"
+            engine_args["tokenizer_repo"] = "OpenMOSS-Team/MOSS-Image-Base"
+            engine_args["tokenizer_remote"] = "tokenizer/tokenizer.json"
+        elif family == "flux" and ("klein" in repo_id.lower() or "klein" in name.lower()):
+            is_9b = "9b" in repo_id.lower() or "9b" in name.lower()
+            if is_9b:
+                text_encoders = [
+                    {
+                        "id": "qwen3_8b_q8_0",
+                        "name": "Qwen3-8B Q8_0 (8.7 GB, Максимальная точность)",
+                        "repo": "Qwen/Qwen3-8B-GGUF",
+                        "file": "Qwen3-8B-Q8_0.gguf",
+                        "path": "Qwen3-8B-Q8_0.gguf",
+                        "size_gb": 8.7,
+                        "precision": "q8_0",
+                        "recommended": True,
+                        "source": {
+                            "repo_id": "Qwen/Qwen3-8B-GGUF",
+                            "file_path": "Qwen3-8B-Q8_0.gguf",
                         },
-                        {
-                            "id": "qwen3_8b_q4_k_m",
-                            "name": "Qwen3-8B Q4_K_M (5.0 GB, Быстрый)",
-                            "repo": "unsloth/Qwen3-8B-GGUF",
-                            "file": "Qwen3-8B-Q4_K_M.gguf",
-                            "size_gb": 5.0,
-                            "precision": "q4_k_m",
-                            "recommended": False,
+                    },
+                ]
+            else:
+                text_encoders = [
+                    {
+                        "id": "qwen3vl_4b_q8_0",
+                        "name": "Qwen3-VL-4B Q8_0 (4.3 GB, Рекомендуется)",
+                        "repo": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+                        "file": "Qwen3VL-4B-Instruct-Q8_0.gguf",
+                        "path": "Qwen3VL-4B-Instruct-Q8_0.gguf",
+                        "size_gb": 4.3,
+                        "precision": "q8_0",
+                        "recommended": True,
+                        "source": {
+                            "repo_id": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+                            "file_path": "Qwen3VL-4B-Instruct-Q8_0.gguf",
                         },
-                    ]
-                else:
-                    text_encoders = [
-                        {
-                            "id": "qwen3vl_4b_q8_0",
-                            "name": "Qwen3-VL-4B Q8_0 (4.3 GB, Рекомендуется)",
-                            "repo": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
-                            "file": "Qwen3VL-4B-Instruct-Q8_0.gguf",
-                            "size_gb": 4.3,
-                            "precision": "q8_0",
-                            "recommended": True,
-                        },
-                        {
-                            "id": "qwen3_4b_q4_k_m",
-                            "name": "Qwen3-4B Q4_K_M (2.5 GB, Легкий)",
-                            "repo": "unsloth/Qwen3-4B-GGUF",
-                            "file": "Qwen3-4B-Q4_K_M.gguf",
-                            "size_gb": 2.5,
-                            "precision": "q4_k_m",
-                            "recommended": False,
-                        },
-                    ]
-                engine_args["llm"] = text_encoders[0]["file"]
-                engine_args["llm_repo"] = text_encoders[0]["repo"]
-                engine_args["llm_file"] = text_encoders[0]["file"]
-    elif family == "qwen":
-        engine_args["vae"] = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
-        engine_args["vae_repo"] = "madebyollin/texture-fix-vae-for-qwen-image-2.1"
-        engine_args["vae_file"] = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
-        if not text_encoders:
+                    },
+                ]
+            engine_args["llm"] = text_encoders[0]["file"]
+            engine_args["llm_repo"] = text_encoders[0]["repo"]
+            engine_args["llm_file"] = text_encoders[0]["file"]
+        elif family == "qwen":
             text_encoders = [
                 {
                     "id": "qwen3vl_8b_q4_k_xl",
                     "name": "Qwen3-VL-8B Q4_K_XL (5.1 GB, Рекомендуется)",
                     "repo": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
                     "file": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
+                    "path": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
                     "size_gb": 5.1,
                     "precision": "q4_k_xl",
                     "recommended": True,
-                },
-                {
-                    "id": "qwen3vl_8b_q8_0",
-                    "name": "Qwen3-VL-8B Q8_0 (8.7 GB, Высокая точность)",
-                    "repo": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
-                    "file": "Qwen3-VL-8B-Instruct-Q8_0.gguf",
-                    "size_gb": 8.7,
-                    "precision": "q8_0",
-                    "recommended": False,
+                    "source": {
+                        "repo_id": "unsloth/Qwen3-VL-8B-GGUF",
+                        "file_path": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
+                    },
                 },
             ]
             engine_args["llm"] = text_encoders[0]["file"]
             engine_args["llm_repo"] = text_encoders[0]["repo"]
             engine_args["llm_file"] = text_encoders[0]["file"]
 
+    base_models_map: dict[str, str] = {}
+    if engine in ("sdnq", "nunchaku", "orbitquant") or data.get("has_model_index") or base_repo_id:
+        base_models_map = {"50x-above": ".", "50x-below": "."}
+
     manifest = {
         "id": model_id,
         "name": f"{name} (HF)" if not name.endswith("(HF)") else name,
         "family": family,
         "pipeline": "text_to_image",
-        "engine": "sd_cpp",
-        "engine_version": "sd_cpp",
+        "engine": engine,
+        "engine_version": engine,
         "is_custom": True,
+        "local_folder": local_folder,
+        "base_repo_id": base_repo_id,
         "default_cfg": cfg,
-        "description": data.get("description") or f"Импортировано из Hugging Face: {repo_id} ({len(transformers)} вар.)",
+        "description": data.get("description") or f"Импортировано из Hugging Face: {repo_id} (движок: {engine})",
         "sources": {
             "primary": {
                 "type": "huggingface",
                 "repo_id": repo_id,
             }
         },
-        "base_models": {},
+        "base_models": base_models_map,
         "engine_args": engine_args,
         "transformers": transformers,
         "text_encoders": text_encoders,

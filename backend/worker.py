@@ -696,6 +696,16 @@ class Worker:
             finally:
                 self._sdnq_worker = None
 
+        # Dispatch: Nunchaku (vitoom) / OrbitQuant engines
+        if getattr(model, "engine", "quantfunc") in ("nunchaku", "orbitquant"):
+            from .extras import ExtrasWorker
+            extras_worker = ExtrasWorker()
+            self._extras_worker = extras_worker
+            try:
+                return extras_worker.generate(request, model, gpu_info, progress_callback=emit)
+            finally:
+                self._extras_worker = None
+
         # Determine engine version:
         engine_ver = getattr(model, "engine_version", None)
         if not engine_ver:
@@ -1070,6 +1080,11 @@ class Worker:
     def cancel(self) -> None:
         """Cancel the current generation job."""
         self._cancel_flag.set()
+        if hasattr(self, "_extras_worker") and self._extras_worker:
+            try:
+                self._extras_worker.cancel()
+            except Exception:
+                pass
         if hasattr(self, "_sd_worker") and self._sd_worker:
             try:
                 self._sd_worker.cancel()

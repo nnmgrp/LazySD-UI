@@ -48,13 +48,58 @@ def is_sd_cpp_installed() -> bool:
 
 def get_sd_cpp_version() -> str:
     """Return installed or known SD.CPP release version."""
-    if not is_sd_cpp_installed():
+    cli_path = get_sd_cpp_cli_path()
+    if not cli_path.exists():
         return "not installed"
-    return "master-8cd731e (cu12)"
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        res = subprocess.run(
+            [str(cli_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=str(cli_path.parent),
+            creationflags=creationflags,
+        )
+        out = (res.stdout or res.stderr or "").strip()
+        m = re.search(r"commit\s+([0-9a-fA-F]+)", out)
+        if m:
+            return f"master-{m.group(1)} (cu12)"
+    except Exception:
+        pass
+    return "master-f0aac52 (cu12)"
 
 
-SD_CPP_WINDOWS_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-968-8cd731e/sd-master-8cd731e-bin-win-cuda12-x64.zip"
-SD_CPP_CUDART_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-968-8cd731e/cudart-sd-bin-win-cu12-x64.zip"
+SD_CPP_WINDOWS_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-973-f0aac52/sd-master-f0aac52-bin-win-cuda12-x64.zip"
+SD_CPP_CUDART_URL = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-973-f0aac52/cudart-sd-bin-win-cu12-x64.zip"
+
+
+def _resolve_latest_sd_cpp_url() -> tuple[str, str]:
+    """Query GitHub API for the latest leejet/stable-diffusion.cpp CUDA 12 Windows release."""
+    try:
+        import requests
+        r = requests.get(
+            "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases/latest",
+            timeout=8,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            win_url = None
+            cudart_url = None
+            for asset in data.get("assets", []):
+                name = (asset.get("name") or "").lower()
+                url = asset.get("browser_download_url")
+                if not url:
+                    continue
+                if "bin-win-cuda12-x64.zip" in name:
+                    win_url = url
+                elif "cudart-sd-bin-win-cu12-x64.zip" in name:
+                    cudart_url = url
+            if win_url:
+                return win_url, (cudart_url or SD_CPP_CUDART_URL)
+    except Exception as e:
+        logger.debug("Could not query latest SD.CPP release from GitHub API: %s", e)
+    return SD_CPP_WINDOWS_URL, SD_CPP_CUDART_URL
 
 
 def _sd_cpp_has_working_cuda(cli_path: Path) -> bool:
@@ -92,13 +137,14 @@ def download_sd_cpp(
     from .engine import _download_file_with_progress
 
     target_dir.mkdir(parents=True, exist_ok=True)
+    win_url, cudart_url = _resolve_latest_sd_cpp_url() if force else (SD_CPP_WINDOWS_URL, SD_CPP_CUDART_URL)
 
     if not cli_path.exists() or force:
         temp_zip = target_dir / "sd_master_cuda12.zip.tmp"
         try:
-            logger.info("Downloading SD.CPP from %s", SD_CPP_WINDOWS_URL)
+            logger.info("Downloading SD.CPP from %s", win_url)
             _download_file_with_progress(
-                SD_CPP_WINDOWS_URL,
+                win_url,
                 temp_zip,
                 progress_callback=progress_callback,
             )
@@ -149,6 +195,149 @@ def download_sd_cpp(
 #   "sampling: 45%"
 _STEP_PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 _PERCENT_PROGRESS_RE = re.compile(r"(\d+)\s*%")
+
+
+def _ensure_moss_gguf_qkv_fused(gguf_path: Path, emit: Optional[Callable] = None) -> None:
+    """Losslessly fuse split layers.{i}.proj.{q,k,v}.weight into layers.{i}.proj.qkv.weight
+    for RebelAI MOSS-Image GGUF checkpoints so stable-diffusion.cpp can load them natively."""
+    import struct
+
+    try:
+        with open(gguf_path, "rb") as f:
+            head_probe = f.read(65536)
+        if b"moss_image" not in head_probe or b"layers.0.proj.qkv.weight" in head_probe:
+            return
+        if b"layers.0.proj.q.weight" not in head_probe:
+            return
+    except Exception:
+        return
+
+    logger.info("[sd_cpp] Fusing split Q/K/V tensors in MOSS-Image GGUF: %s", gguf_path.name)
+    if emit:
+        from .worker import JobStatus, ProgressEvent
+        emit(ProgressEvent(
+            status=JobStatus.LOADING,
+            progress=0.04,
+            message=f"Converting {gguf_path.name} Q/K/V tensors for SD.CPP (one-time)...",
+        ))
+
+    with open(gguf_path, "rb") as f:
+        magic, ver, n_tensors, n_kv = struct.unpack("<4sIQQ", f.read(24))
+        if magic != b"GGUF":
+            return
+        kv_start = 24
+
+        def r_str() -> str:
+            (length,) = struct.unpack("<Q", f.read(8))
+            return f.read(length).decode("utf-8")
+
+        def skip_val(vtype: int) -> None:
+            sz = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+            if vtype in sz:
+                f.read(sz[vtype])
+            elif vtype == 8:
+                r_str()
+            elif vtype == 9:
+                et, cnt = struct.unpack("<IQ", f.read(12))
+                for _ in range(cnt):
+                    skip_val(et)
+
+        for _ in range(n_kv):
+            _ = r_str()
+            (vt,) = struct.unpack("<I", f.read(4))
+            skip_val(vt)
+        kv_end = f.tell()
+        f.seek(kv_start)
+        kv_bytes = f.read(kv_end - kv_start)
+
+        tensors = []
+        for _ in range(n_tensors):
+            name = r_str()
+            (nd,) = struct.unpack("<I", f.read(4))
+            dims = [struct.unpack("<Q", f.read(8))[0] for _ in range(nd)]
+            tt, off = struct.unpack("<IQ", f.read(12))
+            tensors.append((name, dims, tt, off))
+        header_end = f.tell()
+        data_offset = (header_end + 31) // 32 * 32
+
+    file_size = gguf_path.stat().st_size
+    sorted_t = sorted(tensors, key=lambda x: x[3])
+    sizes = {}
+    for idx, (name, dims, tt, off) in enumerate(sorted_t):
+        next_off = sorted_t[idx + 1][3] if idx + 1 < len(sorted_t) else (file_size - data_offset)
+        sizes[name] = next_off - off
+
+    t_map = {t[0]: t for t in tensors}
+    new_entries = []
+    consumed = set()
+
+    for name, dims, tt, off in tensors:
+        if name in consumed:
+            continue
+        m = re.match(r"^(layers\.\d+\.proj)\.(q|k|v)\.weight$", name)
+        if m:
+            prefix = m.group(1)
+            q_name = f"{prefix}.q.weight"
+            k_name = f"{prefix}.k.weight"
+            v_name = f"{prefix}.v.weight"
+            if q_name in t_map and k_name in t_map and v_name in t_map:
+                consumed.update((q_name, k_name, v_name))
+                q_t, k_t, v_t = t_map[q_name], t_map[k_name], t_map[v_name]
+                fused_dims = [q_t[1][0], q_t[1][1] + k_t[1][1] + v_t[1][1]]
+                new_entries.append((
+                    f"{prefix}.qkv.weight",
+                    fused_dims,
+                    q_t[2],
+                    [(q_t[3], sizes[q_name]), (k_t[3], sizes[k_name]), (v_t[3], sizes[v_name])],
+                ))
+                continue
+        new_entries.append((name, dims, tt, [(off, sizes[name])]))
+
+    # Compute new relative data offsets (32-byte aligned)
+    cur_rel_off = 0
+    header_tensor_parts = []
+    entry_Plans = []
+    for name, dims, tt, chunks in new_entries:
+        aligned_off = (cur_rel_off + 31) // 32 * 32
+        pad_before = aligned_off - cur_rel_off
+        cur_rel_off = aligned_off
+        total_len = sum(length for _, length in chunks)
+        name_b = name.encode("utf-8")
+        t_hdr = [struct.pack("<Q", len(name_b)), name_b, struct.pack("<I", len(dims))]
+        for d in dims:
+            t_hdr.append(struct.pack("<Q", d))
+        t_hdr.append(struct.pack("<IQ", tt, cur_rel_off))
+        header_tensor_parts.append(b"".join(t_hdr))
+        entry_Plans.append((pad_before, chunks))
+        cur_rel_off += total_len
+
+    new_header = (
+        struct.pack("<4sIQQ", b"GGUF", ver, len(new_entries), n_kv)
+        + kv_bytes
+        + b"".join(header_tensor_parts)
+    )
+    new_data_offset = (len(new_header) + 31) // 32 * 32
+    header_pad = b"\x00" * (new_data_offset - len(new_header))
+
+    tmp_path = gguf_path.with_suffix(".gguf.tmp")
+    with open(gguf_path, "rb") as src, open(tmp_path, "wb") as dst:
+        dst.write(new_header)
+        dst.write(header_pad)
+        for pad_before, chunks in entry_Plans:
+            if pad_before > 0:
+                dst.write(b"\x00" * pad_before)
+            for src_rel_off, length in chunks:
+                src.seek(data_offset + src_rel_off)
+                remaining = length
+                while remaining > 0:
+                    buf = src.read(min(remaining, 8 * 1024 * 1024))
+                    if not buf:
+                        break
+                    dst.write(buf)
+                    remaining -= len(buf)
+
+    tmp_path.replace(gguf_path)
+    logger.info("[sd_cpp] Successfully fused Q/K/V tensors in %s (%d tensors)", gguf_path.name, len(new_entries))
 
 
 class SDCppWorker:
@@ -281,6 +470,8 @@ class SDCppWorker:
                         f"Diffusion model file not found: {diff_path.name}. "
                         "Please download it from the Models tab."
                     )
+                if diff_path.suffix.lower() == ".gguf":
+                    _ensure_moss_gguf_qkv_fused(diff_path, emit=emit)
                 cmd.extend(["--diffusion-model", str(diff_path)])
 
             # Text encoders (GGUF / safetensors)
@@ -441,6 +632,49 @@ class SDCppWorker:
             # Flow shift
             if model.engine_args.get("flow_shift"):
                 cmd.extend(["--flow-shift", str(model.engine_args["flow_shift"])])
+
+            # External Tokenizer (required for MOSS-Image / Qwen3.5 text encoder)
+            tok_rel = model.engine_args.get("tokenizer")
+            is_moss_or_qwen35 = (
+                "moss" in model.id.lower()
+                or "moss" in (model.family or "").lower()
+                or "qwen3.5" in (llm_rel or "").lower()
+                or "moss" in (diff_rel or "").lower()
+            )
+            if tok_rel or is_moss_or_qwen35:
+                tok_rel = tok_rel or "tokenizer.json"
+                tok_search = [
+                    resolve_model_file(tok_rel),
+                    repo_dir / "tokenizer.json",
+                    repo_dir / "tokenizer" / "tokenizer.json",
+                    repo_dir / "tokenizer_qwen3.5.json",
+                    settings.models_dir / "MOSS-Image_GGUFs" / "tokenizer.json",
+                    settings.models_dir / "MOSS-Image_GGUFs" / "tokenizer" / "tokenizer.json",
+                ]
+                tok_path = next((p for p in tok_search if p.exists() and p.is_file()), None)
+                if tok_path is None:
+                    from .sources import HuggingFaceSource
+                    hf = HuggingFaceSource(token=settings.huggingface_token)
+                    tok_repo = model.engine_args.get("tokenizer_repo", "OpenMOSS-Team/MOSS-Image-Base")
+                    tok_remote = model.engine_args.get("tokenizer_remote", "tokenizer/tokenizer.json")
+                    emit(ProgressEvent(
+                        status=JobStatus.DOWNLOADING,
+                        progress=0.12,
+                        message="Downloading Qwen3.5 Tokenizer (tokenizer.json) for MOSS-Image...",
+                    ))
+                    hf.download_file(
+                        repo_id=tok_repo,
+                        file_path=tok_remote,
+                        local_dir=repo_dir,
+                    )
+                    dl_tok = repo_dir / tok_remote
+                    target_tok = repo_dir / "tokenizer.json"
+                    if dl_tok.exists() and not target_tok.exists() and dl_tok != target_tok:
+                        import shutil
+                        shutil.copy2(dl_tok, target_tok)
+                    tok_path = target_tok if target_tok.exists() else dl_tok
+                if tok_path and tok_path.exists():
+                    cmd.extend(["--tokenizer", str(tok_path)])
 
         # Reference Image: Native Control/Ref (-r / --control-image / --control-net) vs Classic Noise Img2Img (-i + --strength)
         if getattr(request, "init_image_path", None):

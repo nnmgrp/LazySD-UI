@@ -1,0 +1,101 @@
+{
+  "id": "qwen_image_2_1_nunchaku",
+  "name": "Qwen-Image-2.1 (Nunchaku SVDQ)",
+  "family": "qwen",
+  "pipeline": "text_to_image",
+  "engine": "nunchaku",
+  "engine_version": "nunchaku",
+  "key_protected": false,
+  "description": "Qwen-Image-2.1 quantized with SVDQuant for Nunchaku (vitoom) engine. Uses shared Qwen3-VL-8B text encoder.",
+  "upstream": {
+    "model": "tonera/Qwen-Image-2.1-Nunchaku",
+    "license": "Apache-2.0",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "tonera/Qwen-Image-2.1-Nunchaku"
+    }
+  },
+  "base_models": {
+    "50x-above": ".",
+    "50x-below": "."
+  },
+  "transformers": [
+    {
+      "id": "svdq-int4-r32-qwen-21",
+      "path": "svdq-int4_r32-Qwen-Image-2.1-Nunchaku.safetensors",
+      "tier": "universal",
+      "backend": "nunchaku",
+      "steps": 8,
+      "prequant": false,
+      "size_gb": 3.84,
+      "size_bytes": 4125224448,
+      "recommended": true,
+      "recommended_for_gpu": [
+        "RTX 3080",
+        "RTX 3090",
+        "RTX 4070",
+        "RTX 4080",
+        "RTX 4090",
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant INT4-r32 (~3.84 GB)"
+    },
+    {
+      "id": "svdq-fp4-r32-qwen-21",
+      "path": "svdq-fp4_r32-Qwen-Image-2.1-Nunchaku.safetensors",
+      "tier": "50x-above",
+      "backend": "nunchaku",
+      "steps": 8,
+      "prequant": false,
+      "size_gb": 4.05,
+      "size_bytes": 4346227352,
+      "recommended": false,
+      "recommended_for_gpu": [
+        "RTX 5060 Ti",
+        "RTX 5070",
+        "RTX 5080",
+        "RTX 5090"
+      ],
+      "note": "Nunchaku SVDQuant FP4-r32 (NVFP4 for Blackwell/RTX 50-series)"
+    }
+  ],
+  "prequant_weights": [],
+  "precision_configs": [],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 16,
+    "gpu_min_sm": 75,
+    "gpu_min_tier": "50x-below",
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "steps": 8,
+      "cfg": 3.0,
+      "sampler": "euler"
+    }
+  },
+  "default_cfg": 3.0,
+  "text_encoders": [
+    {
+      "id": "qwen3_vl_8b_nunchaku",
+      "name": "Qwen3-VL-8B-Instruct (Tonera SVDQ INT4)",
+      "file": "svdq-int4-Qwen3-VL-8B-Instruct-Nunchaku.safetensors",
+      "precision": "int4",
+      "size_gb": 5.93,
+      "size_bytes": 6371525656,
+      "recommended": true,
+      "source": {
+        "repo_id": "tonera/Qwen3-VL-8B-Instruct-Nunchaku",
+        "file_path": "svdq-int4-Qwen3-VL-8B-Instruct-Nunchaku.safetensors"
+      }
+    }
+  ],
+  "tags": ["svdq", "nunchaku", "tonera", "qwen"]
+}

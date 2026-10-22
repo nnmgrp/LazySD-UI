@@ -24,8 +24,10 @@ requests>=2.31.0
 pydantic>=2.5.0,<3.0.0
 pydantic-settings>=2.1.0
 
-# Image handling (output thumbnails)
+# Image handling (output thumbnails, Halftone Studio, Manga Screen AI)
 Pillow>=10.0.0
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
 
 # Process management (worker subprocess)
 psutil>=5.9.0

@@ -1,0 +1,57 @@
+/* ============================================================
+   QuantFunc WebUI — Central State Management
+   Single reactive store for Generator, Models, Studios, and Dock.
+   ============================================================ */
+
+export function createDefaultState() {
+  return {
+    settings: null,
+    dismissedNoticeModel: null,
+    gpuInfo: null,
+    engineStatus: null,
+    models: [],
+    presets: [],
+    currentTab: "generate",
+    currentJob: null,
+    pollInterval: null,
+    selectedModel: null,
+    selectedVariant: null,
+    historyItems: [],
+    selectedHistoryItem: null,
+    img2imgRef: null,
+    lastPreviewName: null,
+    lastPreviewUrl: null,
+    modelPickerSearch: "",
+    modelPickerFilter: "all",
+    isModelPickerOpen: false,
+    selectedVae: "texture_fix",
+    activeDockPopover: null,
+    hfInspectedRepo: null,
+    activeLoras: [],
+    loraLibrary: [],
+    compareActive: false,
+    comparePercentage: 50,
+    previousPreviewUrl: null,
+    currentPreviewUrl: null,
+    currentPreviewFilename: null,
+    dockPosition: "center",
+    dockMinimized: false,
+    dockOpacity: 0.88,
+    dockBlur: 20,
+    dockDragEnabled: false,
+    shareStatus: null,
+    extrasStatus: null,
+    account: null,
+    guestAccounts: [],
+    historyFilter: "all",
+    modelsTabFilter: "all",
+    modelsTabSearch: "",
+    activeModelsHubSubtab: "installed",
+    halftone: null,
+    manga: null,
+    viewports: {},
+    zoomHudOpacity: 0.95,
+  };
+}
+
+export const state = createDefaultState();
