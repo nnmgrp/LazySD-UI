@@ -1784,9 +1784,16 @@ const App = {
       return;
     }
 
-    if (activeModel?.family === "flux3" && this.state.extrasStatus?.env?.nunchaku && this.state.extrasStatus?.env?.has_flux3 === false) {
-      this.toast("error", "FLUX.3 SVDQuant требует Nunchaku >= 1.4.0. Обновите Nunchaku в Настройки → Движки или выберите 'Flux.2 Klein (Nunchaku)'.");
-      return;
+    if (activeModel?.family === "flux3") {
+      const extrasEnv = this.state.extrasStatus?.env;
+      if (extrasEnv?.nunchaku && extrasEnv.has_flux3 === false) {
+        this.toast("error", "FLUX.3 SVDQuant требует Nunchaku >= 1.4.0. Обновите Nunchaku в Настройки → Движки или выберите 'Flux.2 Klein (Nunchaku)'.");
+        return;
+      }
+      if (extrasEnv?.diffusers && extrasEnv.has_diffusers_flux3 === false) {
+        this.toast("error", "FLUX.3 требует diffusers из GitHub main (стабильный 0.41.0 не поддерживает FLUX.3). Переустановите Nunchaku в Настройки → Движки — установщик поставит diffusers main.");
+        return;
+      }
     }
     const engineType = activeModel?.engine || "quantfunc";
     if (engineType === "quantfunc" && (!this.state.engineStatus || this.state.engineStatus.status === "missing")) {

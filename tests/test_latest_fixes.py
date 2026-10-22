@@ -269,6 +269,33 @@ def test_halftone_layer_stack_system():
     print("  [OK] Painted local layer mask reveals the raster")
 
 
+def test_flux3_nunchaku_support():
+    print("\n[FLUX.3] Verifying diffusers-main loader and frontend readiness checks...")
+    extras_py = (PROJECT_ROOT / "backend" / "extras.py").read_text(encoding="utf-8")
+    app_js = (PROJECT_ROOT / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+    generator_js = (PROJECT_ROOT / "frontend" / "js" / "modules" / "generator.js").read_text(encoding="utf-8")
+
+    # Environment probe + installer must detect FLUX.3 separately from Nunchaku.
+    assert 'out["has_diffusers_flux3"] = hasattr(diffusers, "Flux3Transformer2DModel")' in extras_py
+    assert 'out["has_modular_pipeline"] = hasattr(diffusers, "ModularPipeline")' in extras_py
+    assert "needs_diffusers_main" in extras_py, "installer never upgrades diffusers for FLUX.3"
+    assert "git+https://github.com/huggingface/diffusers.git" in extras_py
+
+    # Modular FLUX.3 pipeline, local modular index, Qwen3-VL INT4 encoder, no upsampler dependency.
+    assert 'modular_model_index.json' in extras_py, "local modular pipeline index not detected"
+    assert "from diffusers import ModularPipeline" in extras_py, "FLUX.3 still loads a non-modular pipeline"
+    assert "NunchakuQwen3VLEncoderModel" in extras_py, "FLUX.3 Qwen3-VL text encoder loader missing"
+    assert 'blocks.sub_blocks.pop("prompt_upsampler", None)' in extras_py, "prompt upsampler bypass missing"
+    assert '"output": "images"' in extras_py, "modular pipeline output handling missing"
+
+    # Active monolith and ES6 mirror must block generation with an actionable message.
+    for name, js in (("app.js", app_js), ("modules/generator.js", generator_js)):
+        assert "has_diffusers_flux3" in js, f"{name}: missing diffusers-main readiness check"
+        assert "diffusers main" in js, f"{name}: missing actionable upgrade hint"
+
+    print("  [OK] FLUX.3 diffusers-main, modular pipeline, text encoder and UI checks verified")
+
+
 def test_lora_hub_frontend_sync():
     print("\n[LoRA Hub] Verifying active app.js is in sync with index.html...")
     app_js = (PROJECT_ROOT / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
@@ -306,6 +333,7 @@ if __name__ == "__main__":
     test_cmyk_mask_dock_cancel_fixes()
     test_lasso_brush_eraser_mask_tools()
     test_halftone_layer_stack_system()
+    test_flux3_nunchaku_support()
     test_lora_hub_frontend_sync()
     print("\n============================================================")
     print("ALL HALFTONE STUDIO GT FIXES VERIFIED SUCCESSFULLY!")

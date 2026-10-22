@@ -87,6 +87,8 @@ def _diff():
     import diffusers
     v = diffusers.__version__
     out["has_flux2_klein"] = hasattr(diffusers, "Flux2KleinPipeline")
+    out["has_diffusers_flux3"] = hasattr(diffusers, "Flux3Transformer2DModel")
+    out["has_modular_pipeline"] = hasattr(diffusers, "ModularPipeline")
     out["has_zimage"] = hasattr(diffusers, "ZImagePipeline")
     return v
 _try("diffusers", _diff)
@@ -137,6 +139,8 @@ def inspect_env(force: bool = False) -> dict:
         "device": None,
         "diffusers": None,
         "has_flux2_klein": False,
+        "has_diffusers_flux3": False,
+        "has_modular_pipeline": False,
         "has_zimage": False,
         "nunchaku": None,
         "nunchaku_precision": None,
@@ -361,11 +365,22 @@ def _ensure_runtime(job: dict, plan: dict) -> Path:
         _pip(job, py, "install", "diffusers", "transformers", "accelerate", "safetensors",
              "sentencepiece", "protobuf", "huggingface_hub", "pillow", "numpy", "peft", "pydantic")
     env = inspect_env(force=True)
-    if env.get("diffusers") and not env.get("has_flux2_klein"):
-        # FLUX.2 Klein support landed after some releases; fall back to main if git is around.
-        _log(job, "diffusers has no Flux2KleinPipeline yet; trying GitHub main (needs git)...")
-        if _run(job, [str(py), "-m", "pip", "install", "git+https://github.com/huggingface/diffusers.git"]) != 0:
-            _log(job, "WARNING: could not install diffusers from git. FLUX.2 Klein models need a newer diffusers.")
+    needs_diffusers_main = (
+        not env.get("has_flux2_klein")
+        or not env.get("has_diffusers_flux3")
+        or not env.get("has_modular_pipeline")
+    )
+    if env.get("diffusers") and needs_diffusers_main:
+        # FLUX.2/FLUX.3 support is not in the latest stable PyPI release yet.
+        # Install diffusers from GitHub main; the managed env already has the runtime deps.
+        _log(job, "diffusers lacks FLUX.3/ModularPipeline support; installing GitHub main (needs git)...")
+        if _run(job, [str(py), "-m", "pip", "install", "--upgrade",
+                      "git+https://github.com/huggingface/diffusers.git"]) != 0:
+            _log(job, "WARNING: could not install diffusers from git. FLUX.3 Nunchaku models need diffusers main.")
+        else:
+            env = inspect_env(force=True)
+            _log(job, f"diffusers is now {env.get('diffusers')} "
+                      f"(flux3={env.get('has_diffusers_flux3')}, modular={env.get('has_modular_pipeline')})")
     invalidate_probe()
     return py
 
@@ -847,14 +862,24 @@ def _run_extras_job_cli(job_json_path: str) -> int:
         lora_paths = payload.get("lora_paths") or []
         lora_strengths = payload.get("lora_strengths") or []
 
-        base_source = str(model_dir) if (model_dir / "model_index.json").exists() else (payload.get("base_model_repo") or repo_id)
+        is_flux3 = ("flux3" in family or "flux-3" in family
+                    or "flux-3" in str(repo_id).lower() or "flux3" in str(repo_id).lower())
+        has_local_pipeline = ((model_dir / "model_index.json").exists()
+                              or (model_dir / "modular_model_index.json").exists())
+        base_source = str(model_dir) if has_local_pipeline else (payload.get("base_model_repo") or repo_id)
         te_path_str = payload.get("text_encoder_path")
         te_path = Path(te_path_str) if te_path_str else None
 
         te_obj = None
         if te_path and te_path.exists():
             print(f"[status] Loading Text Encoder from {te_path.name}...", flush=True)
-            if "qwen3-vl" in te_path.name.lower() or "qwen2-vl" in te_path.name.lower():
+            if is_flux3 and ("qwen3-vl" in te_path.name.lower() or "qwen3_vl" in te_path.name.lower()):
+                try:
+                    from nunchaku.models.text_encoders import NunchakuQwen3VLEncoderModel
+                    te_obj = NunchakuQwen3VLEncoderModel.from_pretrained(str(te_path), torch_dtype=torch.bfloat16)
+                except Exception as e:
+                    print(f"[warning] Could not load NunchakuQwen3VLEncoderModel: {e}", flush=True)
+            elif "qwen3-vl" in te_path.name.lower() or "qwen2-vl" in te_path.name.lower():
                 try:
                     from nunchaku.models.text_encoders import NunchakuQwen2VLTextEncoderModel
                     te_obj = NunchakuQwen2VLTextEncoderModel.from_pretrained(str(te_path), torch_dtype=torch.bfloat16)
@@ -867,10 +892,19 @@ def _run_extras_job_cli(job_json_path: str) -> int:
                 except Exception as e:
                     print(f"[warning] Could not load NunchakuQwen3TextEncoderModel: {e}", flush=True)
 
+        modular_flux3 = False
         if engine == "nunchaku":
             print("[status] Loading Nunchaku (vitoom) SVDQ Transformer...", flush=True)
+            if is_flux3:
+                import diffusers
+                if not hasattr(diffusers, "Flux3Transformer2DModel"):
+                    raise RuntimeError(
+                        f"FLUX.3 SVDQuant requires diffusers with Flux3Transformer2DModel, but the extras env has "
+                        f"diffusers {getattr(diffusers, '__version__', 'unknown')} without it. "
+                        "Reinstall/update the Nunchaku extras environment: the app installs diffusers from GitHub main "
+                        "for FLUX.3 support (stable PyPI diffusers 0.41.0 does not include it)."
+                    )
             import nunchaku
-            is_flux3 = "flux3" in family or "flux-3" in family or "flux-3" in str(repo_id).lower() or "flux3" in str(repo_id).lower()
             if "qwen" in family:
                 from nunchaku.models.transformers.transformer_qwenimage import NunchakuQwenImageTransformer2DModel as TrCls
             elif "z" in family:
@@ -912,20 +946,36 @@ def _run_extras_job_cli(job_json_path: str) -> int:
                         transformer.update_lora_params(str(lora_paths[0]), strength=s_val)
 
             print(f"[status] Loading Diffusers pipeline from base '{base_source}'...", flush=True)
-            pipe_kwargs = {
-                "transformer": transformer,
-                "torch_dtype": torch.bfloat16,
-            }
-            if te_obj is not None:
-                pipe_kwargs["text_encoder"] = te_obj
-
-            if "klein" in family or "flux" in family:
-                from diffusers import Flux2KleinPipeline
-                pipe = Flux2KleinPipeline.from_pretrained(base_source, **pipe_kwargs)
+            if is_flux3:
+                # FLUX.3 ships as a ModularPipeline (see diffusers docs / tonera model card).
+                # The prompt upsampler is a separate 9B model which this UI does not manage yet,
+                # so drop that block and feed the prompt to the text encoder as-is.
+                from diffusers import ModularPipeline
+                blocks = ModularPipeline.from_pretrained(base_source).blocks
+                if blocks.sub_blocks.pop("prompt_upsampler", None) is not None:
+                    print("[status] Prompt upsampler disabled; using the prompt as-is.", flush=True)
+                pipe = blocks.init_pipeline(base_source)
+                pipe.update_components(transformer=transformer)
+                if te_obj is not None:
+                    pipe.update_components(text_encoder=te_obj)
+                pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
+                pipe.to("cuda")
+                modular_flux3 = True
             else:
-                from diffusers import DiffusionPipeline
-                pipe = DiffusionPipeline.from_pretrained(base_source, **pipe_kwargs)
-            pipe.enable_model_cpu_offload()
+                pipe_kwargs = {
+                    "transformer": transformer,
+                    "torch_dtype": torch.bfloat16,
+                }
+                if te_obj is not None:
+                    pipe_kwargs["text_encoder"] = te_obj
+
+                if "klein" in family or "flux" in family:
+                    from diffusers import Flux2KleinPipeline
+                    pipe = Flux2KleinPipeline.from_pretrained(base_source, **pipe_kwargs)
+                else:
+                    from diffusers import DiffusionPipeline
+                    pipe = DiffusionPipeline.from_pretrained(base_source, **pipe_kwargs)
+                pipe.enable_model_cpu_offload()
         else:
             print(f"[status] Loading OrbitQuant W4A4 pipeline from base '{base_source}'...", flush=True)
             import orbitquant  # noqa: F401
@@ -942,21 +992,47 @@ def _run_extras_job_cli(job_json_path: str) -> int:
             print(f"[step {step_idx + 1}/{steps}]", flush=True)
             return callback_kwargs
 
-        call_kwargs = {
-            "prompt": prompt,
-            "width": width,
-            "height": height,
-            "num_inference_steps": steps,
-            "guidance_scale": cfg,
-            "generator": torch.Generator(device="cpu").manual_seed(seed),
-            "callback_on_step_end": on_step_end,
-        }
-        if init_image_path and Path(init_image_path).is_file():
-            call_kwargs["image"] = Image.open(init_image_path).convert("RGB")
+        if modular_flux3:
+            if abs(cfg - 1.0) > 0.01:
+                print(f"[warning] FLUX.3 distilled ignores cfg={cfg}; using the pipeline default.", flush=True)
+            call_kwargs = {
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "num_inference_steps": steps,
+                "generator": torch.Generator(device="cpu").manual_seed(seed),
+                "output": "images",
+            }
+            if init_image_path and Path(init_image_path).is_file():
+                call_kwargs["image"] = Image.open(init_image_path).convert("RGB")
 
-        print(f"[status] Sampling ({steps} steps)...", flush=True)
-        out = pipe(**call_kwargs).images[0]
-        out.save(str(output_path))
+            print(f"[status] Sampling ({steps} steps, FLUX.3 ModularPipeline)...", flush=True)
+            result = pipe(**call_kwargs)
+            if isinstance(result, dict):
+                images = result.get("images") or []
+            elif isinstance(result, (list, tuple)):
+                images = result
+            else:
+                images = [result]
+            if not images:
+                raise RuntimeError("FLUX.3 pipeline returned no images")
+            images[0].save(str(output_path))
+        else:
+            call_kwargs = {
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "num_inference_steps": steps,
+                "guidance_scale": cfg,
+                "generator": torch.Generator(device="cpu").manual_seed(seed),
+                "callback_on_step_end": on_step_end,
+            }
+            if init_image_path and Path(init_image_path).is_file():
+                call_kwargs["image"] = Image.open(init_image_path).convert("RGB")
+
+            print(f"[status] Sampling ({steps} steps)...", flush=True)
+            out = pipe(**call_kwargs).images[0]
+            out.save(str(output_path))
         return 0
     except Exception as e:
         import traceback

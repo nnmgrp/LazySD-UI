@@ -48,10 +48,17 @@ export async function onGenerate(appRef) {
     return;
   }
 
-  // Check FLUX.3 Nunchaku >= 1.4.0 requirement
-  if (activeModel?.family === "flux3" && app.state.extrasStatus?.env?.nunchaku && app.state.extrasStatus?.env?.has_flux3 === false) {
-    toast("error", "FLUX.3 SVDQuant требует Nunchaku >= 1.4.0. Обновите Nunchaku в Настройки → Движки или выберите 'Flux.2 Klein (Nunchaku)'.");
-    return;
+  // Check FLUX.3 Nunchaku + diffusers-main requirement
+  if (activeModel?.family === "flux3") {
+    const extrasEnv = app.state.extrasStatus?.env;
+    if (extrasEnv?.nunchaku && extrasEnv.has_flux3 === false) {
+      toast("error", "FLUX.3 SVDQuant требует Nunchaku >= 1.4.0. Обновите Nunchaku в Настройки → Движки или выберите 'Flux.2 Klein (Nunchaku)'.");
+      return;
+    }
+    if (extrasEnv?.diffusers && extrasEnv.has_diffusers_flux3 === false) {
+      toast("error", "FLUX.3 требует diffusers из GitHub main (стабильный 0.41.0 не поддерживает FLUX.3). Переустановите Nunchaku в Настройки → Движки — установщик поставит diffusers main.");
+      return;
+    }
   }
 
   const res = parseResolution();
