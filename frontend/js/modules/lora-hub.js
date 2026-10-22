@@ -3,14 +3,15 @@
    Management of local LoRAs, trigger words, metadata, downloading.
    ============================================================ */
 
-import { apiGet, apiPost, apiDelete, toast, escapeHtml } from "../api.js";
+import { apiGet, apiPost, apiPatch, apiDelete, toast, escapeHtml } from "../api.js";
 
 export async function loadLoras(appRef) {
   const app = appRef || window.App;
   try {
-    const list = await apiGet("/api/loras");
+    const data = await apiGet("/api/loras");
+    const list = Array.isArray(data) ? data : (data?.loras || []);
     if (app) {
-      app.state.loraLibrary = list || [];
+      app.state.loraLibrary = list;
       renderLoraUI(app);
     }
   } catch (e) {
@@ -187,9 +188,9 @@ export function renderLoraHubGrid(appRef) {
 export function filterLoraLibrary(appRef) {
   const app = appRef || window.App;
   if (!app) return;
-  const listEl = document.getElementById("lora-modal-list");
+  const listEl = document.getElementById("lora-modal-list-wrap");
   if (!listEl) return;
-  const q = (document.getElementById("lora-modal-search")?.value || "").trim().toLowerCase();
+  const q = (document.getElementById("lora-library-search")?.value || "").trim().toLowerCase();
   let list = app.state.loraLibrary || [];
   if (q) {
     list = list.filter(l => l.name.toLowerCase().includes(q) || (l.trigger || "").toLowerCase().includes(q));
@@ -235,6 +236,23 @@ export function toggleLora(name, appRef) {
   renderLoraUI(app);
 }
 
+export async function editLoraMetadata(name, family, trigger) {
+  const nextFamily = prompt(`Архитектура LoRA «${name}» (flux / qwen / sdxl / z_image / any):`, family || "");
+  if (nextFamily === null) return;
+  const nextTrigger = prompt("Триггер-слова (через запятую):", trigger || "");
+  if (nextTrigger === null) return;
+  try {
+    await apiPatch(`/api/loras/${encodeURIComponent(name)}/metadata`, {
+      family: nextFamily.trim() || null,
+      trigger: nextTrigger.trim() || null,
+    });
+    toast("success", "✓ Метаданные LoRA обновлены");
+    await loadLoras(window.App);
+  } catch (e) {
+    toast("error", e.message);
+  }
+}
+
 export function setLoraStrength(name, val, appRef) {
   const app = appRef || window.App;
   if (!app) return;
@@ -265,11 +283,10 @@ export async function deleteLora(name, appRef) {
 }
 
 export function openLoraManageModal(tab = "hub") {
-  const modal = document.getElementById("lora-modal");
-  if (modal) {
-    modal.style.display = "flex";
-    switchLoraModalTab(tab);
-  }
+  const modal = document.getElementById("lora-manage-modal");
+  if (modal) modal.style.display = "flex";
+  switchLoraModalTab(tab);
+  loadLoras(window.App);
 }
 
 export function openLoraModal() {
@@ -277,16 +294,21 @@ export function openLoraModal() {
 }
 
 export function closeLoraModal() {
-  const modal = document.getElementById("lora-modal");
+  const modal = document.getElementById("lora-manage-modal");
   if (modal) modal.style.display = "none";
 }
 
 export function switchLoraModalTab(tab) {
-  const tabs = ["hub", "import", "custom"];
+  const normalized = (tab === "hf" || tab === "active" || tab === "browse" || tab === "import")
+    ? (tab === "import" ? "local" : "hub")
+    : (tab || "hub");
+  const tabs = ["hub", "local", "library"];
+
   tabs.forEach(tName => {
-    const btn = document.getElementById(`lora-tab-btn-${tName}`);
-    const panel = document.getElementById(`lora-tab-panel-${tName}`);
-    if (btn) btn.classList.toggle("active", tName === tab);
-    if (panel) panel.style.display = tName === tab ? "block" : "none";
+    document.getElementById(`lora-tab-btn-${tName}`)?.classList.toggle("active", tName === normalized);
+    const panel = document.getElementById(`lora-pane-${tName}`);
+    if (panel) panel.style.display = tName === normalized ? "flex" : "none";
   });
+
+  if (normalized === "library") loadLoras(window.App);
 }

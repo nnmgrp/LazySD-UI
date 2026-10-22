@@ -4158,7 +4158,7 @@ const App = {
   async loadLoras() {
     try {
       const res = await this.apiGet("/api/loras");
-      this.state.loraLibrary = res.loras || [];
+      this.state.loraLibrary = Array.isArray(res) ? res : (res.loras || []);
       this.renderLoraUI();
     } catch (e) {
       console.warn("[lora] Failed to load loras:", e);
@@ -4243,24 +4243,115 @@ const App = {
 
     const modalTotal = document.getElementById("lora-modal-total");
     if (modalTotal) modalTotal.textContent = String(this.state.loraLibrary.length);
-    const modalWrap = document.getElementById("lora-modal-list-wrap");
-    if (modalWrap) {
-      if (this.state.loraLibrary.length === 0) {
-        modalWrap.innerHTML = '<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 12px;">В папке models/loras пока нет файлов.</div>';
-      } else {
-        modalWrap.innerHTML = this.state.loraLibrary.map(item => {
-          return `
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border);">
-              <div style="min-width: 0; flex: 1;">
-                <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item.name)}</div>
-                <div style="font-size: 10px; color: var(--text-dim);">${item.size_mb || 0} MB ${item.family ? '· ' + escapeHtml(item.family) : ''}</div>
-              </div>
-              <button type="button" class="dock-mini-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" style="color: #f87171;">Удалить</button>
-            </div>
-          `;
-        }).join("");
-      }
+    const hubCount = document.getElementById("models-hub-lora-count");
+    if (hubCount) hubCount.textContent = String(this.state.loraLibrary.length);
+
+    this.renderLoraHubGrid();
+    this.renderLoraLibrary();
+  },
+
+  renderLoraHubGrid() {
+    const grid = document.getElementById("lora-hub-grid");
+    if (!grid) return;
+
+    const allLoras = this.state.loraLibrary || [];
+    const q = (document.getElementById("lora-hub-search")?.value || "").trim().toLowerCase();
+    let list = allLoras;
+    if (q) {
+      list = list.filter(l =>
+        (l.name || "").toLowerCase().includes(q) ||
+        (l.label || "").toLowerCase().includes(q) ||
+        (l.trigger || "").toLowerCase().includes(q) ||
+        (l.family || "").toLowerCase().includes(q)
+      );
     }
+
+    if (list.length === 0) {
+      const message = allLoras.length === 0
+        ? "В папке LoRA пока нет файлов. Добавьте .safetensors или .gguf через кнопку «Добавить / Скачать LoRA»."
+        : "LoRA не найдены по заданному фильтру.";
+      grid.innerHTML = `<div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-dim);">${message}</div>`;
+      return;
+    }
+
+    grid.innerHTML = list.map(item => {
+      const activeItem = this.state.activeLoras.find(l => l.name === item.name);
+      const isActive = !!activeItem;
+      const family = item.family
+        ? `<span class="model-badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3);">${escapeHtml(item.family)}</span>`
+        : "";
+      const size = item.size_mb
+        ? `<span class="model-badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-muted);">${item.size_mb} MB</span>`
+        : "";
+      return `
+        <div class="model-card ${isActive ? 'active' : ''}" style="display: flex; flex-direction: column; justify-content: space-between; min-height: 140px;">
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+              <div style="font-weight: 600; font-size: 13.5px; color: var(--text); word-break: break-all;" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
+              <div style="display: flex; gap: 4px;">
+                <button class="dock-ctrl-btn" onclick="App.editLoraMetadata('${escapeHtml(item.name)}', '${escapeHtml(item.family || '')}', '${escapeHtml(item.trigger || '')}')" title="Настроить архитектуру и триггеры">⚙️</button>
+                <button class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить">✕</button>
+              </div>
+            </div>
+            <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px;">
+              ${family}
+              ${size}
+            </div>
+            ${item.trigger ? `<div style="font-size: 11px; color: #93c5fd; background: rgba(59, 130, 246, 0.1); border-radius: 4px; padding: 3px 6px; margin-bottom: 8px; cursor: pointer;" onclick="App.insertLoraTrigger('${escapeHtml(item.trigger)}')" title="Нажмите, чтобы вставить в промпт">💬 ${escapeHtml(item.trigger)}</div>` : ''}
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+            <button class="card-action-btn ${isActive ? 'danger' : 'primary'}" style="flex: 1; height: 30px; font-size: 12px;" onclick="App.toggleLora('${escapeHtml(item.name)}')">
+              ${isActive ? 'Отключить' : 'Подключить'}
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("");
+  },
+
+  renderLoraLibrary() {
+    const listEl = document.getElementById("lora-modal-list-wrap");
+    if (!listEl) return;
+
+    const allLoras = this.state.loraLibrary || [];
+    const q = (document.getElementById("lora-library-search")?.value || "").trim().toLowerCase();
+    let list = allLoras;
+    if (q) {
+      list = list.filter(l =>
+        (l.name || "").toLowerCase().includes(q) ||
+        (l.label || "").toLowerCase().includes(q) ||
+        (l.trigger || "").toLowerCase().includes(q)
+      );
+    }
+
+    if (list.length === 0) {
+      const message = allLoras.length === 0 ? "В библиотеке пока нет LoRA." : "Ничего не найдено.";
+      listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-dim);">${message}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = list.map(item => {
+      const isActive = this.state.activeLoras.some(l => l.name === item.name);
+      const meta = [
+        item.size_mb ? `${item.size_mb} MB` : "",
+        item.family || "",
+        item.trigger ? `💬 ${item.trigger}` : "",
+      ].filter(Boolean).join(" · ");
+      return `
+        <div class="lora-card-item ${isActive ? 'active' : ''}" style="margin-bottom: 6px;">
+          <div class="lora-card-header">
+            <div class="lora-title-group" onclick="App.toggleLora('${escapeHtml(item.name)}')" style="cursor: pointer; min-width: 0;">
+              <input type="checkbox" ${isActive ? 'checked' : ''} onclick="event.stopPropagation(); App.toggleLora('${escapeHtml(item.name)}')">
+              <span class="lora-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+            </div>
+            <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
+              <span style="font-size: 10px; color: var(--text-dim);">${escapeHtml(meta)}</span>
+              <button type="button" class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить">✕</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
   },
 
   toggleLora(name) {
@@ -4292,11 +4383,7 @@ const App = {
   },
 
   openLoraModal() {
-    const modal = document.getElementById("lora-manage-modal");
-    if (modal) {
-      modal.style.display = "flex";
-      this.loadLoras();
-    }
+    this.openLoraManageModal("hub");
   },
 
   closeLoraModal() {
@@ -4348,9 +4435,12 @@ const App = {
 
   async downloadHfLora() {
     const repoInput = document.getElementById("lora-hf-repo-input");
-    const fileInput = document.getElementById("lora-hf-file-input");
+    const fileSelect = document.getElementById("lora-hf-file-select");
+    const renameInput = document.getElementById("lora-hf-rename-input");
+    const familySelect = document.getElementById("lora-hf-family-select");
+    const triggerInput = document.getElementById("lora-hf-trigger-input");
     const repo = repoInput ? repoInput.value.trim() : "";
-    const filename = fileInput ? fileInput.value.trim() : "";
+    const filename = fileSelect ? fileSelect.value : "";
     if (!repo) {
       this.toast("warning", "Укажите HuggingFace repo (author/repo)");
       return;
@@ -4361,14 +4451,46 @@ const App = {
       const res = await this.apiPost("/api/loras/download", {
         repo_id: repo,
         filename: filename || null,
+        rename: renameInput?.value.trim() || null,
+        family: familySelect?.value && familySelect.value !== "any" ? familySelect.value : null,
+        trigger: triggerInput?.value.trim() || null,
       });
       this.toast("success", `✓ LoRA успешно скачана: ${res.lora?.name}`);
-      if (repoInput) repoInput.value = "";
-      if (fileInput) fileInput.value = "";
+      if (renameInput) renameInput.value = "";
+      if (triggerInput) triggerInput.value = "";
+      const inspector = document.getElementById("lora-hf-inspector");
+      if (inspector) inspector.style.display = "none";
       await this.loadLoras();
     } catch (e) {
       this.toast("error", e.message);
     }
+  },
+
+  async editLoraMetadata(name, family, trigger) {
+    const nextFamily = prompt(`Архитектура LoRA «${name}» (flux / qwen / sdxl / z_image / any):`, family || "");
+    if (nextFamily === null) return;
+    const nextTrigger = prompt("Триггер-слова (через запятую):", trigger || "");
+    if (nextTrigger === null) return;
+
+    try {
+      await this.apiPatch(`/api/loras/${encodeURIComponent(name)}/metadata`, {
+        family: nextFamily.trim() || null,
+        trigger: nextTrigger.trim() || null,
+      });
+      this.toast("success", "✓ Метаданные LoRA обновлены");
+      await this.loadLoras();
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  insertLoraTrigger(trigger) {
+    const promptInput = document.getElementById("prompt-input");
+    if (!promptInput || !trigger) return;
+    const current = promptInput.value.trim();
+    promptInput.value = current ? `${current}, ${trigger}` : trigger;
+    promptInput.dispatchEvent(new Event("input", { bubbles: true }));
+    this.toast("info", `Триггер добавлен: ${trigger}`);
   },
 
   async deleteLora(name) {
@@ -8016,17 +8138,25 @@ Object.assign(App, {
   },
 
   switchModelsHubSubtab(subtab) {
-    this.state.modelsHubSubtab = subtab || "all";
-    document.querySelectorAll(".models-subtab-btn").forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.subtab === subtab);
-    });
-    const subtabs = ["all", "downloadable", "encoders", "custom"];
-    subtabs.forEach(s => {
-      const el = document.getElementById(`models-subtab-${s}`);
-      if (el) el.style.display = (s === subtab) ? "block" : "none";
-    });
-    if (subtab === "encoders") {
-      this.renderEncodersTab();
+    const normalized = subtab === "loras" ? "loras" : "models";
+    this.state.modelsHubSubtab = normalized;
+    const isLoras = normalized === "loras";
+
+    document.getElementById("models-subtab-btn-models")?.classList.toggle("active", !isLoras);
+    document.getElementById("models-subtab-btn-loras")?.classList.toggle("active", isLoras);
+
+    const modelsPanel = document.getElementById("models-subpanel-models");
+    const lorasPanel = document.getElementById("models-subpanel-loras");
+    if (modelsPanel) modelsPanel.style.display = isLoras ? "none" : "block";
+    if (lorasPanel) lorasPanel.style.display = isLoras ? "block" : "none";
+
+    const addModelBtn = document.getElementById("models-hub-add-model-btn");
+    const addLoraBtn = document.getElementById("models-hub-add-lora-btn");
+    if (addModelBtn) addModelBtn.style.display = isLoras ? "none" : "inline-flex";
+    if (addLoraBtn) addLoraBtn.style.display = isLoras ? "inline-flex" : "none";
+
+    if (isLoras) {
+      this.loadLoras();
     } else {
       this.renderModelsTab();
     }
@@ -8063,21 +8193,25 @@ Object.assign(App, {
   },
 
   switchLoraModalTab(tab) {
-    document.querySelectorAll(".lora-modal-tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
-    const panes = ["active", "browse", "library"];
-    panes.forEach(p => {
-      const el = document.getElementById(`lora-pane-${p}`);
-      if (el) el.style.display = (p === tab) ? "flex" : "none";
+    const normalized = (tab === "hf" || tab === "active" || tab === "browse" || tab === "import")
+      ? (tab === "import" ? "local" : "hub")
+      : (tab || "hub");
+    const tabs = ["hub", "local", "library"];
+
+    tabs.forEach(t => {
+      document.getElementById(`lora-tab-btn-${t}`)?.classList.toggle("active", t === normalized);
+      const pane = document.getElementById(`lora-pane-${t}`);
+      if (pane) pane.style.display = (t === normalized) ? "flex" : "none";
     });
-    if (tab === "library") this.loadLoras();
+
+    if (normalized === "library") this.loadLoras();
   },
 
-  openLoraManageModal() {
+  openLoraManageModal(tab = "hub") {
     const modal = document.getElementById("lora-manage-modal");
-    if (modal) {
-      modal.style.display = "flex";
-      this.switchLoraModalTab("active");
-    }
+    if (modal) modal.style.display = "flex";
+    this.switchLoraModalTab(tab);
+    this.loadLoras();
   },
 
   async inspectHfLora() {
@@ -8089,19 +8223,87 @@ Object.assign(App, {
     }
     try {
       this.toast("info", "Проверка репозитория...");
-      const res = await this.apiPost("/api/loras/inspect-hf", { repo_id: repo });
-      this.toast("success", `Найдено файлов LoRA: ${res.files?.length || 0}`);
+      const res = await this.apiGet(`/api/loras/hf-inspect?repo_id=${encodeURIComponent(repo)}`);
+      const files = res.files || [];
+      if (!files.length) {
+        this.toast("warning", "В репозитории не найдены файлы LoRA (.safetensors / .gguf)");
+        return;
+      }
+
+      if (repoInput) repoInput.value = res.repo_id || repo;
+      const inspector = document.getElementById("lora-hf-inspector");
+      if (inspector) inspector.style.display = "flex";
+      const title = document.getElementById("lora-hf-inspected-title");
+      if (title) title.textContent = res.repo_id || repo;
+      const badge = document.getElementById("lora-hf-base-badge");
+      if (badge) badge.textContent = res.base_model || res.family || "LoRA";
+
+      const fileSelect = document.getElementById("lora-hf-file-select");
+      if (fileSelect) {
+        fileSelect.innerHTML = files.map(f =>
+          `<option value="${escapeHtml(f.path)}">${escapeHtml(f.name)}${f.size_mb ? ` · ${f.size_mb} MB` : ""}</option>`
+        ).join("");
+      }
+
+      const familySelect = document.getElementById("lora-hf-family-select");
+      if (familySelect) {
+        const fam = res.suggested_family || res.family || "any";
+        const hasOption = Array.from(familySelect.options).some(o => o.value === fam);
+        familySelect.value = hasOption ? fam : "any";
+      }
+
+      const triggerInput = document.getElementById("lora-hf-trigger-input");
+      if (triggerInput) triggerInput.value = res.suggested_trigger || res.trigger || "";
+      const renameInput = document.getElementById("lora-hf-rename-input");
+      if (renameInput) renameInput.value = "";
+
+      this.toast("success", `Найдено файлов LoRA: ${files.length}`);
     } catch (e) {
       this.toast("error", e.message);
     }
   },
 
   async searchHfLoras(query) {
-    if (!query) return;
+    const q = (query || document.getElementById("lora-hf-search-input")?.value || "").trim();
+    if (!q) {
+      this.toast("warning", "Введите запрос для поиска на HuggingFace");
+      return;
+    }
     try {
-      const res = await this.apiGet(`/api/loras/search?q=${encodeURIComponent(query)}`);
-      this.renderLoraHubGrid(res.items || []);
-    } catch (_) {}
+      this.toast("info", "Поиск на HuggingFace...");
+      const res = await this.apiGet(`/api/loras/hf-search?q=${encodeURIComponent(q)}`);
+      this.renderHfLoraSearchResults(res.results || []);
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  renderHfLoraSearchResults(results) {
+    const box = document.getElementById("lora-hf-search-results");
+    if (!box) return;
+
+    if (!results.length) {
+      box.style.display = "block";
+      box.innerHTML = '<div style="padding: 14px; text-align: center; color: var(--text-dim);">Ничего не найдено</div>';
+      return;
+    }
+
+    box.style.display = "block";
+    box.innerHTML = results.map(item => `
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; border-bottom: 1px solid var(--border);">
+        <div style="min-width: 0;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.repo_id)}</div>
+          <div style="font-size: 10px; color: var(--text-dim);">⬇ ${item.downloads || 0} · ❤ ${item.likes || 0}${item.base_model ? ` · ${escapeHtml(item.base_model)}` : ""}</div>
+        </div>
+        <button type="button" class="dock-mini-btn" onclick="App.selectHfLoraResult('${escapeHtml(item.repo_id)}')">Выбрать</button>
+      </div>
+    `).join("");
+  },
+
+  selectHfLoraResult(repoId) {
+    const repoInput = document.getElementById("lora-hf-repo-input");
+    if (repoInput) repoInput.value = repoId;
+    this.inspectHfLora();
   },
 
   dismissUninstalledNotice() {

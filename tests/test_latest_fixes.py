@@ -269,6 +269,35 @@ def test_halftone_layer_stack_system():
     print("  [OK] Painted local layer mask reveals the raster")
 
 
+def test_lora_hub_frontend_sync():
+    print("\n[LoRA Hub] Verifying active app.js is in sync with index.html...")
+    app_js = (PROJECT_ROOT / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+    html = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    module_js = (PROJECT_ROOT / "frontend" / "js" / "modules" / "lora-hub.js").read_text(encoding="utf-8")
+
+    assert 'id="models-subpanel-loras"' in html, "LoRA Hub subpanel missing in index.html"
+    assert "App.switchModelsHubSubtab('loras')" in html, "LoRA Hub tab does not call switchModelsHubSubtab('loras')"
+
+    # The active monolith must contain real hub/library renderers (not just calls to missing methods).
+    assert "renderLoraHubGrid() {" in app_js, "renderLoraHubGrid implementation missing in app.js"
+    assert "renderLoraLibrary() {" in app_js, "renderLoraLibrary implementation missing in app.js"
+    assert 'document.getElementById("models-subpanel-loras")' in app_js, "app.js does not toggle the LoRA subpanel"
+    assert "models-hub-lora-count" in app_js, "app.js does not update the LoRA Hub counter"
+
+    # HF endpoints must match backend routes (/hf-inspect and /hf-search).
+    assert "/api/loras/hf-inspect?repo_id=" in app_js, "app.js uses the wrong HF inspect endpoint"
+    assert "/api/loras/hf-search?q=" in app_js, "app.js uses the wrong HF search endpoint"
+    assert 'getElementById("lora-hf-file-select")' in app_js, "app.js does not read the HF file select"
+    assert 'getElementById("lora-modal-list-wrap")' in app_js, "app.js does not render the installed LoRA library"
+
+    # ES6 module mirror must use the same API shape and DOM ids.
+    assert "data?.loras" in module_js, "modules/lora-hub.js does not unwrap {loras:[...]} response"
+    assert '"lora-modal-list-wrap"' in module_js, "modules/lora-hub.js uses a stale library container id"
+    assert "lora-pane-${tName}" in module_js, "modules/lora-hub.js uses stale modal pane ids"
+
+    print("  [OK] LoRA Hub local list, subpanel, modal, and HF endpoints are synchronized")
+
+
 if __name__ == "__main__":
     test_frontend_halftone_features()
     test_backend_halftone_resolution()
@@ -277,6 +306,7 @@ if __name__ == "__main__":
     test_cmyk_mask_dock_cancel_fixes()
     test_lasso_brush_eraser_mask_tools()
     test_halftone_layer_stack_system()
+    test_lora_hub_frontend_sync()
     print("\n============================================================")
     print("ALL HALFTONE STUDIO GT FIXES VERIFIED SUCCESSFULLY!")
     print("============================================================")

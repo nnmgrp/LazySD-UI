@@ -2766,7 +2766,7 @@ def create_app() -> FastAPI:
 
 
 
-                target_dir = PROJECT_ROOT / "models" / "loras"
+                target_dir = settings.models_dir / "loras"
 
 
 
@@ -6903,7 +6903,7 @@ def create_app() -> FastAPI:
 
 
 
-        """Upload a LoRA file directly into models/loras."""
+        """Upload a LoRA file directly into the models_dir/loras library."""
 
 
 
@@ -7211,7 +7211,7 @@ def create_app() -> FastAPI:
 
 
 
-        """Delete a LoRA file from models/loras."""
+        """Delete a LoRA file from the models_dir/loras library."""
 
 
 
