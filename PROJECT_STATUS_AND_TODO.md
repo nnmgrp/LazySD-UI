@@ -4,6 +4,15 @@
 **Версия:** Phase 2.5 (API-key проблема РЕШЕНА, registry расширен)
 **Передача:** для следующего чата/исполнителя
 
+> **Актуальность на 2026-10-23:** документ исторический, часть пунктов ниже уже
+> реализована (E2E-генерация, Models/History/Templates, LoRA, ControlNet, Qwen/Ideogram,
+> система слоёв Halftone). Актуальный журнал коммитов — [`CHANGELOG.md`](CHANGELOG.md),
+> архитектура — [`AGENT_HANDOFF.md`](AGENT_HANDOFF.md).
+>
+> Последние коммиты: `2e1b352` (fix LoRA Hub), `9ece51d` (Halftone layers/FBO),
+> `dcc5891` (presets/Nunchaku/HF token). Перед планированием сверяйся с
+> `git log --oneline -20`.
+
 ---
 
 ## 1. Краткое описание проекта

@@ -27,6 +27,7 @@ G:\QuantFunc-WebUI\
 ├── start.bat                   # Лаунчер Windows (создание venv, запуск uvicorn на 127.0.0.1:7860)
 ├── requirements.txt            # Python-зависимости (FastAPI, uvicorn, opencv, pillow, safetensors и др.)
 ├── AGENT_HANDOFF.md            # Этот файл: знания и архитектура для ИИ-разработчиков
+├── CHANGELOG.md                # Журнал коммитов и изменений для людей и ИИ-агентов
 ├── README.md                   # Публичная документация для пользователей GitHub
 │
 ├── backend/                    # Python бэкенд (модули логики)
@@ -254,6 +255,10 @@ G:\QuantFunc-WebUI\
    - Внутри шейдеров `VS_SOURCE` и `FS_SOURCE` используются шаблонные строки с обратными кавычками (`` ` ``). Будь предельно внимателен: любая незакрытая кавычка ломает парсер всего файла `app.js` до следующей функции!
 4. **Совместимость Nunchaku для FLUX.3**:
    - Веса `tonera/flux-3-image-klein-nunchaku` содержат архитектуру `mode_blocks.image...`, которая поддерживается только в **Nunchaku >= 1.4.0** (PyTorch 2.14). Если в окружении Nunchaku 1.3.0 — предупреждай пользователя о необходимости обновить движок или переключиться на `Flux.2 Klein (Nunchaku)`.
+5. **Рассинхронизация `app.js` и `modules/*`**:
+   - Активный фронтенд — монолит `frontend/js/app.js`, но HTML и ES6-модули могут содержать более новые id/методы. Именно так «пропала» LoRA в LoRA Hub (коммит `2e1b352`): панель не переключалась, а `renderLoraHubGrid`/`renderLoraLibrary` отсутствовали в монолите.
+   - После любой правки UI проверяй, что методы и id совпадают в `index.html`, `app.js` и `modules/*`. Регрессия ловится тестом `test_lora_hub_frontend_sync` в `tests/test_latest_fixes.py`.
+   - Папка LoRA — это `models_dir/loras`, то есть при текущих настройках `models/cache/loras`, а не `models/loras`.
 
 ---
 
@@ -278,8 +283,37 @@ G:\QuantFunc-WebUI\
    ```powershell
    pytest G:\QuantFunc-WebUI\tests
    ```
-   *Все 26 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga) должны проходить со статусом PASS (100%).*
+   *Все 28 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga, test_lora_hub_frontend_sync) должны проходить со статусом PASS (100%).*
 3. **Проверка git-статуса**:
    ```powershell
    git -C G:\QuantFunc-WebUI status -s
    ```
+
+---
+
+## 10. История коммитов (для агентов)
+
+> Полный журнал с деталями: [`CHANGELOG.md`](CHANGELOG.md).
+> Актуальный список всегда: `git log --oneline -20`.
+
+### 2026-10-23
+| Коммит | Описание |
+|---|---|
+| `2e1b352` | `fix(lora)`: восстановлен LoRA Hub — переключение панели, `renderLoraHubGrid`/`renderLoraLibrary`, счётчик, вкладки модалки, HF-эндпоинты, путь `models_dir/loras`, регрессионный тест. |
+| `9ece51d` | `feat(halftone)`: стек слоёв, маски, виртуальный оригинал, WebGL2 FBO-композитор, защита от муара. |
+
+### 2026-10-16 — 2026-10-17
+| Коммит | Описание |
+|---|---|
+| `dcc5891` | Пресеты в доке/модалке, probe Nunchaku, синхронизация HF-токена. |
+| `27bb549` | Безопасность удалённого доступа и share-URL. |
+| `7d3b401` | Phase 1–2: аккаунты, пресеты, видимость моделей, HF Hub, свои модели. |
+| `9ca1294` | Статистика CLI, HF-токен, изоляция гостей, шаринг. |
+| `2bb835e` | cloudflared, Extras install payload, UI-пояснения. |
+| `e174f76` | Открытие локальных папок в Проводнике Windows. |
+| `da394dd` | Compare curtain, multi-LoRA, док, статистика, OrbitQuant/Nunchaku. |
+| `b658bae` | Gemini Dock, Topaz-инспектор, сортировка моделей, HF explorer, пресеты. |
+| `8784641` | ControlNet/Reference, live VRAM/RAM, history modal, prompt resize. |
+| `aa4980e` | Переименование в LazySD UI, FIT preview, sidebar, отключение QuantFunc по умолчанию. |
+
+**Правило:** после каждого значимого коммита добавляй запись в `CHANGELOG.md` и, если меняется архитектура или поведение, обновляй соответствующий раздел этого файла.
