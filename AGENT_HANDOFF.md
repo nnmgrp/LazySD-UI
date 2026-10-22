@@ -94,11 +94,18 @@ G:\QuantFunc-WebUI\
   - `flux_2_klein_9b_nunchaku`, `flux_2_klein_4b_nunchaku`, `flux_2_klein_9b_kv_nunchaku`, `flux_2_klein_9b_orbitquant`.
   - `qwen_image_2_1_nunchaku`.
   - `flux_3_image_klein_nunchaku`.
+- **FLUX.3 Nunchaku**: требует одновременно **Nunchaku >= 1.4.0** и **diffusers из GitHub main**
+  (`Flux3Transformer2DModel`, `ModularPipeline`). Стабильный PyPI `diffusers 0.41.0`
+  не подходит. Загрузка идёт через `Flux3DistilledModularPipeline`, локальный
+  `modular_model_index.json`, INT4-энкодер `NunchakuQwen3VLEncoderModel`; блок
+  `prompt_upsampler` отключается, пока WebUI не управляет отдельной 9B-моделью.
 - **Логирование CLI**: перед запуском выводится информационная строка вида:
   `[INFO] [SVDQ] Launching NUNCHAKU: 1024x1024, steps=16, cfg=1.0, sampler=euler, eta=0.0, seed=...`
 - **Отмена задачи**: вызов `Worker.cancel()` транслируется в `ExtrasWorker.cancel()`, который принудительно завершает подпроцесс (`proc.terminate()`), освобождая GPU VRAM.
 - **Текстовые энкодеры**:
-  Все модели Nunchaku используют общий текстовый энкодер `tonera/Qwen3-4B-text-Nunchaku`, который скачивается один раз в `models/cache/Qwen3-4B-text-Nunchaku` без дублирования.
+  - `flux_2_klein_*`: общий `tonera/Qwen3-4B-text-Nunchaku` в `models/cache/Qwen3-4B-text-Nunchaku`.
+  - `qwen_image_2_1_*`: Qwen3-VL-8B INT4.
+  - `flux_3_image_klein_nunchaku`: Qwen3-VL-4B INT4 (`NunchakuQwen3VLEncoderModel`).
 
 ### 3.2. Движок SDNQ / Diffusers (`backend/sdnq_engine.py`)
 - Реализует 3-этапный запуск для генерации на картах с 16 ГБ VRAM:
@@ -253,8 +260,11 @@ G:\QuantFunc-WebUI\
    - При строковых заменах через Python всегда открывай файл с точным указанием `newline=''` или используй нормализацию.
 3. **Шаблоны строковых литералов в JS**:
    - Внутри шейдеров `VS_SOURCE` и `FS_SOURCE` используются шаблонные строки с обратными кавычками (`` ` ``). Будь предельно внимателен: любая незакрытая кавычка ломает парсер всего файла `app.js` до следующей функции!
-4. **Совместимость Nunchaku для FLUX.3**:
-   - Веса `tonera/flux-3-image-klein-nunchaku` содержат архитектуру `mode_blocks.image...`, которая поддерживается только в **Nunchaku >= 1.4.0** (PyTorch 2.14). Если в окружении Nunchaku 1.3.0 — предупреждай пользователя о необходимости обновить движок или переключиться на `Flux.2 Klein (Nunchaku)`.
+4. **Совместимость FLUX.3: Nunchaku >= 1.4.0 _и_ diffusers main**:
+   - Веса `tonera/flux-3-image-klein-nunchaku` содержат архитектуру `mode_blocks.image...`, которая поддерживается только в **Nunchaku >= 1.4.0** (PyTorch 2.14).
+   - Даже с Nunchaku 1.4.1 стабильный `diffusers 0.41.0` падает с `NunchakuFlux3Transformer2DModel requires diffusers with Flux3Transformer2DModel`: нужен GitHub main (`0.42.0.dev0`), где есть `Flux3Transformer2DModel` и `ModularPipeline`.
+   - FLUX.3 нельзя загружать через `Flux2KleinPipeline`; используй `ModularPipeline.from_pretrained(...).blocks`, удали блок `prompt_upsampler`, затем `init_pipeline`, `update_components`, `load_components`, `to("cuda")`.
+   - Установщик Extras сам ставит diffusers main, если проба не находит `has_diffusers_flux3`/`has_modular_pipeline`. При ручной установке: `pip install -U "git+https://github.com/huggingface/diffusers.git"`.
 5. **Рассинхронизация `app.js` и `modules/*`**:
    - Активный фронтенд — монолит `frontend/js/app.js`, но HTML и ES6-модули могут содержать более новые id/методы. Именно так «пропала» LoRA в LoRA Hub (коммит `2e1b352`): панель не переключалась, а `renderLoraHubGrid`/`renderLoraLibrary` отсутствовали в монолите.
    - После любой правки UI проверяй, что методы и id совпадают в `index.html`, `app.js` и `modules/*`. Регрессия ловится тестом `test_lora_hub_frontend_sync` в `tests/test_latest_fixes.py`.
@@ -283,7 +293,8 @@ G:\QuantFunc-WebUI\
    ```powershell
    pytest G:\QuantFunc-WebUI\tests
    ```
-   *Все 28 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga, test_lora_hub_frontend_sync) должны проходить со статусом PASS (100%).*
+   *Все 29 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
+   test_flux3_nunchaku_support, test_lora_hub_frontend_sync) должны проходить со статусом PASS (100%).*
 3. **Проверка git-статуса**:
    ```powershell
    git -C G:\QuantFunc-WebUI status -s
@@ -299,6 +310,7 @@ G:\QuantFunc-WebUI\
 ### 2026-10-23
 | Коммит | Описание |
 |---|---|
+| `0470af4` | `fix(flux3)`: FLUX.3 Nunchaku через diffusers main и `ModularPipeline`; проба/установка `has_diffusers_flux3`, локальный `modular_model_index.json`, `NunchakuQwen3VLEncoderModel`, обход prompt upsampler, UI-проверка и тест `test_flux3_nunchaku_support`. |
 | `2e1b352` | `fix(lora)`: восстановлен LoRA Hub — переключение панели, `renderLoraHubGrid`/`renderLoraLibrary`, счётчик, вкладки модалки, HF-эндпоинты, путь `models_dir/loras`, регрессионный тест. |
 | `9ece51d` | `feat(halftone)`: стек слоёв, маски, виртуальный оригинал, WebGL2 FBO-композитор, защита от муара. |
 

@@ -3,12 +3,47 @@
 Журнал коммитов для людей и ИИ-агентов. Перед началом работы сверяйся с
 `git log --oneline -20`, потому что этот файл обновляется не автоматически.
 
-> **Последний код-коммит:** `2e1b352` — fix(lora): restore LoRA Hub rendering and local library detection (2026-10-23).
+> **Последний код-коммит:** `0470af4` — fix(flux3): load Nunchaku FLUX.3 via diffusers ModularPipeline (2026-10-23).
 > Документация (этот файл и ссылки в MD) идёт отдельным коммитом `docs: ...`, его хеш смотри в `git log -1`.
 
 ---
 
 ## 2026-10-23
+
+### `0470af4` — fix(flux3): load Nunchaku FLUX.3 via diffusers ModularPipeline
+
+Причина ошибки `[generate] Job cd33523f failed`:
+`NunchakuFlux3Transformer2DModel requires diffusers with Flux3Transformer2DModel`.
+В `envs/extras` стоял стабильный `diffusers 0.41.0` с PyPI: в нём есть
+`Flux2KleinPipeline`, но нет `Flux3Transformer2DModel` и `ModularPipeline`.
+FLUX.3 появился только в GitHub main (`0.42.0.dev0`, проверено на коммите
+`48cdbaef5ee3d718aaee392b44f2099ae511c4a5`). Установщик Extras проверял только
+`has_flux2_klein`, поэтому не обновлял diffusers для FLUX.3.
+
+Исправлено:
+- `backend/extras.py`: проба окружения теперь сообщает `has_diffusers_flux3` и
+  `has_modular_pipeline`; установщик ставит diffusers из GitHub main, если этих
+  классов нет.
+- FLUX.3 Nunchaku загружается через `ModularPipeline` / `Flux3DistilledModularPipeline`,
+  а не через `Flux2KleinPipeline`.
+- Локальный `modular_model_index.json` распознаётся как индекс пайплайна.
+- INT4-энкодер FLUX.3 загружается классом `NunchakuQwen3VLEncoderModel`
+  (`Qwen3-VL-4B`), а не Qwen2-VL/Qwen3-text.
+- Блок `prompt_upsampler` отключается: отдельная 9B-модель апсемплера пока не
+  управляется WebUI, поэтому промпт идёт в текстовый энкодер как есть.
+- Обработка результата ModularPipeline: список изображений / `output="images"`,
+  без неподдерживаемых `guidance_scale` и `callback_on_step_end`.
+- `frontend/js/app.js` и `modules/generator.js`: перед генерацией FLUX.3
+  проверяют не только Nunchaku >= 1.4.0, но и наличие diffusers main; показывают
+  понятное сообщение о переустановке Extras.
+- Добавлен тест `test_flux3_nunchaku_support`.
+- Bump cache-bust: `/js/app.js?v=20261023_02`.
+
+Проверка:
+- `pytest tests -q` → **29 passed**.
+- Все JS-файлы (9) прошли `node --check`.
+- Реальные задания через WebUI/backend: 512×512, 4 шага — 25.8 с;
+  1024×1024, 4 шага — 45.6 с. Оба изображения сохранены в `outputs/`.
 
 ### `2e1b352` — fix(lora): restore LoRA Hub rendering and local library detection
 
