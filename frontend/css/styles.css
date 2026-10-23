@@ -2650,7 +2650,12 @@ textarea {
 /* ---------- Dock Popovers ---------- */
 .dock-popover {
   pointer-events: auto;
-  align-self: flex-start;
+  /* Absolute positioning keeps the dock itself perfectly still when a
+     popover opens. In free-drag mode the wrapper is top-anchored, so an
+     in-flow popover used to push the whole dock downwards. */
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
   width: min(440px, 100%);
   background: rgba(24, 24, 28, 0.96);
   backdrop-filter: blur(20px);
@@ -2659,6 +2664,10 @@ textarea {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
   overflow: hidden;
   animation: dockPopIn 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dock-popover.dock-popover-below {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 @keyframes dockPopIn {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }

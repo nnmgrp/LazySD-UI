@@ -282,12 +282,29 @@ def test_backend_and_frontend_wiring():
     assert "wrap.addEventListener(\"pointerdown\"" not in app_js
     assert "dockDragEnabled" in app_js
     assert "dock.drag_enable" in app_js
+    assert "async _fetchWithRetry" in app_js
+    assert "[502, 503, 504]" in app_js
+    assert "renderEncodersTab(listEl)" in app_js
+    assert 'const filter = this.state.modelsTabFilter || "all";' in app_js
+    assert 'if (filter === "encoders")' in app_js
+    assert "#models-tab-filters .filter-chip" in app_js
+    assert "hidden_from_host === true || model.hidden_for_guests === true" in app_js
+    assert "dock-popover-below" in app_js
+
+    models_hub_js = (ROOT / "frontend" / "js" / "modules" / "models-hub.js").read_text(encoding="utf-8")
+    assert "#models-tab-filters .filter-chip" in models_hub_js
+    assert 'filter === "hidden"' in models_hub_js
 
     css = (ROOT / "frontend" / "css" / "styles.css").read_text(encoding="utf-8")
     free_drag = re.search(r"\.gemini-dock-wrap\.dock-free-drag\s*\{(.*?)\}", css, re.S)
     assert free_drag is not None
     assert "position: fixed !important" in free_drag.group(1)
     assert "left: auto !important" not in free_drag.group(1)
+    dock_popover = re.search(r"\.dock-popover\s*\{(.*?)\}", css, re.S)
+    assert dock_popover is not None
+    assert "position: absolute" in dock_popover.group(1)
+    assert "bottom: calc(100% + 8px)" in dock_popover.group(1)
+    assert ".dock-popover.dock-popover-below" in css
     assert ".queue-overlay" in css
     assert ".presence-indicator" in css
     assert ".history-page-btn" in css

@@ -199,6 +199,7 @@ export function renderModelsTab(appRef) {
     }
     if (filter === "installed") return m.installed === true;
     if (filter === "custom") return m.is_custom === true;
+    if (filter === "hidden") return m.hidden_from_host === true || m.hidden_for_guests === true;
     if (filter === "svdq") {
       return m.engine === "nunchaku"
         || (m.tags && m.tags.includes("svdq"))
@@ -284,9 +285,11 @@ export function onModelsTabSearch(query, appRef) {
 
 export function setModelsTabFilter(filter, btnEl, appRef) {
   const app = appRef || window.App;
-  if (app) app.state.modelsTabFilter = filter;
-  document.querySelectorAll("#models-filters .filter-chip").forEach(el => {
-    el.classList.toggle("active", el === btnEl);
+  const selected = filter || "all";
+  if (app) app.state.modelsTabFilter = selected;
+  document.querySelectorAll("#models-tab-filters .filter-chip, #models-filters .filter-chip").forEach(el => {
+    const value = el.dataset.tabFilter || el.dataset.filter || "";
+    el.classList.toggle("active", btnEl ? el === btnEl : value === selected);
   });
   renderModelsTab(app);
 }

@@ -59,6 +59,9 @@ const App = {
     modelPickerSearch: "",
     modelPickerFilter: "all",
     isModelPickerOpen: false,
+    modelsTabFilter: "all",
+    modelsTabSearch: "",
+    encoders: null,
     selectedVae: "texture_fix",
     activeDockPopover: null,
     hfInspectedRepo: null,
@@ -193,26 +196,44 @@ const App = {
   },
 
   // ---------- API helpers ----------
-  async apiGet(path) {
-    const res = await fetch(path);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
+  async _fetchWithRetry(path, options = {}, retries = 0) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      let res;
+      try {
+        res = await fetch(path, options);
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        lastError = error;
+        if (attempt >= retries) throw error;
+        await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        continue;
+      }
+
+      if (res.ok) return res;
+
+      const payload = await res.json().catch(() => ({}));
+      const error = new Error(payload.detail || res.statusText || `HTTP ${res.status}`);
+      error.status = res.status;
+      if (![502, 503, 504].includes(res.status) || attempt >= retries) throw error;
+      lastError = error;
+      await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
     }
+    throw lastError || new Error("Request failed");
+  },
+
+  async apiGet(path, retries = 2) {
+    const res = await this._fetchWithRetry(path, {}, retries);
     return res.json();
   },
 
-  async apiPost(path, body = null) {
+  async apiPost(path, body = null, retries = 0) {
     const opts = {
       method: "POST",
       headers: body ? { "Content-Type": "application/json" } : {},
     };
     if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(path, opts);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
-    }
+    const res = await this._fetchWithRetry(path, opts, retries);
     return res.json();
   },
 
@@ -949,7 +970,7 @@ const App = {
     this.toast("info", `${t("models.active_model")}: ${modelId}`);
   },
 
-  renderModelsTab() {
+  async renderModelsTab() {
     const listEl = document.getElementById("models-list");
     if (!listEl) return;
 
@@ -958,11 +979,57 @@ const App = {
       return;
     }
 
+    const filter = this.state.modelsTabFilter || "all";
+    if (filter === "encoders") {
+      await this.renderEncodersTab(listEl);
+      return;
+    }
+
+    const query = (this.state.modelsTabSearch || "").trim().toLowerCase();
+    const filtered = this.sortModelsList(this.state.models).filter(model => {
+      if (query) {
+        const haystack = [
+          model.id,
+          model.name,
+          model.family,
+          model.engine,
+          model.description,
+          ...(model.text_encoders || []).map(te => `${te.id || ""} ${te.name || ""} ${te.file || ""}`),
+          ...(model.transformers || []).map(varItem => varItem.id || ""),
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+
+      if (filter === "installed") return model.installed === true;
+      if (filter === "custom") return model.is_custom === true;
+      if (filter === "hidden") return model.hidden_from_host === true || model.hidden_for_guests === true;
+      if (filter === "svdq") {
+        return model.engine === "nunchaku"
+          || (model.tags && model.tags.includes("svdq"))
+          || (model.family && model.family.includes("svdq"))
+          || (model.transformers && model.transformers.some(item => item.backend === "nunchaku" || item.id.includes("svdq")));
+      }
+      if (filter === "sd_cpp") return model.engine === "sd_cpp" || model.id.includes("gguf");
+      if (filter === "sdnq") return model.engine === "sdnq" || model.id.includes("sdnq");
+      if (filter === "klein") {
+        return model.family === "klein" || model.family === "flux"
+          || model.id.includes("flux") || model.id.includes("klein");
+      }
+      if (filter === "qwen") return model.family === "qwen" || model.id.includes("qwen");
+      if (filter === "z-image") return model.family === "z-image" || model.id.includes("z_image");
+      return true;
+    });
+
+    if (!filtered.length) {
+      listEl.innerHTML = `<div class="placeholder-text" style="padding: 40px 0;">${t("models.no_results") || "Модели не найдены"}</div>`;
+      return;
+    }
+
     listEl.innerHTML = "";
     const grid = document.createElement("div");
     grid.className = "models-grid";
 
-    for (const model of this.sortModelsList(this.state.models)) {
+    for (const model of filtered) {
       const isDisabled = model.disabled === true;
       const card = document.createElement("div");
       card.className = `model-card ${isDisabled ? "model-card-qf-disabled" : ""}`;
@@ -1069,6 +1136,101 @@ const App = {
     }
 
     listEl.appendChild(grid);
+  },
+
+  async renderEncodersTab(listEl) {
+    if (!listEl) return;
+    listEl.innerHTML = `<div class="placeholder-text">Загрузка энкодеров...</div>`;
+
+    try {
+      if (!Array.isArray(this.state.encoders)) {
+        this.state.encoders = await this.apiGet("/api/encoders");
+      }
+
+      const query = (this.state.modelsTabSearch || "").trim().toLowerCase();
+      const encoders = (this.state.encoders || []).filter(enc => {
+        if (!query) return true;
+        return [enc.name, enc.file, enc.repo_id, enc.precision]
+          .filter(Boolean)
+          .some(value => String(value).toLowerCase().includes(query));
+      });
+
+      if (!encoders.length) {
+        listEl.innerHTML = `<div class="placeholder-text" style="padding: 40px 0;">Энкодеры не найдены</div>`;
+        return;
+      }
+
+      listEl.innerHTML = "";
+      const grid = document.createElement("div");
+      grid.className = "encoders-grid";
+
+      for (const enc of encoders) {
+        const card = document.createElement("div");
+        card.className = "encoder-card";
+
+        const statusBadge = enc.installed
+          ? `<span class="badge-installed">✓ Установлен</span>`
+          : `<span class="badge-missing">⬇ Не скачан</span>`;
+        const sizeText = Number.isFinite(Number(enc.size_gb)) && Number(enc.size_gb) > 0
+          ? `${Number(enc.size_gb).toFixed(1)} GB`
+          : "";
+        const usedBy = Array.isArray(enc.used_by) && enc.used_by.length
+          ? `<div class="encoder-used-by">${enc.used_by.map(model =>
+              `<span class="encoder-used-tag">${escapeHtml(model.name || model.id || "")}</span>`
+            ).join("")}</div>`
+          : "";
+        const actionBtn = enc.installed
+          ? `<button class="card-action-btn active" style="width: 100%;" disabled>✓ Установлен в кэш</button>`
+          : `<button class="card-action-btn download" style="width: 100%;" onclick="App.downloadSharedEncoder('${escapeHtml(enc.repo_id)}', '${escapeHtml(enc.file_path || enc.file)}', '${escapeHtml(enc.id)}', this)">⬇ Скачать энкодер${sizeText ? ` (${sizeText})` : ""}</button>`;
+
+        card.innerHTML = `
+          <div>
+            <div class="encoder-card-header">
+              <span class="encoder-title">${escapeHtml(enc.name || enc.file || enc.id)}</span>
+              ${statusBadge}
+            </div>
+            <div class="encoder-meta">
+              <span>📁 Файл: <code>${escapeHtml(enc.file || "")}</code></span>
+              <span>🌐 Репозиторий: <code>${escapeHtml(enc.repo_id || "")}</code></span>
+              <span>⚙ Формат: <code>${escapeHtml(enc.precision || "int4")}</code>${sizeText ? ` · ${sizeText}` : ""}</span>
+            </div>
+            ${usedBy}
+          </div>
+          <div style="margin-top: 12px;">
+            ${actionBtn}
+          </div>
+        `;
+        grid.appendChild(card);
+      }
+
+      listEl.appendChild(grid);
+    } catch (err) {
+      listEl.innerHTML = `<div class="placeholder-text" style="color: #f87171;">Ошибка: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  async downloadSharedEncoder(repoId, filePath, teId, btnEl) {
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = "Downloading...";
+    }
+    try {
+      const result = await this.apiPost("/api/encoders/download", {
+        repo_id: repoId,
+        file_path: filePath,
+      });
+      this.state.encoders = null;
+      this.toast("info", "Скачивание энкодера начато...");
+      if (result.job_id && this.startDownloadPolling) {
+        this.startDownloadPolling(result.job_id);
+      }
+    } catch (err) {
+      this.toast("error", "Ошибка скачивания: " + err.message);
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.textContent = "⬇ Скачать энкодер";
+      }
+    }
   },
 
   async downloadModelVariant(modelId, variantId, btnEl) {
@@ -1835,8 +1997,9 @@ const App = {
           if (dlBtn) { dlBtn.disabled = false; dlBtn.style.display = "none"; }
           if (overlay) overlay.style.display = "none";
           this.toast("success", "Model files downloaded ✓");
-          // Refresh model state
-          await this.onModelChange();
+          // Refresh model/encoder metadata so the Models Hub flips to "Installed".
+          this.state.encoders = null;
+          await this.refreshConfig();
         } else if (status.status === "error") {
           clearInterval(interval);
           if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = "⬇ Download model"; }
@@ -3257,15 +3420,31 @@ const App = {
     if (el) {
       this.updateDockPills();
       if (name === "presets") this.renderPresetsUI();
+      el.classList.remove("dock-popover-below");
       el.style.display = "block";
       this.state.activeDockPopover = name;
+
+      // Keep the popover inside the viewport without changing dock geometry.
+      const wrap = document.getElementById("gemini-dock-wrap");
+      const dock = document.getElementById("gemini-dock");
+      if (wrap && dock) {
+        const dockRect = dock.getBoundingClientRect();
+        const spaceAbove = dockRect.top - 12;
+        const spaceBelow = window.innerHeight - dockRect.bottom - 12;
+        if (el.offsetHeight > spaceAbove && spaceBelow > spaceAbove) {
+          el.classList.add("dock-popover-below");
+        }
+      }
     }
   },
 
   closeAllDockPopovers() {
     ["dock-popover-model", "dock-popover-res", "dock-popover-params", "dock-popover-presets"].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.style.display = "none";
+      if (el) {
+        el.style.display = "none";
+        el.classList.remove("dock-popover-below");
+      }
     });
     this.state.activeDockPopover = null;
   },
@@ -5542,7 +5721,7 @@ function resetViewportZoom(mode) {
 // --- INTEGRATED HALFTONE STUDIO GT ENGINE (WebGL2 + 100% Full-Res) ---
 // ============================================================
 (function() {
-  const apiPost = (url, body) => App.apiPost(url, body);
+  const apiPost = (url, body, retries = 0) => App.apiPost(url, body, retries);
   const apiGet = (url) => App.apiGet(url);
   const toast = (type, msg) => App.toast(type, msg);
 
@@ -6605,7 +6784,7 @@ async function syncHalftoneBackendSilent(appRef) {
       save: false,
       preview_max_side: 0,
     };
-    const res = await apiPost("/api/halftone/process", payload);
+    const res = await apiPost("/api/halftone/process", payload, 1);
     if (res && res.preview_data_url) {
       st.resultDataUrl = res.preview_data_url;
       const imgEl = document.getElementById("ht-preview-img");
@@ -6637,7 +6816,7 @@ async function runHalftonePreview(immediate = false, appRef) {
       layers: layersPayload,
       save: false,
       preview_max_side: 0, // 100% Full-Res WYSIWYG
-    });
+    }, 1);
 
     st.resultDataUrl = res.preview_data_url;
     st.origWidth = res.orig_width || res.width;
@@ -7897,7 +8076,7 @@ function useCanvasImageInTool(tool, appRef) {
 // --- INTEGRATED MANGA SCREEN AI ENGINE ---
 // ============================================================
 (function() {
-  const apiPost = (url, body) => App.apiPost(url, body);
+  const apiPost = (url, body, retries = 0) => App.apiPost(url, body, retries);
   const apiGet = (url) => App.apiGet(url);
   const toast = (type, msg) => App.toast(type, msg);
 
@@ -8498,11 +8677,17 @@ Object.assign(App, {
     this.renderModelsTab();
   },
 
-  setModelsTabFilter(filter) {
-    this.state.modelsTabFilter = filter || "all";
-    document.querySelectorAll("#models-hub-filters .filter-pill").forEach(p => {
-      p.classList.toggle("active", p.dataset.filter === filter);
+  syncModelsTabFilterButtons(btnEl = null) {
+    const filter = this.state.modelsTabFilter || "all";
+    document.querySelectorAll("#models-tab-filters .filter-chip, #models-filters .filter-chip").forEach(chip => {
+      const value = chip.dataset.tabFilter || chip.dataset.filter || "";
+      chip.classList.toggle("active", btnEl ? chip === btnEl : value === filter);
     });
+  },
+
+  setModelsTabFilter(filter, btnEl = null) {
+    this.state.modelsTabFilter = filter || "all";
+    this.syncModelsTabFilterButtons(btnEl);
     this.renderModelsTab();
   },
 
@@ -8533,7 +8718,9 @@ Object.assign(App, {
 
   goToModelInHub(modelId) {
     this.switchTab("models");
+    this.state.modelsTabFilter = "all";
     this.state.modelsTabSearch = modelId || "";
+    this.syncModelsTabFilterButtons();
     const searchInput = document.getElementById("models-tab-search");
     if (searchInput) searchInput.value = modelId || "";
     this.renderModelsTab();
