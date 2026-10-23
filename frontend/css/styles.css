@@ -518,6 +518,83 @@ textarea {
   z-index: 5;
 }
 
+/* ---------- GPU queue overlay ---------- */
+.queue-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 9, 12, 0.58);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.queue-card {
+  width: min(390px, 100%);
+  padding: 26px 26px 22px;
+  border-radius: 18px;
+  border: 1px solid rgba(124, 58, 237, 0.38);
+  background: rgba(24, 25, 32, 0.97);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(124, 58, 237, 0.12);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.queue-icon {
+  font-size: 34px;
+  line-height: 1;
+  animation: queuePulse 1.8s ease-in-out infinite;
+}
+@keyframes queuePulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+.queue-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.queue-message {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.queue-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.queue-stats strong {
+  color: #c4b5fd;
+  font-size: 16px;
+  font-family: var(--font-mono);
+}
+.queue-cancel-btn {
+  margin-top: 8px;
+  padding: 8px 18px;
+  border-radius: 9px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.queue-cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.24);
+  color: #fff;
+  border-color: var(--error);
+}
+
 .progress-bar {
   width: 320px;
   height: 8px;
@@ -1141,6 +1218,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
   gap: 16px;
@@ -1179,6 +1257,59 @@ textarea {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 16px;
   padding: 20px;
+  transition: opacity 0.15s ease;
+}
+
+.history-grid.history-loading {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 14px 20px 24px;
+}
+
+.history-page-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.history-page-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+.history-page-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.history-page-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.history-page-gap {
+  color: var(--text-dim);
+  padding: 0 2px;
+}
+.history-page-info {
+  margin-left: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .history-item {
@@ -3093,6 +3224,80 @@ textarea {
   color: #c4b5fd;
 }
 
+/* Connected users indicator + host monitoring list */
+.presence-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  color: #6ee7b7;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.9);
+}
+.presence-indicator.presence-many {
+  background: rgba(124, 58, 237, 0.13);
+  border-color: rgba(124, 58, 237, 0.4);
+  color: #c4b5fd;
+}
+.presence-indicator.presence-many .presence-dot {
+  background: #a78bfa;
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.9);
+}
+.presence-indicator.presence-offline {
+  opacity: 0.5;
+  filter: grayscale(0.7);
+}
+.presence-settings-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #6ee7b7;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.presence-users-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0 2px;
+}
+.presence-user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+.presence-user-chip small {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.presence-settings-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* History filter chips */
 .history-filter-chip {
   padding: 4px 11px;
@@ -4207,8 +4412,32 @@ body:not(.role-guest) #guest-mode-banner {
   position: fixed !important;
   transform: none !important;
   bottom: auto !important;
-  left: auto !important;
+  /* NOTE: do not set left/right here. The drag coordinates are inline styles
+     written by App.initDockDrag; !important left:auto used to win over them
+     and pinned the dock to the wrong edge. */
   right: auto !important;
   margin: 0 !important;
   z-index: 120 !important;
+}
+.gemini-dock-wrap.dock-free-drag .gemini-dock-drag-handle {
+  cursor: grab;
+}
+.gemini-dock-wrap.dock-dragging,
+.gemini-dock-wrap.dock-dragging .gemini-dock {
+  transition: none !important;
+  user-select: none;
+}
+.gemini-dock-wrap.dock-dragging .gemini-dock-drag-handle {
+  cursor: grabbing;
+}
+.dock-ctrl-btn.active,
+.dock-ctrl-btn[aria-pressed="true"] {
+  background: rgba(124, 58, 237, 0.22);
+  color: #c4b5fd;
+  box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.45);
+}
+.setting-btn.active {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(124, 58, 237, 0.5);
+  color: #c4b5fd;
 }

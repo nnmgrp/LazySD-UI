@@ -285,11 +285,14 @@ class CacheManager:
         shutil.copy2(image_path, dest)
         return dest
 
-    def list_outputs(self, limit: int = 50) -> list[Path]:
-        """List recent output files, newest first."""
+    def list_outputs(self, limit: int | None = 50) -> list[Path]:
+        """List recent output files, newest first.
+
+        ``limit=None`` returns all outputs (used by the paginated History API).
+        """
         output_dir = get_settings().output_dir
         if not output_dir.exists():
             return []
         files = [f for f in output_dir.iterdir() if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
         files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-        return files[:limit]
+        return files if limit is None else files[:limit]

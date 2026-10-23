@@ -42,6 +42,17 @@ const App = {
     selectedVariant: null,
     historyItems: [],
     selectedHistoryItem: null,
+    historyPage: 1,
+    historyPageSize: 24,
+    historyTotal: 0,
+    historyPages: 0,
+    historyLoading: false,
+    historyRequestSeq: 0,
+    historySearchTimer: null,
+    historyServerPaginated: false,
+    presence: null,
+    presenceTimer: null,
+    queueJobId: null,
     img2imgRef: null,
     lastPreviewName: null,
     lastPreviewUrl: null,
@@ -62,6 +73,9 @@ const App = {
     dockMinimized: false,
     dockOpacity: 0.88,
     dockBlur: 20,
+    dockDragEnabled: false,
+    dockCustomX: null,
+    dockCustomY: null,
     shareStatus: null,
     extrasStatus: null,
     account: null,
@@ -110,6 +124,8 @@ const App = {
     try { this.initCompareEvents(); } catch (e) { console.warn("[init] initCompareEvents error:", e); }
     try { this.loadShareStatus(); } catch (e) { console.warn("[init] loadShareStatus error:", e); }
     try { this.refreshExtrasStatus(); } catch (e) { console.warn("[init] refreshExtrasStatus error:", e); }
+    try { this.initHistorySettings(); } catch (e) { console.warn("[init] initHistorySettings error:", e); }
+    try { this.initPresence(); } catch (e) { console.warn("[init] initPresence error:", e); }
     try { this.loadHistory(); } catch (e) { console.warn("[init] loadHistory error:", e); }
     try { this.bindEvents(); } catch (e) { console.warn("[init] bindEvents error:", e); }
     try { this.initAllViewportZoomPan(); } catch (e) { console.warn("[init] initAllViewportZoomPan error:", e); }
@@ -301,6 +317,7 @@ const App = {
       if (hideUninstalledChk && config.settings) {
         hideUninstalledChk.checked = Boolean(config.settings.hide_uninstalled_in_generator);
       }
+      if (config.presence) this.applyPresence(config.presence);
     } catch (e) {
       console.error("[app] Failed to load config:", e);
       this.toast("error", t("errors.network_error") + ": " + e.message);
@@ -328,8 +345,99 @@ const App = {
       this.renderModels();
       this.updateEngineStatusUI();
       this.updateDockPills();
+      if (config.presence) this.applyPresence(config.presence);
     } catch (e) {
       console.error("[app] Failed to refresh config:", e);
+    }
+  },
+
+  // ---------- Connected users / presence ----------
+  async initPresence() {
+    if (this.state.config?.presence) this.applyPresence(this.state.config.presence);
+    this.heartbeatPresence();
+    if (!this.state.presenceTimer) {
+      this.state.presenceTimer = setInterval(() => this.heartbeatPresence(), 20000);
+    }
+    if (!this._presenceVisibilityBound) {
+      this._presenceVisibilityBound = true;
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) this.heartbeatPresence();
+      });
+    }
+  },
+
+  async heartbeatPresence() {
+    try {
+      const data = await this.apiPost("/api/presence/heartbeat");
+      this.applyPresence(data);
+    } catch (e) {
+      const indicator = document.getElementById("presence-indicator");
+      if (indicator) {
+        indicator.classList.add("presence-offline");
+        indicator.title = t("presence.offline") || "Мониторинг подключений недоступен";
+      }
+    }
+  },
+
+  applyPresence(data) {
+    this.state.presence = data || null;
+    const indicator = document.getElementById("presence-indicator");
+    const countEl = document.getElementById("presence-count");
+    const enabled = Boolean(data && data.enabled !== false);
+    if (indicator) {
+      indicator.style.display = enabled ? "inline-flex" : "none";
+      indicator.classList.toggle("presence-offline", false);
+      indicator.classList.toggle("presence-many", enabled && Number(data?.count || 0) > 1);
+      if (enabled) {
+        const users = Array.isArray(data?.users) ? data.users : [];
+        const names = users.map(u => u.username).filter(Boolean).slice(0, 8).join(", ");
+        indicator.title = names
+          ? `${t("presence.connected", { count: data.count })} — ${names}`
+          : t("presence.connected", { count: data?.count || 0 });
+      }
+    }
+    if (countEl) countEl.textContent = String(enabled ? (data?.count || 0) : 0);
+    this.renderPresenceSettings(data);
+  },
+
+  renderPresenceSettings(data) {
+    const checkbox = document.getElementById("setting-monitor-connections");
+    if (checkbox) checkbox.checked = data ? data.enabled !== false : Boolean(this.state.settings?.monitor_connections);
+    const countEl = document.getElementById("presence-settings-count");
+    const listEl = document.getElementById("presence-users-list");
+    if (!listEl) return;
+    const enabled = Boolean(data && data.enabled !== false);
+    if (!enabled) {
+      if (countEl) countEl.textContent = "0";
+      listEl.innerHTML = `<span class="presence-settings-empty">${escapeHtml(t("presence.disabled"))}</span>`;
+      return;
+    }
+    const users = Array.isArray(data?.users) ? data.users : [];
+    if (countEl) countEl.textContent = String(data?.count || users.length || 0);
+    if (!users.length) {
+      listEl.innerHTML = `<span class="presence-settings-empty">${escapeHtml(t("presence.none"))}</span>`;
+      return;
+    }
+    listEl.innerHTML = users.map(user => {
+      const role = user.is_guest ? "Гость" : "Хост";
+      const seen = Number(user.last_seen_ago || 0);
+      const seenText = seen < 5 ? "сейчас" : `${Math.round(seen)} сек. назад`;
+      return `<span class="presence-user-chip" title="${escapeHtml(seenText)}">${user.is_guest ? "👤" : "👑"} ${escapeHtml(user.username)} <small>${escapeHtml(role)}</small></span>`;
+    }).join("");
+  },
+
+  async onSettingMonitorConnectionsChange(checked) {
+    try {
+      await this.apiPatch("/api/settings", { monitor_connections: Boolean(checked) });
+      if (this.state.settings) this.state.settings.monitor_connections = Boolean(checked);
+      if (checked) {
+        await this.heartbeatPresence();
+      } else {
+        this.applyPresence({ enabled: false, count: 0, users: [] });
+      }
+      this.toast("info", checked ? t("presence.enabled_toast") : t("presence.disabled_toast"));
+    } catch (e) {
+      this.toast("error", e.message || t("presence.save_error"));
     }
   },
 
@@ -1148,7 +1256,13 @@ const App = {
     // History search filter
     const historySearch = document.getElementById("history-search");
     if (historySearch) {
-      historySearch.addEventListener("input", () => this.renderHistory());
+      historySearch.addEventListener("input", () => {
+        if (this.state.historySearchTimer) clearTimeout(this.state.historySearchTimer);
+        this.state.historySearchTimer = setTimeout(() => {
+          this.state.historyPage = 1;
+          this.loadHistory(1);
+        }, 300);
+      });
     }
 
     // Global dragover & drop prevention so dropped files NEVER open in the browser
@@ -1290,7 +1404,7 @@ const App = {
 
     // Auto-load history, models, or templates tab
     if (tabName === "history") {
-      this.loadHistory();
+      this.loadHistory(this.state.historyPage);
     } else if (tabName === "models") {
       this.renderModelsTab();
     } else if (tabName === "templates") {
@@ -1885,7 +1999,10 @@ const App = {
       const result = await this.apiPost("/api/generate", params);
       this.state.currentJob = result.job_id;
 
-      // Poll for status
+      // Poll for status. The queue overlay appears only if the first server
+      // response is actually "queued"; a job that owns the GPU slot must not
+      // flash a false "GPU busy" popup while the worker initializes.
+
       this.startPolling(result.job_id);
 
     } catch (e) {
@@ -1947,7 +2064,7 @@ const App = {
       try {
         const status = await this.apiGet(`/api/jobs/${jobId}`);
         consecutiveErrors = 0;
-        this.updateProgress(status);
+        this.updateProgress(status, jobId);
 
         if (status.status === "complete") {
           this.stopPolling();
@@ -1988,15 +2105,62 @@ const App = {
   },
 
   async cancelJob() {
-    if (!this.state.currentJob) return;
+    const jobId = this.state.currentJob || this.state.queueJobId;
+    if (!jobId) return;
     try {
-      await this.apiPost(`/api/jobs/${this.state.currentJob}/cancel`);
+      await this.apiPost(`/api/jobs/${jobId}/cancel`);
     } catch (e) {
       console.error("[app] Cancel failed:", e);
+      this.toast("error", e.message || t("status.cancelled"));
     }
   },
 
-  updateProgress(status) {
+  async cancelQueueJob() {
+    const jobId = this.state.queueJobId;
+    if (!jobId) {
+      await this.cancelJob();
+      return;
+    }
+    try {
+      await this.apiPost(`/api/jobs/${jobId}/cancel`);
+      this.hideQueueStatus();
+      this.toast("info", t("queue.cancelled"));
+    } catch (e) {
+      this.toast("error", e.message || t("queue.cancel_failed"));
+    }
+  },
+
+  showQueueStatus(status, jobId = null) {
+    const overlay = document.getElementById("queue-overlay");
+    if (!overlay) return;
+    this.state.queueJobId = jobId || this.state.currentJob || this.state.queueJobId;
+    const position = Math.max(1, Number(status.queue_position || 1));
+    const total = Math.max(position, Number(status.queue_size || position));
+    const posEl = document.getElementById("queue-position");
+    const totalEl = document.getElementById("queue-total");
+    const messageEl = document.getElementById("queue-message");
+    if (posEl) posEl.textContent = String(position);
+    if (totalEl) totalEl.textContent = String(total);
+    if (messageEl) {
+      messageEl.textContent = t("queue.initial") || "Ожидание свободного GPU...";
+    }
+    overlay.style.display = "flex";
+    const statusPill = document.getElementById("status-pill");
+    const statusMsg = document.getElementById("status-message");
+    if (statusPill) {
+      statusPill.className = "status-pill warning";
+      statusPill.textContent = t("queue.short");
+    }
+    if (statusMsg) statusMsg.textContent = t("queue.waiting", { position, total });
+  },
+
+  hideQueueStatus() {
+    const overlay = document.getElementById("queue-overlay");
+    if (overlay) overlay.style.display = "none";
+    this.state.queueJobId = null;
+  },
+
+  updateProgress(status, jobId = null) {
     const overlay = document.getElementById("progress-overlay");
     const fill = document.getElementById("progress-fill");
     const text = document.getElementById("progress-text");
@@ -2005,6 +2169,12 @@ const App = {
 
     if (!overlay || !fill || !text) return;
 
+    if (status.status === "queued") {
+      overlay.style.display = "none";
+      this.showQueueStatus(status, jobId);
+      return;
+    }
+    this.hideQueueStatus();
     overlay.style.display = "flex";
 
     const pct = (status.progress || 0) * 100;
@@ -2039,7 +2209,7 @@ const App = {
       btn.classList.add("busy");
       btn.disabled = true;
       btn.textContent = t("controls.busy");
-      if (overlay) overlay.style.display = "flex";
+      if (overlay) overlay.style.display = "none";
       if (statusPill) {
         statusPill.className = "status-pill warning";
         statusPill.textContent = t("controls.busy") || "Generating...";
@@ -2049,6 +2219,7 @@ const App = {
       btn.disabled = false;
       btn.textContent = t("controls.generate");
       if (overlay) overlay.style.display = "none";
+      this.hideQueueStatus();
       if (statusPill) {
         statusPill.className = "status-pill success";
         statusPill.textContent = t("status.ready") || "Ready";
@@ -2085,55 +2256,141 @@ const App = {
   },
 
   // ---------- History ----------
-  async loadHistory() {
+  initHistorySettings() {
     try {
-      const items = await this.apiGet("/api/history");
-      this.state.historyItems = items || [];
+      const saved = parseInt(localStorage.getItem("lazysd_history_page_size"), 10);
+      if ([12, 24, 48].includes(saved)) this.state.historyPageSize = saved;
+    } catch (_) {}
+    const select = document.getElementById("history-page-size");
+    if (select) select.value = String(this.state.historyPageSize);
+  },
+
+  async loadHistory(page = this.state.historyPage) {
+    const grid = document.getElementById("history-grid");
+    if (grid) grid.classList.add("history-loading");
+    const seq = ++this.state.historyRequestSeq;
+    this.state.historyLoading = true;
+    try {
+      const size = this.state.historyPageSize || 24;
+      const filter = this.state.historyFilter || "all";
+      const query = (document.getElementById("history-search")?.value || "").trim();
+      const params = new URLSearchParams({
+        page: String(page || 1),
+        page_size: String(size),
+        filter,
+      });
+      if (query) params.set("q", query);
+
+      const data = await this.apiGet(`/api/history?${params.toString()}`);
+      if (seq !== this.state.historyRequestSeq) return;
+
+      if (Array.isArray(data)) {
+        // Backward-compatible fallback for an older backend / cached response.
+        let items = data;
+        const myId = this.state.account?.id || "host";
+        if (filter === "mine") items = items.filter(it => (it.owner_id || "host") === myId);
+        else if (filter === "guests") items = items.filter(it => !["host", "host_remote"].includes(it.owner_id || "host"));
+        else if (filter === "shared") items = items.filter(it => Boolean(it.shared));
+        if (query) {
+          const needle = query.toLowerCase();
+          items = items.filter(it =>
+            (it.prompt || "").toLowerCase().includes(needle) ||
+            (it.model_id || "").toLowerCase().includes(needle) ||
+            (it.name || "").toLowerCase().includes(needle) ||
+            (it.owner_name || "").toLowerCase().includes(needle)
+          );
+        }
+        const pages = items.length ? Math.ceil(items.length / size) : 0;
+        const current = pages ? Math.max(1, Math.min(pages, page || 1)) : 1;
+        this.state.historyServerPaginated = false;
+        this.state.historyTotal = items.length;
+        this.state.historyPages = pages;
+        this.state.historyPage = current;
+        this.state.historyItems = items.slice((current - 1) * size, current * size);
+      } else {
+        this.state.historyServerPaginated = true;
+        this.state.historyItems = Array.isArray(data.items) ? data.items : [];
+        this.state.historyTotal = Number(data.total || 0);
+        this.state.historyPages = Number(data.pages || 0);
+        this.state.historyPage = Number(data.page || 1);
+        this.state.historyPageSize = Number(data.page_size || size);
+      }
+
       const countEl = document.getElementById("history-count");
-      if (countEl) countEl.textContent = this.state.historyItems.length;
+      if (countEl) countEl.textContent = String(this.state.historyTotal || 0);
       this.renderHistory();
     } catch (e) {
+      if (seq !== this.state.historyRequestSeq) return;
       console.error("[app] Failed to load history:", e);
       this.toast("error", t("errors.history_load_failed") + ": " + e.message);
+    } finally {
+      if (seq === this.state.historyRequestSeq) {
+        this.state.historyLoading = false;
+        if (grid) grid.classList.remove("history-loading");
+      }
     }
   },
 
   setHistoryFilter(filter) {
     this.state.historyFilter = filter || "all";
+    this.state.historyPage = 1;
     document.querySelectorAll(".history-filter-chip").forEach(btn => {
       btn.classList.toggle("active", btn.dataset.filter === this.state.historyFilter);
     });
-    this.renderHistory();
+    this.loadHistory(1);
+  },
+
+  setHistoryPage(page) {
+    const target = parseInt(page, 10);
+    if (!target || target === this.state.historyPage) return;
+    if (target < 1 || (this.state.historyPages && target > this.state.historyPages)) return;
+    this.state.historyPage = target;
+    this.loadHistory(target);
+    const panel = document.getElementById("tab-history");
+    if (panel) panel.scrollTop = 0;
+  },
+
+  setHistoryPageSize(sz) {
+    const size = parseInt(sz, 10);
+    this.state.historyPageSize = [12, 24, 48].includes(size) ? size : 24;
+    this.state.historyPage = 1;
+    try {
+      localStorage.setItem("lazysd_history_page_size", String(this.state.historyPageSize));
+    } catch (_) {}
+    this.loadHistory(1);
+  },
+
+  renderHistoryPagination() {
+    const el = document.getElementById("history-pagination");
+    if (!el) return;
+    const pages = Number(this.state.historyPages || 0);
+    const page = Number(this.state.historyPage || 1);
+    if (pages <= 1) {
+      el.innerHTML = "";
+      el.style.display = "none";
+      return;
+    }
+
+    const numbers = new Set([1, pages, page, page - 2, page - 1, page + 1, page + 2]);
+    const sorted = [...numbers].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+    let html = `<button type="button" class="history-page-btn" onclick="App.setHistoryPage(${page - 1})" ${page <= 1 ? "disabled" : ""} title="Назад">‹</button>`;
+    let previous = 0;
+    for (const number of sorted) {
+      if (previous && number - previous > 1) html += `<span class="history-page-gap">…</span>`;
+      html += `<button type="button" class="history-page-btn ${number === page ? "active" : ""}" onclick="App.setHistoryPage(${number})" ${number === page ? "aria-current=\"page\"" : ""}>${number}</button>`;
+      previous = number;
+    }
+    html += `<button type="button" class="history-page-btn" onclick="App.setHistoryPage(${page + 1})" ${page >= pages ? "disabled" : ""} title="Вперёд">›</button>`;
+    html += `<span class="history-page-info">${page} / ${pages} · всего ${this.state.historyTotal}</span>`;
+    el.innerHTML = html;
+    el.style.display = "flex";
   },
 
   renderHistory() {
     const grid = document.getElementById("history-grid");
     if (!grid) return;
 
-    const query = (document.getElementById("history-search")?.value || "").toLowerCase().trim();
-    let items = this.state.historyItems || [];
-
-    // Filter by author/shared filter
-    const activeFilter = this.state.historyFilter || "all";
-    const myId = this.state.account?.id || "host";
-
-    if (activeFilter === "mine") {
-      items = items.filter(it => (it.owner_id || "host") === myId);
-    } else if (activeFilter === "guests") {
-      items = items.filter(it => (it.owner_id || "host") !== "host");
-    } else if (activeFilter === "shared") {
-      items = items.filter(it => Boolean(it.shared));
-    }
-
-    if (query) {
-      items = items.filter(item =>
-        (item.prompt || "").toLowerCase().includes(query) ||
-        (item.model_id || "").toLowerCase().includes(query) ||
-        (item.name || "").toLowerCase().includes(query) ||
-        (item.owner_name || "").toLowerCase().includes(query)
-      );
-    }
-
+    const items = this.state.historyItems || [];
     grid.innerHTML = "";
 
     if (!items.length) {
@@ -2142,6 +2399,7 @@ const App = {
           <div class="placeholder-text" data-i18n="history.empty">${t("history.empty")}</div>
         </div>
       `;
+      this.renderHistoryPagination();
       return;
     }
 
@@ -2154,7 +2412,7 @@ const App = {
       }) : "";
 
       const promptDisplay = item.prompt ? item.prompt : item.name;
-      const isHostItem = (item.owner_id || "host") === "host";
+      const isHostItem = ["host", "host_remote"].includes(item.owner_id || "host");
       const authorBadge = isHostItem ? "👑 Хост" : `👤 ${escapeHtml(item.owner_name || "Гость")}`;
       const sharedBadge = item.shared ? `<span class="history-shared-badge" title="Видна всем пользователям">🌐 Общая</span>` : "";
 
@@ -2181,6 +2439,7 @@ const App = {
       card.addEventListener("click", () => this.openHistoryModal(item));
       grid.appendChild(card);
     }
+    this.renderHistoryPagination();
   },
 
   openHistoryModal(item) {
@@ -2223,7 +2482,7 @@ const App = {
     if (backendEl) backendEl.textContent = item.backend || "—";
     if (timeEl) timeEl.textContent = item.generation_time_sec ? `${item.generation_time_sec}s` : "—";
 
-    const isHostItem = (item.owner_id || "host") === "host";
+    const isHostItem = ["host", "host_remote"].includes(item.owner_id || "host");
     const authorName = isHostItem ? "👑 Хост" : `👤 ${item.owner_name || "Гость"}`;
     if (authorEl) authorEl.textContent = authorName;
     if (sharedStatusEl) {
@@ -3868,77 +4127,109 @@ const App = {
   initDockDrag() {
     const wrap = document.getElementById("gemini-dock-wrap");
     const handle = document.getElementById("dock-drag-handle");
-    if (!wrap || this._dockDragInit) return;
+    if (!wrap || !handle || this._dockDragInit) return;
     this._dockDragInit = true;
 
-    if (handle) {
-      handle.addEventListener("dblclick", (e) => {
-        e.stopPropagation();
-        this.setDockPosition("center");
-        this.toast("info", "Док сброшен в нижний центр");
-      });
-    }
+    handle.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      this.resetDockPosition();
+    });
 
     let isDragging = false;
     let startX = 0, startY = 0, origX = 0, origY = 0;
 
-    wrap.addEventListener("pointerdown", (e) => {
-      const isFromHandle = handle && (e.target === handle || handle.contains(e.target));
-      if (!isFromHandle && !this.state.dockDragEnabled) return;
-      if (e.target.closest("button") || e.target.closest("input") || e.target.closest("textarea") || e.target.closest("select")) {
-        return;
-      }
-      this.state.dockDragEnabled = true;
+    // Drag starts ONLY from the ⋮⋮ handle, and only when the explicit drag
+    // toggle is enabled. Popovers, prompts and buttons therefore never fight
+    // with the dock drag gesture.
+    handle.addEventListener("pointerdown", (e) => {
+      if (!this.state.dockDragEnabled) return;
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
       const rect = wrap.getBoundingClientRect();
       origX = rect.left;
       origY = rect.top;
-      try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
       wrap.classList.add("dock-dragging");
-      wrap.classList.add("dock-free-drag");
     });
 
-    wrap.addEventListener("pointermove", (e) => {
-      if (!isDragging || !this.state.dockDragEnabled) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      const maxX = window.innerWidth - wrap.offsetWidth;
-      const maxY = window.innerHeight - wrap.offsetHeight;
-      const nx = Math.max(8, Math.min(maxX - 8, origX + dx));
-      const ny = Math.max(8, Math.min(maxY - 8, origY + dy));
+    const onMove = (e) => {
+      if (!isDragging) return;
+      const bounds = this.getDockBounds();
+      const nx = Math.max(bounds.minX, Math.min(bounds.maxX, origX + (e.clientX - startX)));
+      const ny = Math.max(bounds.minY, Math.min(bounds.maxY, origY + (e.clientY - startY)));
       this.state.dockCustomX = Math.round(nx);
       this.state.dockCustomY = Math.round(ny);
       wrap.style.left = `${this.state.dockCustomX}px`;
       wrap.style.top = `${this.state.dockCustomY}px`;
-      wrap.style.transform = "none";
-      wrap.style.bottom = "auto";
-      wrap.style.right = "auto";
-    });
+    };
 
     const stopDrag = (e) => {
       if (!isDragging) return;
       isDragging = false;
       wrap.classList.remove("dock-dragging");
-      try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
       this.saveDockSettings();
     };
 
-    wrap.addEventListener("pointerup", stopDrag);
-    wrap.addEventListener("pointercancel", stopDrag);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stopDrag);
+    window.addEventListener("pointercancel", stopDrag);
+
+    window.addEventListener("resize", () => {
+      if (!this.state.dockDragEnabled) return;
+      this.clampDockPosition();
+      this.applyDockSettings();
+      this.saveDockSettings();
+    });
+  },
+
+  getDockBounds() {
+    const wrap = document.getElementById("gemini-dock-wrap");
+    const width = wrap ? wrap.offsetWidth : 420;
+    const height = wrap ? wrap.offsetHeight : 240;
+    return {
+      minX: 8,
+      minY: 8,
+      maxX: Math.max(8, window.innerWidth - width - 8),
+      maxY: Math.max(8, window.innerHeight - height - 8),
+    };
+  },
+
+  clampDockPosition() {
+    if (!Number.isFinite(this.state.dockCustomX) || !Number.isFinite(this.state.dockCustomY)) return;
+    const bounds = this.getDockBounds();
+    this.state.dockCustomX = Math.round(Math.max(bounds.minX, Math.min(bounds.maxX, this.state.dockCustomX)));
+    this.state.dockCustomY = Math.round(Math.max(bounds.minY, Math.min(bounds.maxY, this.state.dockCustomY)));
   },
 
   initDockSettings() {
     try {
       const raw = localStorage.getItem("lazysd_dock");
       const cfg = raw ? JSON.parse(raw) : {};
-      if (cfg.position) this.state.dockPosition = cfg.position;
-      if (cfg.opacity !== undefined) this.state.dockOpacity = cfg.opacity;
-      if (cfg.blur !== undefined) this.state.dockBlur = cfg.blur;
-      if (cfg.minimized !== undefined) this.state.dockMinimized = cfg.minimized;
+      if (["center", "left", "right", "bottom"].includes(cfg.position)) this.state.dockPosition = cfg.position;
+      if (Number.isFinite(Number(cfg.opacity))) this.state.dockOpacity = Number(cfg.opacity);
+      if (Number.isFinite(Number(cfg.blur))) this.state.dockBlur = Number(cfg.blur);
+      if (typeof cfg.minimized === "boolean") this.state.dockMinimized = cfg.minimized;
+      if (typeof cfg.dragEnabled === "boolean") this.state.dockDragEnabled = cfg.dragEnabled;
+      if (Number.isFinite(Number(cfg.customX)) && Number.isFinite(Number(cfg.customY))) {
+        this.state.dockCustomX = Number(cfg.customX);
+        this.state.dockCustomY = Number(cfg.customY);
+      }
     } catch (_) {}
 
+    if (this.state.dockDragEnabled && (!Number.isFinite(this.state.dockCustomX) || !Number.isFinite(this.state.dockCustomY))) {
+      const wrap = document.getElementById("gemini-dock-wrap");
+      if (wrap) {
+        const rect = wrap.getBoundingClientRect();
+        this.state.dockCustomX = Math.round(rect.left);
+        this.state.dockCustomY = Math.round(rect.top);
+      }
+    }
+    this.clampDockPosition();
     this.applyDockSettings();
     this.initDockDrag();
   },
@@ -3949,7 +4240,9 @@ const App = {
 
     wrap.classList.remove("dock-pos-left", "dock-pos-right", "dock-pos-bottom", "dock-pos-center", "dock-minimized", "dock-free-drag");
 
-    if (this.state.dockDragEnabled && this.state.dockCustomX !== undefined && this.state.dockCustomY !== undefined) {
+    const hasCustomPosition = Number.isFinite(this.state.dockCustomX) && Number.isFinite(this.state.dockCustomY);
+    if (this.state.dockDragEnabled && hasCustomPosition) {
+      this.clampDockPosition();
       wrap.classList.add("dock-free-drag");
       wrap.style.left = `${this.state.dockCustomX}px`;
       wrap.style.top = `${this.state.dockCustomY}px`;
@@ -3966,9 +4259,7 @@ const App = {
         wrap.classList.add(`dock-pos-${this.state.dockPosition}`);
       }
     }
-    if (this.state.dockMinimized) {
-      wrap.classList.add("dock-minimized");
-    }
+    if (this.state.dockMinimized) wrap.classList.add("dock-minimized");
 
     const root = document.documentElement;
     root.style.setProperty("--dock-opacity", this.state.dockOpacity);
@@ -3986,6 +4277,22 @@ const App = {
     const blurLabel = document.getElementById("setting-dock-blur-val");
     if (blurSlider) blurSlider.value = this.state.dockBlur;
     if (blurLabel) blurLabel.textContent = `${this.state.dockBlur}px`;
+
+    const dragBtn = document.getElementById("dock-drag-toggle-btn");
+    if (dragBtn) {
+      dragBtn.classList.toggle("active", this.state.dockDragEnabled);
+      dragBtn.setAttribute("aria-pressed", this.state.dockDragEnabled ? "true" : "false");
+      dragBtn.title = this.state.dockDragEnabled
+        ? (t("dock.drag_disable") || "Отключить свободное перемещение")
+        : (t("dock.drag_enable") || "Включить свободное перемещение");
+    }
+    const settingDragBtn = document.getElementById("setting-dock-drag-toggle");
+    if (settingDragBtn) {
+      settingDragBtn.classList.toggle("active", this.state.dockDragEnabled);
+      settingDragBtn.textContent = this.state.dockDragEnabled
+        ? (t("dock.drag_on_short") || "Drag включён")
+        : (t("dock.drag_off_short") || "Включить Drag");
+    }
   },
 
   saveDockSettings() {
@@ -3995,14 +4302,52 @@ const App = {
         opacity: this.state.dockOpacity,
         blur: this.state.dockBlur,
         minimized: this.state.dockMinimized,
+        dragEnabled: this.state.dockDragEnabled,
+        customX: this.state.dockCustomX,
+        customY: this.state.dockCustomY,
       }));
     } catch (_) {}
   },
 
   setDockPosition(pos) {
     this.state.dockPosition = pos;
+    this.state.dockDragEnabled = false;
+    this.state.dockCustomX = null;
+    this.state.dockCustomY = null;
     this.applyDockSettings();
     this.saveDockSettings();
+  },
+
+  toggleDockDrag() {
+    const wrap = document.getElementById("gemini-dock-wrap");
+    if (!wrap) return;
+    if (!this.state.dockDragEnabled) {
+      if (!Number.isFinite(this.state.dockCustomX) || !Number.isFinite(this.state.dockCustomY)) {
+        const rect = wrap.getBoundingClientRect();
+        this.state.dockCustomX = Math.round(rect.left);
+        this.state.dockCustomY = Math.round(rect.top);
+      }
+      this.state.dockDragEnabled = true;
+      this.clampDockPosition();
+    } else {
+      this.state.dockDragEnabled = false;
+    }
+    this.applyDockSettings();
+    this.saveDockSettings();
+    this.toast("info", this.state.dockDragEnabled
+      ? (t("dock.drag_on") || "Свободное перемещение включено: тяните за ⋮⋮")
+      : (t("dock.drag_off") || "Свободное перемещение отключено"));
+  },
+
+  resetDockPosition() {
+    this.state.dockDragEnabled = false;
+    this.state.dockPosition = "center";
+    this.state.dockCustomX = null;
+    this.state.dockCustomY = null;
+    this.state.dockMinimized = false;
+    this.applyDockSettings();
+    this.saveDockSettings();
+    this.toast("info", t("dock.reset_done") || "Док возвращён в нижний центр");
   },
 
   cycleDockPosition() {
@@ -7924,12 +8269,27 @@ async function runMangaPipeline(immediate = false, appRef) {
     const poll = setInterval(async () => {
       try {
         const status = await apiGet(`/api/jobs/${jobId}`);
+        if (status.status === "queued") {
+          app.showQueueStatus(status, jobId);
+          const queueText = window.t ? window.t("manga.queue_waiting") : "В очереди GPU...";
+          if (metaEl) metaEl.textContent = queueText;
+          if (loadText) loadText.textContent = queueText;
+          return;
+        }
+        app.hideQueueStatus();
         const msgText = status.message || `⏳ ${Math.round((status.progress || 0) * 100)}%`;
         if (metaEl) metaEl.textContent = msgText;
         if (loadText) loadText.textContent = msgText;
 
-        if (status.status === "complete") {
+        if (status.status === "cancelled") {
           clearInterval(poll);
+          app.hideQueueStatus();
+          if (loadOverlay) loadOverlay.style.display = "none";
+          if (metaEl) metaEl.textContent = "Отменено";
+          toast("info", window.t ? window.t("queue.cancelled") : "Задача отменена");
+        } else if (status.status === "complete") {
+          clearInterval(poll);
+          app.hideQueueStatus();
           if (loadOverlay) loadOverlay.style.display = "none";
           const filename = (status.image_path || "").split(/[\/\\]/).pop();
           const url = `/outputs/${encodeURIComponent(filename)}?t=${Date.now()}`;
@@ -7948,6 +8308,7 @@ async function runMangaPipeline(immediate = false, appRef) {
           toast("success", savedMsg);
         } else if (status.status === "error") {
           clearInterval(poll);
+          app.hideQueueStatus();
           if (loadOverlay) loadOverlay.style.display = "none";
           if (metaEl) metaEl.textContent = "Ошибка AI";
           if (banner && bannerMsg) {
@@ -7958,6 +8319,7 @@ async function runMangaPipeline(immediate = false, appRef) {
         }
       } catch (_) {
         clearInterval(poll);
+        app.hideQueueStatus();
         if (loadOverlay) loadOverlay.style.display = "none";
       }
     }, 400);
@@ -8333,10 +8695,6 @@ Object.assign(App, {
     }
   },
 
-  setHistoryPageSize(sz) {
-    this.state.historyPageSize = parseInt(sz, 10) || 50;
-    this.renderHistory();
-  },
 });
 
 

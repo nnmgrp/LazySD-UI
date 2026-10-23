@@ -83,6 +83,7 @@ class Settings(BaseModel):
     lang: str = "auto"                    # "ru" | "en" | "auto"
     theme: str = "dark"                   # Only "dark" supported in Phase 2
     hide_uninstalled_in_generator: bool = False
+    monitor_connections: bool = True       # Count online accounts + show header indicator
 
     # ---------- GPU / VRAM ----------
     vram_mode: str = VRAMMode.AUTO

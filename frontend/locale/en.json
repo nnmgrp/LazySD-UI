@@ -373,5 +373,34 @@
   "manga.fallback_lite": "Switch to Manga Lite (No GPU)",
   "manga.saved_toast": "Manga Screen AI result saved to gallery",
   "history.reopen_halftone": "Reopen Settings in Halftone Studio",
-  "history.reopen_manga": "Reopen Settings in Manga Screen AI"
+  "history.reopen_manga": "Reopen Settings in Manga Screen AI",
+
+  "queue.title": "GPU is busy",
+  "queue.initial": "Waiting for a free GPU...",
+  "queue.waiting": "Position {{position}} · jobs waiting: {{total}}",
+  "queue.position": "Position:",
+  "queue.waiting_count": "Waiting:",
+  "queue.cancel": "Cancel while queued",
+  "queue.cancelled": "Job cancelled",
+  "queue.cancel_failed": "Could not cancel the job",
+  "queue.short": "Queued",
+
+  "presence.title": "Connected users",
+  "presence.connected": "Online: {{count}}",
+  "presence.offline": "Connection monitoring is unavailable",
+  "presence.disabled": "Connection monitoring is disabled",
+  "presence.none": "No active connections",
+  "presence.enabled_toast": "Connection monitoring enabled",
+  "presence.disabled_toast": "Connection monitoring disabled",
+  "presence.save_error": "Could not save the monitoring setting",
+
+  "dock.drag_enable": "Enable free movement",
+  "dock.drag_disable": "Disable free movement",
+  "dock.drag_on": "Free movement enabled: drag the ⋮⋮ handle",
+  "dock.drag_off": "Free movement disabled",
+  "dock.drag_on_short": "Drag enabled",
+  "dock.drag_off_short": "Enable Drag",
+  "dock.reset_done": "Dock reset to bottom center",
+
+  "manga.queue_waiting": "Waiting in the GPU queue..."
 }

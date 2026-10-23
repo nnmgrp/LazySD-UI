@@ -60,10 +60,10 @@ PROXY_HEADERS = (
 _GUEST_ALLOW: list[tuple[str, re.Pattern]] = [
     ("GET", re.compile(r"^/(index\.html)?$")),
     ("GET", re.compile(r"^/(css|js|locale|outputs)/")),
-    ("GET", re.compile(r"^/api/(config|models|presets|loras|history|system/stats|system/open-folder|open-folder)$")),
+    ("GET", re.compile(r"^/api/(config|models|presets|loras|history|presence|system/stats|system/open-folder|open-folder)$")),
     ("GET", re.compile(r"^/api/models/[^/]+/state$")),
     ("GET", re.compile(r"^/api/jobs/[^/]+$")),
-    ("POST", re.compile(r"^/api/(generate|upload|system/open-folder|open-folder)$")),
+    ("POST", re.compile(r"^/api/(generate|upload|presence/heartbeat|system/open-folder|open-folder)$")),
     ("POST", re.compile(r"^/api/history/[^/]+/share$")),
     ("POST", re.compile(r"^/api/jobs/[^/]+/cancel$")),
     ("POST", re.compile(r"^/api/auth/(login|logout)$")),
@@ -126,6 +126,20 @@ def token_ok(provided: Optional[str], expected: Optional[str]) -> bool:
     if not provided or not expected:
         return False
     return hmac.compare_digest(provided.encode(), expected.encode())
+
+
+def _record_presence(scope, caller: dict) -> None:
+    """Best-effort online-user tracking; never affects request handling."""
+    if scope.get("type") != "http":
+        return
+    path = scope.get("path", "")
+    if path not in ("/", "/index.html") and not path.startswith("/api/"):
+        return
+    try:
+        from .presence import record_activity
+        record_activity(caller)
+    except Exception:
+        pass
 
 
 _LOGIN_HTML = """<!doctype html>
@@ -215,12 +229,14 @@ class ShareAccessMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket") or not is_remote_scope(scope):
-            scope.setdefault("state", {})["account"] = {
+            caller = {
                 "role": "host",
                 "id": "host",
                 "username": "Хост",
                 "is_guest": False,
             }
+            scope.setdefault("state", {})["account"] = caller
+            _record_presence(scope, caller)
             return await self.app(scope, receive, send)
 
         if scope["type"] == "websocket":
@@ -306,6 +322,7 @@ class ShareAccessMiddleware:
 
         scope.setdefault("state", {})["account"] = caller
         scope["state"]["is_guest"] = caller["is_guest"]
+        _record_presence(scope, caller)
 
         if caller["is_guest"] and not is_guest_allowed(method, path):
             return await _respond(

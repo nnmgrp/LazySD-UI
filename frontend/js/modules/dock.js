@@ -222,20 +222,55 @@ export function syncFromDockParams(field, val, appRef) {
   if (app && app.updateModelTrigger) app.updateModelTrigger();
 }
 
+function tr(key, fallback) {
+  return (window.t && window.t(key)) || fallback;
+}
+
+export function getDockBounds() {
+  const wrap = document.getElementById("gemini-dock-wrap");
+  const width = wrap ? wrap.offsetWidth : 420;
+  const height = wrap ? wrap.offsetHeight : 240;
+  return {
+    minX: 8,
+    minY: 8,
+    maxX: Math.max(8, window.innerWidth - width - 8),
+    maxY: Math.max(8, window.innerHeight - height - 8),
+  };
+}
+
+export function clampDockPosition(appRef) {
+  const app = appRef || window.App;
+  if (!Number.isFinite(app.state.dockCustomX) || !Number.isFinite(app.state.dockCustomY)) return;
+  const bounds = getDockBounds();
+  app.state.dockCustomX = Math.round(Math.max(bounds.minX, Math.min(bounds.maxX, app.state.dockCustomX)));
+  app.state.dockCustomY = Math.round(Math.max(bounds.minY, Math.min(bounds.maxY, app.state.dockCustomY)));
+}
+
 export function initDockSettings(appRef) {
   const app = appRef || window.App;
   try {
     const raw = localStorage.getItem("lazysd_dock");
     const cfg = raw ? JSON.parse(raw) : {};
-    if (cfg.position) app.state.dockPosition = cfg.position;
-    if (cfg.opacity !== undefined) app.state.dockOpacity = cfg.opacity;
-    if (cfg.blur !== undefined) app.state.dockBlur = cfg.blur;
-    if (cfg.minimized !== undefined) app.state.dockMinimized = cfg.minimized;
-    if (cfg.dragEnabled !== undefined) app.state.dockDragEnabled = cfg.dragEnabled;
-    if (cfg.customX !== undefined) app.state.dockCustomX = cfg.customX;
-    if (cfg.customY !== undefined) app.state.dockCustomY = cfg.customY;
+    if (["center", "left", "right", "bottom"].includes(cfg.position)) app.state.dockPosition = cfg.position;
+    if (Number.isFinite(Number(cfg.opacity))) app.state.dockOpacity = Number(cfg.opacity);
+    if (Number.isFinite(Number(cfg.blur))) app.state.dockBlur = Number(cfg.blur);
+    if (typeof cfg.minimized === "boolean") app.state.dockMinimized = cfg.minimized;
+    if (typeof cfg.dragEnabled === "boolean") app.state.dockDragEnabled = cfg.dragEnabled;
+    if (Number.isFinite(Number(cfg.customX)) && Number.isFinite(Number(cfg.customY))) {
+      app.state.dockCustomX = Number(cfg.customX);
+      app.state.dockCustomY = Number(cfg.customY);
+    }
   } catch (_) {}
 
+  if (app.state.dockDragEnabled && (!Number.isFinite(app.state.dockCustomX) || !Number.isFinite(app.state.dockCustomY))) {
+    const wrap = document.getElementById("gemini-dock-wrap");
+    if (wrap) {
+      const rect = wrap.getBoundingClientRect();
+      app.state.dockCustomX = Math.round(rect.left);
+      app.state.dockCustomY = Math.round(rect.top);
+    }
+  }
+  clampDockPosition(app);
   applyDockSettings(app);
   initDockDrag(app);
 }
@@ -245,9 +280,11 @@ export function applyDockSettings(appRef) {
   const wrap = document.getElementById("gemini-dock-wrap");
   if (!wrap) return;
 
-  wrap.classList.remove("dock-pos-left", "dock-pos-right", "dock-pos-bottom", "dock-pos-center", "dock-minimized", "dock-drag-active");
+  wrap.classList.remove("dock-pos-left", "dock-pos-right", "dock-pos-bottom", "dock-pos-center", "dock-minimized", "dock-free-drag");
 
-  if (app.state.dockDragEnabled && app.state.dockCustomX !== undefined && app.state.dockCustomY !== undefined) {
+  const hasCustomPosition = Number.isFinite(app.state.dockCustomX) && Number.isFinite(app.state.dockCustomY);
+  if (app.state.dockDragEnabled && hasCustomPosition) {
+    clampDockPosition(app);
     wrap.classList.add("dock-free-drag");
     wrap.style.left = `${app.state.dockCustomX}px`;
     wrap.style.top = `${app.state.dockCustomY}px`;
@@ -255,7 +292,6 @@ export function applyDockSettings(appRef) {
     wrap.style.bottom = "auto";
     wrap.style.right = "auto";
   } else {
-    wrap.classList.remove("dock-free-drag");
     wrap.style.left = "";
     wrap.style.top = "";
     wrap.style.transform = "";
@@ -286,6 +322,22 @@ export function applyDockSettings(appRef) {
   const blurLabel = document.getElementById("setting-dock-blur-val");
   if (blurSlider) blurSlider.value = app.state.dockBlur;
   if (blurLabel) blurLabel.textContent = `${app.state.dockBlur}px`;
+
+  const dragBtn = document.getElementById("dock-drag-toggle-btn");
+  if (dragBtn) {
+    dragBtn.classList.toggle("active", app.state.dockDragEnabled);
+    dragBtn.setAttribute("aria-pressed", app.state.dockDragEnabled ? "true" : "false");
+    dragBtn.title = app.state.dockDragEnabled
+      ? tr("dock.drag_disable", "Отключить свободное перемещение")
+      : tr("dock.drag_enable", "Включить свободное перемещение");
+  }
+  const settingDragBtn = document.getElementById("setting-dock-drag-toggle");
+  if (settingDragBtn) {
+    settingDragBtn.classList.toggle("active", app.state.dockDragEnabled);
+    settingDragBtn.textContent = app.state.dockDragEnabled
+      ? tr("dock.drag_on_short", "Drag включён")
+      : tr("dock.drag_off_short", "Включить Drag");
+  }
 }
 
 export function saveDockSettings(appRef) {
@@ -307,10 +359,22 @@ export function setDockPosition(pos, appRef) {
   const app = appRef || window.App;
   app.state.dockPosition = pos;
   app.state.dockDragEnabled = false;
-  delete app.state.dockCustomX;
-  delete app.state.dockCustomY;
+  app.state.dockCustomX = null;
+  app.state.dockCustomY = null;
   applyDockSettings(app);
   saveDockSettings(app);
+}
+
+export function resetDockPosition(appRef) {
+  const app = appRef || window.App;
+  app.state.dockDragEnabled = false;
+  app.state.dockPosition = "center";
+  app.state.dockCustomX = null;
+  app.state.dockCustomY = null;
+  app.state.dockMinimized = false;
+  applyDockSettings(app);
+  saveDockSettings(app);
+  toast("info", tr("dock.reset_done", "Док возвращён в нижний центр"));
 }
 
 export function cycleDockPosition(appRef) {
@@ -349,14 +413,24 @@ export function setDockBlur(val, appRef) {
 
 export function toggleDockDragMode(appRef) {
   const app = appRef || window.App;
-  app.state.dockDragEnabled = !app.state.dockDragEnabled;
+  const wrap = document.getElementById("gemini-dock-wrap");
+  if (!wrap) return;
   if (!app.state.dockDragEnabled) {
-    delete app.state.dockCustomX;
-    delete app.state.dockCustomY;
+    if (!Number.isFinite(app.state.dockCustomX) || !Number.isFinite(app.state.dockCustomY)) {
+      const rect = wrap.getBoundingClientRect();
+      app.state.dockCustomX = Math.round(rect.left);
+      app.state.dockCustomY = Math.round(rect.top);
+    }
+    app.state.dockDragEnabled = true;
+    clampDockPosition(app);
+  } else {
+    app.state.dockDragEnabled = false;
   }
   applyDockSettings(app);
   saveDockSettings(app);
-  toast("info", app.state.dockDragEnabled ? "Режим свободного перетаскивания Дока ВКЛ" : "Режим привязки Дока (Dock Presets) ВКЛ");
+  toast("info", app.state.dockDragEnabled
+    ? tr("dock.drag_on", "Свободное перемещение включено: тяните за ⋮⋮")
+    : tr("dock.drag_off", "Свободное перемещение отключено"));
 }
 
 let dragInitialized = false;
@@ -366,7 +440,7 @@ export function initDockDrag(appRef) {
   const app = appRef || window.App;
   const wrap = document.getElementById("gemini-dock-wrap");
   const handle = document.getElementById("dock-drag-handle");
-  if (!wrap) return;
+  if (!wrap || !handle) return;
 
   let isDragging = false;
   let startX = 0;
@@ -374,59 +448,52 @@ export function initDockDrag(appRef) {
   let origX = 0;
   let origY = 0;
 
-  if (handle) {
-    handle.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      setDockPosition("center", app);
-      toast("info", "Док сброшен в нижний центр");
-    });
-  }
+  handle.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    resetDockPosition(app);
+  });
 
-  const startDrag = (e) => {
-    const isFromHandle = handle && (e.target === handle || handle.contains(e.target));
-    if (!isFromHandle && !app.state.dockDragEnabled) return;
-    if (e.target.closest("button") || e.target.closest("input") || e.target.closest("textarea") || e.target.closest("select")) {
-      return;
-    }
-    app.state.dockDragEnabled = true;
+  // Only the explicit handle starts a drag, and only while the separate drag
+  // toggle is enabled. Popovers, inputs, and buttons never initiate movement.
+  handle.addEventListener("pointerdown", (e) => {
+    if (!app.state.dockDragEnabled) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
     isDragging = true;
     startX = e.clientX;
     startY = e.clientY;
     const rect = wrap.getBoundingClientRect();
     origX = rect.left;
     origY = rect.top;
-    try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
     wrap.classList.add("dock-dragging");
-    wrap.classList.add("dock-free-drag");
-  };
+  });
 
-  wrap.addEventListener("pointerdown", startDrag);
-
-  wrap.addEventListener("pointermove", (e) => {
-    if (!isDragging || !app.state.dockDragEnabled) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    const maxX = window.innerWidth - wrap.offsetWidth;
-    const maxY = window.innerHeight - wrap.offsetHeight;
-    const nx = Math.max(8, Math.min(maxX - 8, origX + dx));
-    const ny = Math.max(8, Math.min(maxY - 8, origY + dy));
-    app.state.dockCustomX = Math.round(nx);
-    app.state.dockCustomY = Math.round(ny);
+  const onMove = (e) => {
+    if (!isDragging) return;
+    const bounds = getDockBounds();
+    app.state.dockCustomX = Math.round(Math.max(bounds.minX, Math.min(bounds.maxX, origX + (e.clientX - startX))));
+    app.state.dockCustomY = Math.round(Math.max(bounds.minY, Math.min(bounds.maxY, origY + (e.clientY - startY))));
     wrap.style.left = `${app.state.dockCustomX}px`;
     wrap.style.top = `${app.state.dockCustomY}px`;
-    wrap.style.transform = "none";
-    wrap.style.bottom = "auto";
-    wrap.style.right = "auto";
-  });
+  };
 
   const stopDrag = (e) => {
     if (!isDragging) return;
     isDragging = false;
     wrap.classList.remove("dock-dragging");
-    try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
+    try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
     saveDockSettings(app);
   };
 
-  wrap.addEventListener("pointerup", stopDrag);
-  wrap.addEventListener("pointercancel", stopDrag);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", stopDrag);
+  window.addEventListener("pointercancel", stopDrag);
+  window.addEventListener("resize", () => {
+    if (!app.state.dockDragEnabled) return;
+    clampDockPosition(app);
+    applyDockSettings(app);
+    saveDockSettings(app);
+  });
 }

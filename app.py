@@ -222,6 +222,9 @@ from backend.gpu import detect_gpu, get_system_memory_stats, GPUInfo
 
 
 
+from backend.generation_queue import GenerationQueue
+from backend.history_paging import paginate
+from backend.presence import get_presence
 from backend.registry import get_registry
 
 
@@ -315,158 +318,198 @@ from fastapi.staticfiles import StaticFiles
 
 
 class AppState:
-
-
-
-    """Global app state — single-user, single-process."""
-
-
-
-
-
-
+    """Global app state - single-user, single-process."""
 
     def __init__(self):
-
-
-
         self.gpu_info: Optional[GPUInfo] = None
-
-
-
-        self.jobs: dict[str, dict] = {}   # job_id → {status, progress, ...}
-
-
-
+        self.jobs: dict[str, dict] = {}   # job_id -> {status, progress, ...}
         self._job_lock = threading.Lock()
+        self.generation_queue = GenerationQueue()
 
-
-
-
-
-
-
-    def register_job(self, job_id: str) -> None:
-
-
-
+    def register_job(
+        self,
+        job_id: str,
+        owner_id: str = "host",
+        owner_name: str = "Хост",
+        kind: str = "download",
+        serialized: bool = False,
+        shared: bool = False,
+    ) -> None:
+        now = time.time()
         with self._job_lock:
-
-
-
             self.jobs[job_id] = {
-
-
-
                 "status": JobStatus.QUEUED,
-
-
-
                 "progress": 0.0,
-
-
-
                 "message": "Queued",
-
-
-
-                "started_at": time.time(),
-
-
-
+                "started_at": now,
+                "created_at": now,
+                "finished_at": None,
                 "image_path": None,
-
-
-
                 "error": None,
-
-
-
+                "step": 0,
+                "total_steps": 0,
+                "owner_id": owner_id or "host",
+                "owner_name": owner_name or "Хост",
+                "kind": kind,
+                "shared": bool(shared),
+                "queue_position": 0,
+                "queue_size": 0,
+                "queue_active": False,
+                "serialized": bool(serialized),
             }
+            if serialized:
+                self.generation_queue.enqueue(job_id)
+        if serialized:
+            self._sync_queue_positions()
 
-
-
-
-
-
+    def _sync_queue_positions(self) -> None:
+        """Mirror the FIFO queue into JSON-safe job metadata."""
+        snap = self.generation_queue.snapshot()
+        pending = snap.get("pending") or []
+        total = len(pending)
+        active = snap.get("active")
+        with self._job_lock:
+            for index, pending_id in enumerate(pending, start=1):
+                job = self.jobs.get(pending_id)
+                if not job:
+                    continue
+                job.update({
+                    "status": JobStatus.QUEUED,
+                    "progress": 0.0,
+                    "message": f"Queue position {index} of {total}",
+                    "queue_position": index,
+                    "queue_size": total,
+                    "queue_active": False,
+                })
+            if active and active in self.jobs:
+                self.jobs[active].update({
+                    "queue_position": 0,
+                    "queue_size": total,
+                    "queue_active": True,
+                })
 
     def update_job(self, job_id: str, event: ProgressEvent) -> None:
-
-
-
         with self._job_lock:
-
-
-
-            if job_id not in self.jobs:
-
-
-
+            job = self.jobs.get(job_id)
+            if job is None:
                 return
-
-
-
-            self.jobs[job_id].update({
-
-
-
+            # Never overwrite a user cancellation with a late error from a
+            # worker that was terminated mid-generation.
+            if job.get("status") == JobStatus.CANCELLED and event.status != JobStatus.CANCELLED:
+                return
+            job.update({
                 "status": event.status,
-
-
-
                 "progress": event.progress,
-
-
-
                 "message": event.message,
-
-
-
                 "step": event.step,
-
-
-
                 "total_steps": event.total_steps,
-
-
-
                 "image_path": event.image_path,
-
-
-
                 "error": event.error,
-
-
-
             })
-
-
-
-
-
-
+            if event.status in (JobStatus.COMPLETE, JobStatus.ERROR, JobStatus.CANCELLED):
+                job["finished_at"] = time.time()
 
     def get_job(self, job_id: str) -> Optional[dict]:
-
-
-
         with self._job_lock:
+            job = self.jobs.get(job_id)
+            return dict(job) if job is not None else None
 
+    def job_status(self, job_id: str) -> Optional[str]:
+        with self._job_lock:
+            job = self.jobs.get(job_id)
+            return job.get("status") if job else None
 
+    def acquire_generation(self, job_id: str) -> bool:
+        """Wait for this job's turn, then mark it active."""
+        acquired = self.generation_queue.acquire(job_id)
+        if not acquired:
+            # acquire() returns False when a cancel marker was consumed. If the
+            # cancel arrived after this job had already become active, release
+            # the slot here; otherwise no later worker could release it.
+            self.generation_queue.release(job_id)
+            with self._job_lock:
+                job = self.jobs.get(job_id)
+                if job and job.get("status") not in (
+                    JobStatus.COMPLETE, JobStatus.ERROR, JobStatus.CANCELLED
+                ):
+                    job.update({
+                        "status": JobStatus.CANCELLED,
+                        "message": "Cancelled before generation started",
+                        "finished_at": time.time(),
+                    })
+            self._sync_queue_positions()
+            return False
+        cancelled = False
+        with self._job_lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                cancelled = True
+            elif job.get("status") == JobStatus.CANCELLED:
+                # A cancel request can arrive after GenerationQueue made this
+                # job active but before we wrote INITIALIZING. Never resurrect
+                # a user-cancelled job by overwriting that status.
+                cancelled = True
+            else:
+                job.update({
+                    "status": JobStatus.INITIALIZING,
+                    "progress": 0.0,
+                    "message": "GPU queue slot acquired - preparing...",
+                    "queue_position": 0,
+                    "queue_active": True,
+                })
+        if cancelled:
+            self.generation_queue.release(job_id)
+            self._sync_queue_positions()
+            return False
+        self._sync_queue_positions()
+        return True
 
-            return self.jobs.get(job_id)
+    def release_generation(self, job_id: str) -> None:
+        self.generation_queue.release(job_id)
+        with self._job_lock:
+            job = self.jobs.get(job_id)
+            if job:
+                job.update({"queue_position": 0, "queue_active": False})
+        self._sync_queue_positions()
 
-
-
-
-
-
-
-
-
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a queued/active job. Returns True if it owned the GPU slot."""
+        with self._job_lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                return False
+            if job.get("status") in (JobStatus.COMPLETE, JobStatus.ERROR, JobStatus.CANCELLED):
+                return False
+        was_active = self.generation_queue.cancel(job_id)
+        with self._job_lock:
+            job = self.jobs.get(job_id)
+            if job is not None:
+                job.update({
+                    "status": JobStatus.CANCELLED,
+                    "message": "Cancelled by user",
+                    "queue_position": 0,
+                    "finished_at": time.time(),
+                })
+        self._sync_queue_positions()
+        return was_active
 
 
 STATE = AppState()
+
+# Halftone Studio and Manga CPU pipelines are intentionally parallel, but a
+# burst from several browser tabs must not saturate every CPU core / RAM.
+TOOL_CPU_MAX_CONCURRENCY = 4
+_TOOL_CPU_SEMAPHORE = threading.BoundedSemaphore(TOOL_CPU_MAX_CONCURRENCY)
+
+
+def _run_cpu_limited(func, *args, **kwargs):
+    """Run CPU-heavy tool work under the shared 4-slot semaphore."""
+    with _TOOL_CPU_SEMAPHORE:
+        return func(*args, **kwargs)
+
+
+async def _run_cpu_tool(func, *args, **kwargs):
+    return await asyncio.to_thread(_run_cpu_limited, func, *args, **kwargs)
 
 
 
@@ -2410,6 +2453,10 @@ def create_app() -> FastAPI:
 
 
 
+            "monitor_connections": bool(getattr(settings, "monitor_connections", True)),
+
+
+
         }
 
 
@@ -2562,12 +2609,49 @@ def create_app() -> FastAPI:
 
 
 
+            "presence": get_presence().snapshot(include_users=not is_guest),
+
+
+
         }
 
 
 
 
 
+
+
+    # ---------- API: Connected users / presence ----------
+
+
+    @app.get("/api/presence")
+
+
+    async def api_presence(request: Request = None):
+
+
+        caller = _resolve_caller(request)
+
+
+        return get_presence().snapshot(include_users=not caller.get("is_guest", False))
+
+
+    @app.post("/api/presence/heartbeat")
+
+
+    async def api_presence_heartbeat(request: Request = None):
+
+
+        caller = _resolve_caller(request)
+
+
+        presence = get_presence()
+
+
+        presence.touch(caller)
+
+
+        return presence.snapshot(include_users=not caller.get("is_guest", False))
 
 
     # ---------- API: Live System Stats (VRAM & RAM) ----------
@@ -7923,7 +8007,7 @@ def create_app() -> FastAPI:
 
 
 
-        STATE.register_job(job_id)
+        STATE.register_job(job_id, owner_id=owner_id, owner_name=owner_name, kind="generation", serialized=True, shared=shared)
 
 
 
@@ -7936,14 +8020,15 @@ def create_app() -> FastAPI:
 
 
         def run_job():
-
-
-
+            if not STATE.acquire_generation(job_id):
+                return
             try:
 
 
 
                 worker = get_worker()
+                if STATE.job_status(job_id) == JobStatus.CANCELLED:
+                    return
 
 
 
@@ -8037,9 +8122,8 @@ def create_app() -> FastAPI:
 
                 ))
 
-
-
-
+            finally:
+                STATE.release_generation(job_id)
 
 
 
@@ -8094,41 +8178,52 @@ def create_app() -> FastAPI:
     @app.post("/api/jobs/{job_id}/cancel")
 
 
-
-    async def api_job_cancel(job_id: str):
-
+    async def api_job_cancel(job_id: str, request: Request = None):
 
 
-        worker = get_worker()
+        job = STATE.get_job(job_id)
 
 
-
-        worker.cancel()
-
+        if not job:
 
 
-        STATE.update_job(job_id, ProgressEvent(
+            raise HTTPException(404, f"Job not found: {job_id}")
 
 
-
-            status=JobStatus.CANCELLED,
-
+        caller = _resolve_caller(request)
 
 
-            message="Cancelled by user",
+        if caller.get("is_guest", False) and job.get("owner_id") != caller.get("id"):
 
 
-
-        ))
-
+            raise HTTPException(403, "Нельзя отменить задачу другого пользователя.")
 
 
-        return {"status": "cancelled"}
+        if job.get("status") in (JobStatus.COMPLETE, JobStatus.ERROR, JobStatus.CANCELLED):
 
 
+            return {"status": job.get("status"), "was_active": False}
 
 
+        was_active = STATE.cancel_job(job_id)
 
+
+        if was_active and job.get("kind") == "generation":
+
+
+            try:
+
+
+                get_worker().cancel()
+
+
+            except Exception as exc:
+
+
+                print(f"[jobs] Worker cancel failed for {job_id}: {exc}")
+
+
+        return {"status": "cancelled", "was_active": bool(was_active)}
 
 
     # ---------- API: Settings ----------
@@ -8191,7 +8286,7 @@ def create_app() -> FastAPI:
 
 
 
-            "lang", "theme", "hide_uninstalled_in_generator",
+            "lang", "theme", "hide_uninstalled_in_generator", "monitor_connections",
 
 
 
@@ -8256,6 +8351,26 @@ def create_app() -> FastAPI:
 
 
             settings.update(**updates)
+
+
+
+            if "monitor_connections" in updates and not settings.monitor_connections:
+
+
+
+                try:
+
+
+
+                    get_presence().clear()
+
+
+
+                except Exception:
+
+
+
+                    pass
 
 
 
@@ -8919,7 +9034,13 @@ def create_app() -> FastAPI:
 
 
 
-    async def api_history(request: Request = None):
+    async def api_history(
+        request: Request = None,
+        page: Optional[int] = Query(None, ge=1),
+        page_size: Optional[int] = Query(None, ge=1, le=100),
+        owner_filter: str = Query("all", alias="filter"),
+        q: str = Query(""),
+    ):
 
 
 
@@ -8959,7 +9080,7 @@ def create_app() -> FastAPI:
 
 
 
-        outputs = cache.list_outputs(limit=500)
+        outputs = cache.list_outputs(limit=None)
 
 
 
@@ -9203,12 +9324,45 @@ def create_app() -> FastAPI:
 
 
 
+        owner_filter = (owner_filter or "all").strip().lower()
+
+        query = (q or "").strip().lower()
+
+        if owner_filter == "mine":
+
+            result = [item for item in result if item.get("owner_id") == caller_id]
+
+        elif owner_filter == "guests":
+
+            result = [item for item in result if item.get("owner_id") not in ("host", "host_remote")]
+
+        elif owner_filter == "shared":
+
+            result = [item for item in result if item.get("shared")]
+
+        if query:
+
+            result = [
+
+                item for item in result
+
+                if query in (item.get("prompt") or "").lower()
+
+                or query in (item.get("model_id") or "").lower()
+
+                or query in (item.get("name") or "").lower()
+
+                or query in (item.get("owner_name") or "").lower()
+
+            ]
+
+        paginated = page is not None or page_size is not None or owner_filter != "all" or bool(query)
+
+        if paginated:
+
+            return paginate(result, page or 1, page_size or 24)
+
         return result
-
-
-
-
-
 
 
     @app.delete("/api/history/{filename}")
@@ -10902,7 +11056,7 @@ def create_app() -> FastAPI:
 
 
 
-                out_img = await asyncio.to_thread(
+                out_img = await _run_cpu_tool(
 
 
 
@@ -10930,7 +11084,7 @@ def create_app() -> FastAPI:
 
 
 
-                out_img = await asyncio.to_thread(
+                out_img = await _run_cpu_tool(
 
 
 
@@ -11321,7 +11475,7 @@ def create_app() -> FastAPI:
 
 
 
-            out_img = await asyncio.to_thread(
+            out_img = await _run_cpu_tool(
 
 
 
@@ -12077,7 +12231,7 @@ def create_app() -> FastAPI:
 
 
 
-        STATE.register_job(job_id)
+        STATE.register_job(job_id, owner_id=owner_id, owner_name=owner_name, kind="generation", serialized=True, shared=shared)
 
 
 
@@ -12090,18 +12244,16 @@ def create_app() -> FastAPI:
 
 
         def run_manga_ai_job():
-
-
-
+            if not STATE.acquire_generation(job_id):
+                return
             t0 = time.perf_counter()
-
-
-
             try:
 
 
 
                 worker = get_worker()
+                if STATE.job_status(job_id) == JobStatus.CANCELLED:
+                    return
 
 
 
@@ -12217,7 +12369,11 @@ def create_app() -> FastAPI:
 
 
 
-                    final_img = process_manga_algorithmic(
+                    final_img = _run_cpu_limited(
+
+
+
+                        process_manga_algorithmic,
 
 
 
@@ -12479,9 +12635,8 @@ def create_app() -> FastAPI:
 
                 ))
 
-
-
-
+            finally:
+                STATE.release_generation(job_id)
 
 
 
