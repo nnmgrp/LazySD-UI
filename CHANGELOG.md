@@ -3,12 +3,80 @@
 Журнал коммитов для людей и ИИ-агентов. Перед началом работы сверяйся с
 `git log --oneline -20`, потому что этот файл обновляется не автоматически.
 
-> **Последний код-коммит:** `0470af4` — fix(flux3): load Nunchaku FLUX.3 via diffusers ModularPipeline (2026-10-23).
+> **Последний код-коммит:** `d322737` — feat(queue): serialize GPU jobs and fix History, presence, Dock (2026-10-23).
 > Документация (этот файл и ссылки в MD) идёт отдельным коммитом `docs: ...`, его хеш смотри в `git log -1`.
 
 ---
 
 ## 2026-10-23
+
+### `d322737` — feat(queue): serialize GPU jobs, add presence monitor, fix History and Dock drag
+
+Основная задача: не допускать параллельного запуска GPU-генерации из нескольких
+вкладок/аккаунтов, показать понятную очередь, добавить мониторинг подключений и
+починить зависания History, а также конфликт Drag-режима Gemini Dock.
+
+GPU-очередь:
+- Новый `backend/generation_queue.py`: FIFO-очередь с одним активным job и
+  поддержкой отмены ожидающих/активных задач.
+- `AppState` хранит `owner_id`, `owner_name`, `kind`, `shared`, выдаёт
+  `queue_position`, `queue_size`, `queue_active`; активная задача получает слот
+  только после `acquire_generation()`, освобождает в `finally`.
+- Сериализованы ровно две GPU-точки: `POST /api/generate` и
+  `POST /api/manga/ai-job`. Скачивания, Halftone и Manga CPU-обработка остаются
+  параллельными.
+- Отмена ожидающей задачи удаляет её из очереди и не трогает чужой активный
+  воркер; отмена активной останавливает worker. Поздняя ошибка воркера не
+  перезаписывает статус `cancelled`. Если cancel пришёл между активацией слота
+  и записью `initializing`, слот освобождается, а job остаётся `cancelled`.
+- Для Halftone/Manga CPU-пайплайнов добавлен общий семафор
+  `TOOL_CPU_MAX_CONCURRENCY = 4` (3–4 одновременные задачи).
+- Глобальный `#queue-overlay` показывает позицию, число ожидающих и кнопку
+  отмены на всех вкладках; исчезает, как только job переходит из `queued` в
+  `initializing/loading/generating`.
+
+Подключения:
+- Новый `backend/presence.py`: уникальные аккаунты по `role:id`, TTL 90 секунд.
+- `ShareAccessMiddleware` отмечает активность, фронтенд шлёт heartbeat каждые
+  20 секунд; добавлены `/api/presence` и `/api/presence/heartbeat` (гостям
+  разрешены, но список пользователей видит только хост).
+- Настройка `monitor_connections` (по умолчанию включена) в Settings, PATCH и
+  `/api/config`; в шапке появился постоянный индикатор `#presence-indicator`.
+- В настройках хоста — счётчик онлайн и список подключённых пользователей.
+
+History:
+- Новый `backend/history_paging.py`; `/api/history` принимает `page`,
+  `page_size`, `filter`, `q` и возвращает
+  `{items,total,page,page_size,pages}`. Размер страницы 12/24/48, серверный
+  максимум 100, номер страницы клампится к последней.
+- Без query-параметров сохранён старый ответ-массив для совместимости.
+- `CacheManager.list_outputs(limit=None)` отдаёт все файлы для пагинации.
+- Фронтенд: серверные фильтры, debounce поиска, выбор размера страницы,
+  кнопки страниц, защита от гонки устаревших ответов (`historyRequestSeq`) и
+  снятие `history-loading` в `finally` — зависаний при ошибке больше нет.
+
+Dock:
+- Drag вынесен в отдельный явный режим (`#dock-drag-toggle-btn` и кнопка в
+  настройках). Стартует только с ручки `⋮⋮`, а не со всей коробки/поповеров.
+- Убран `left: auto !important` из `.gemini-dock-wrap.dock-free-drag`, который
+  перебивал inline-координаты и вызывал движение только в одну сторону.
+- Оба axes клампятся в границы окна; смена preset-позиции выключает drag;
+  координаты и флаг сохраняются в `localStorage["lazysd_dock"]`.
+- Добавлены сброс (`#dock-reset-btn`, двойной клик по ручке) и восстановление
+  прежней свободной позиции при повторном включении Drag.
+
+Проверка:
+- `pytest tests -q` → **36 passed** (добавлен
+  `tests/test_queue_presence_history.py`).
+- Все 14 JS-файлов прошли `node --check`; оба locale JSON валидны;
+  `python -m py_compile app.py backend/*.py` проходит.
+- Живой запуск на `127.0.0.1:7871`: два FLUX.3-задания 512×512/4 шага —
+  A `loading`, B `queued position=1`; отмена B не затронула A; A завершился за
+  34.0 с, слот освобождён.
+- В браузере: History 249 работ / 11 страниц, переход на страницу 2, размер
+  страницы 12, поиск по prompt; очередь-оверлей, presence-индикатор и Dock
+  drag/clamp/reset проверены через реальный UI.
+- Bump cache-bust: `/js/app.js?v=20261023_03`, `/css/styles.css?v=20261023_03`.
 
 ### `0470af4` — fix(flux3): load Nunchaku FLUX.3 via diffusers ModularPipeline
 

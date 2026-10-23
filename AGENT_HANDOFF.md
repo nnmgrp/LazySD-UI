@@ -31,7 +31,10 @@ G:\QuantFunc-WebUI\
 ├── README.md                   # Публичная документация для пользователей GitHub
 │
 ├── backend/                    # Python бэкенд (модули логики)
-│   ├── worker.py               # Оркестратор очереди задач генерации, отмена процессов, JSON-sidecar
+│   ├── worker.py               # Оркестратор задач генерации, отмена процессов, JSON-sidecar
+│   ├── generation_queue.py     # Глобальная FIFO-очередь GPU: один активный job + отмена
+│   ├── presence.py             # Учёт подключённых аккаунтов (TTL 90 с, heartbeat)
+│   ├── history_paging.py       # Пагинация и clamping страниц History API
 │   ├── extras.py               # ExtrasWorker: интеграция с SVDQuant / Nunchaku (Flux.2, Flux.3, Tonera)
 │   ├── sdnq_engine.py          # 3-этапный изолированный запуск SDNQ / Diffusers (Qwen-Image-2.1)
 │   ├── sd_cpp.py               # stable-diffusion.cpp (GGUF-модели: Qwen, Flux.1, SDXL Turbo)
@@ -81,7 +84,8 @@ G:\QuantFunc-WebUI\
     ├── smoke_test.py           # Тесты безопасности, эндпоинтов API, регуляторов, GPU
     ├── test_es6_modules.py     # Тесты модульности frontend
     ├── test_halftone_and_manga.py # Тесты математики полутонов и манги
-    └── test_latest_fixes.py    # Интеграционные тесты последних исправлений (26 тестов)
+    ├── test_latest_fixes.py    # Интеграционные тесты последних исправлений
+    └── test_queue_presence_history.py # GPU-очередь, presence, пагинация History, Dock/UI-контракты
 ```
 
 ---
@@ -119,6 +123,46 @@ G:\QuantFunc-WebUI\
 - Обёртка над `bin/windows/sd_cpp/sd-cli.exe`.
 - Применяет GGUF-модели (Qwen-Image-2.1, Flux.1 Schnell).
 - Требует установленного `Visual C++ 2015–2022 Redistributable (x64)`.
+
+### 3.4. GPU-очередь и лимиты CPU
+
+> ⚠️ **Единственный воркер GPU — только через очередь.**
+> Нельзя запускать `worker.generate(...)` из нового эндпоинта напрямую: сначала
+> `STATE.register_job(..., serialized=True)`, затем в фоновом потоке
+> `STATE.acquire_generation(job_id)`, а освобождение слота — в `finally` через
+> `STATE.release_generation(job_id)`.
+
+- `backend/generation_queue.py` — потокобезопасная FIFO-очередь с **одним
+  активным** job. `enqueue()` возвращает 1-based позицию, `acquire()` блокирует
+  поток до его очереди, `cancel()` убирает ожидающий job или сообщает, что job
+  уже активен, `release()` освобождает слот.
+- Сериализованы ровно две GPU-точки: `POST /api/generate` (универсальный
+  генератор) и `POST /api/manga/ai-job` (AI-этап Manga). Halftone Studio,
+  `/api/manga/process`, скачивания моделей и LoRA не входят в GPU-очередь.
+- `AppState` хранит для job поля `owner_id`, `owner_name`, `kind`, `shared`,
+  `serialized`, `queue_position`, `queue_size`, `queue_active`.
+  `_sync_queue_positions()` зеркалит состояние очереди в job metadata.
+  - `queue_position == 0` + `queue_active == true` — job владеет GPU.
+  - `queue_position >= 1` — job ждёт; `queue_size` считает только ожидающих,
+    без активного.
+- Отмена ожидающего job удаляет его из `_pending` и ставит маркер `_cancelled`;
+  его поток при `acquire()` увидит маркер и завершится, **не трогая чужой
+  активный worker**. Отмена активного job возвращает `was_active=True`, после
+  чего эндпоинт вызывает `Worker.cancel()`.
+- Если cancel приходит между активацией слота и записью `INITIALIZING`,
+  `acquire_generation()` не перезаписывает `CANCELLED`, освобождает слот и
+  возвращает `False`; run_job дополнительно проверяет статус перед
+  `worker.generate()`.
+- `update_job()` не перезаписывает `JobStatus.CANCELLED` поздним
+  `error/complete` от остановленного воркера.
+- CPU-тяжёлые Halftone/Manga-пайплайны ограничены общим
+  `TOOL_CPU_MAX_CONCURRENCY = 4` (`_TOOL_CPU_SEMAPHORE`): одновременно максимум
+  4 задачи, но они не блокируют GPU-очередь.
+- Фронтенд: глобальный `#queue-overlay` (до `</body>`, поэтому виден на всех
+  вкладках) показывает позицию и кнопку отмены. Первый poll решает, показывать
+  ли оверлей: при `queued` — показать, при `initializing/loading/generating` —
+  скрыть. Не показывай очередь до ответа сервера, иначе будет ложная вспышка
+  «GPU busy» у job, который сразу получил слот.
 
 ---
 
@@ -202,15 +246,80 @@ G:\QuantFunc-WebUI\
 
 ---
 
-## 6. Плавающий Gemini Dock
+## 6. Плавающий Gemini Dock, подключения и History
 
-- Расположен в `#gemini-dock-wrap` с классом `.dock-free-drag`.
-- Хэндл переноса `<div class="gemini-dock-drag-handle" id="dock-drag-handle">⋮⋮</div>`:
-  - Перетаскивание зажатием ЛКМ.
-  - Ограничение границами экрана: `left = clamp(8, left, window.innerWidth - width - 8)`.
-  - Сохранение координат в `localStorage.getItem("gemini_dock_pos_v2")`.
-  - **Двойной клик по хэндлу сбрасывает док в дефолтное положение** (центр снизу: `left = 50%`, `transform = translateX(-50%)`, `bottom = 20px`).
-- Сортировка текстовых энкодеров: установленные энкодеры всегда сортируются первыми (`te.installed ? -1 : 1`) и выбираются по умолчанию.
+### 6.1. Свободный перенос Dock (Drag)
+
+- Расположен в `#gemini-dock-wrap`; в свободном режиме получает класс
+  `.dock-free-drag` и inline `left/top`.
+- **Drag — отдельный явный режим**, а не поведение всей коробки:
+  - кнопка `#dock-drag-toggle-btn` (✥) в доке и
+    `#setting-dock-drag-toggle` в настройках вызывают `App.toggleDockDrag()`;
+  - состояние `dockDragEnabled` сохраняется в
+    `localStorage["lazysd_dock"]` вместе с `position`, `opacity`, `blur`,
+    `minimized`, `customX`, `customY`.
+- Перетаскивание начинается **только** с ручки
+  `<div id="dock-drag-handle">⋮⋮</div>` и только при включённом Drag.
+  Кнопки, prompt-поля и поповеры больше не конкурируют за pointer-события.
+- При `pointermove` обновляются обе оси:
+  ```js
+  nx = clamp(origX + dx, 8, innerWidth  - dockWidth  - 8);
+  ny = clamp(origY + dy, 8, innerHeight - dockHeight - 8);
+  ```
+  `wrap.style.transform = "none"; bottom/right = "auto"` — иначе CSS-позиция
+  перебивает inline-координаты.
+- **Историческая ловушка:** в `.gemini-dock-wrap.dock-free-drag` был
+  `left: auto !important`. Он отменял `${customX}px`, из-за чего док двигался
+  только влево и по вертикали. Этот `!important` удалён; не возвращай его.
+- `App.setDockPosition(pos)` (пресеты center/left/right/bottom) выключает Drag и
+  очищает свободные координаты. `App.resetDockPosition()` и двойной клик по
+  ручке сбрасывают в нижний центр (`dockDragEnabled=false`, `dockPosition=center`,
+  `dockCustomX/Y=null`).
+- При повторном включении Drag возвращается последняя сохранённая свободная
+  позиция (если она есть), затем клампится к текущему окну.
+- `frontend/js/app.js` — активная реализация; `frontend/js/modules/dock.js`
+  обязана повторять те же id/методы и CSS-класс.
+- Сортировка текстовых энкодеров: установленные всегда первыми
+  (`te.installed ? -1 : 1`) и выбираются по умолчанию.
+
+### 6.2. Мониторинг подключённых пользователей (presence)
+
+- `backend/presence.py` хранит уникальные аккаунты по ключу `role:id`; один
+  пользователь в нескольких вкладках считается одним подключением. Гости с
+  разными id считаются отдельно.
+- `ShareAccessMiddleware` вызывает `record_activity(caller)` на `/`, `/index.html`
+  и `/api/*`. Запись считается онлайн, пока `last_seen` не старше
+  `STALE_AFTER_SECONDS = 90`.
+- `GET /api/presence` и `POST /api/presence/heartbeat` доступны и гостям.
+  Гость получает только `{enabled,count,users:[],stale_after}`, хост —
+  полный список. Токены/пароли не сохраняются.
+- Фронтенд: heartbeat каждые 20 с, индикатор `#presence-indicator` в шапке
+  виден всегда (кроме выключенного мониторинга), настройка
+  `monitor_connections` — в Settings. Список пользователей рендерится только
+  для хоста.
+- При выключении мониторинга registry очищается; при включении отсчёт
+  начинается заново.
+
+### 6.3. History: пагинация, фильтры и защита от зависаний
+
+- `GET /api/history`:
+  - без query-параметров возвращает **старый массив** (обратная совместимость);
+  - с `page`, `page_size`, `filter` или `q` возвращает
+    `{items,total,page,page_size,pages}`.
+- `page_size` по умолчанию 24, UI предлагает 12/24/48; сервер принимает
+  1…100 (FastAPI `Query(ge=1, le=100)`). `backend/history_paging.py` клампит
+  `page` к последней странице, поэтому удаление последней работы на странице
+  не оставляет пустую/ошибочную страницу.
+- Фильтры: `all`, `mine`, `guests`, `shared`; поиск `q` идёт по prompt,
+  model_id, filename и owner_name. Гостевая изоляция по `owner_id/shared`
+  применяется до пагинации.
+- `CacheManager.list_outputs(limit=None)` возвращает все выходные файлы,
+  отсортированные по mtime (новые первыми).
+- Фронтенд: `historyRequestSeq` отбрасывает устаревшие ответы при быстром
+  переключении страниц; `finally` снимает `history-loading`. Без этого старый
+  запрос мог завершиться позже нового и подвесить/перерисовать страницу.
+- Не вызывай `loadHistory()` повторно из рендера и не убирай `finally`:
+  именно эти две вещи приводили к зависаниям.
 
 ---
 
@@ -269,6 +378,30 @@ G:\QuantFunc-WebUI\
    - Активный фронтенд — монолит `frontend/js/app.js`, но HTML и ES6-модули могут содержать более новые id/методы. Именно так «пропала» LoRA в LoRA Hub (коммит `2e1b352`): панель не переключалась, а `renderLoraHubGrid`/`renderLoraLibrary` отсутствовали в монолите.
    - После любой правки UI проверяй, что методы и id совпадают в `index.html`, `app.js` и `modules/*`. Регрессия ловится тестом `test_lora_hub_frontend_sync` в `tests/test_latest_fixes.py`.
    - Папка LoRA — это `models_dir/loras`, то есть при текущих настройках `models/cache/loras`, а не `models/loras`.
+6. **Новый GPU-эндпоинт без очереди**:
+   - Любой вызов `worker.generate(...)` обязан предваряться
+     `STATE.register_job(..., serialized=True)` и `STATE.acquire_generation(job_id)`
+     в фоновом потоке, а `STATE.release_generation(job_id)` — стоять в `finally`.
+   - Иначе две вкладки снова стартуют два diffusion-пайплайна одновременно и
+     получают CUDA OOM / повреждение состояния движка. Тест
+     `test_queue_presence_history.py` проверяет FIFO и отмену.
+7. **Dock Drag и CSS `left: auto !important`**:
+   - В `.gemini-dock-wrap.dock-free-drag` **нельзя возвращать**
+     `left: auto !important`: он отменяет inline `${customX}px`, и док едет
+     только по одной оси. При этом `right:auto`, `bottom:auto` и
+     `transform:none` с `!important` там нужны — они нейтрализуют preset-классы
+     и не мешают inline `left/top`. Тянуть разрешено только за
+     `#dock-drag-handle` при включённом `dockDragEnabled`.
+8. **History: гонка запросов и потеря `finally`**:
+   - `loadHistory()` инкрементирует `historyRequestSeq`; ответ применяется
+     только если seq всё ещё актуален. Снятие `history-loading` обязано быть в
+     `finally` — иначе любой сетевой сбой навсегда оставляет скелетон/зависание.
+   - API нельзя переключать на объект без query-параметров: старые клиенты
+     ожидают массив. Пагинация включается наличием `page/page_size/filter/q`.
+9. **Presence middleware не должен ломать запросы**:
+   - `record_activity()` вызывается best-effort и глотает исключения. Не
+     поднимай ошибку из middleware при проблемах с registry: иначе упадёт
+     авторизация/статика. Гостю не отдавай список пользователей, только count.
 
 ---
 
@@ -291,11 +424,18 @@ G:\QuantFunc-WebUI\
    ```
 2. **Запуск тестов pytest**:
    ```powershell
-   pytest G:\QuantFunc-WebUI\tests
+   python -m pytest G:\QuantFunc-WebUI\tests -q
    ```
-   *Все 29 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
-   test_flux3_nunchaku_support, test_lora_hub_frontend_sync) должны проходить со статусом PASS (100%).*
-3. **Проверка git-статуса**:
+   *Все 36 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
+   test_flux3_nunchaku_support, test_lora_hub_frontend_sync и
+   test_queue_presence_history) должны проходить со статусом PASS (100%).*
+   `venv\Scripts\python.exe` не содержит pytest — используй глобальный `python`.
+3. **Проверка JSON-локалей и компиляции Python**:
+   ```powershell
+   python -c "import json; from pathlib import Path; [json.loads(Path(p).read_text(encoding='utf-8')) for p in ['frontend/locale/ru.json','frontend/locale/en.json']]; print('JSON OK')"
+   python -m py_compile app.py backend/*.py
+   ```
+4. **Проверка git-статуса**:
    ```powershell
    git -C G:\QuantFunc-WebUI status -s
    ```
@@ -310,6 +450,7 @@ G:\QuantFunc-WebUI\
 ### 2026-10-23
 | Коммит | Описание |
 |---|---|
+| `d322737` | `feat(queue)`: FIFO GPU-очередь для `/api/generate` и `/api/manga/ai-job`, queue-overlay, лимит CPU 4, presence-мониторинг с heartbeat, серверная пагинация/фильтры History, отдельный Drag-режим Dock и исправление `left:auto`; 36 тестов. |
 | `0470af4` | `fix(flux3)`: FLUX.3 Nunchaku через diffusers main и `ModularPipeline`; проба/установка `has_diffusers_flux3`, локальный `modular_model_index.json`, `NunchakuQwen3VLEncoderModel`, обход prompt upsampler, UI-проверка и тест `test_flux3_nunchaku_support`. |
 | `2e1b352` | `fix(lora)`: восстановлен LoRA Hub — переключение панели, `renderLoraHubGrid`/`renderLoraLibrary`, счётчик, вкладки модалки, HF-эндпоинты, путь `models_dir/loras`, регрессионный тест. |
 | `9ece51d` | `feat(halftone)`: стек слоёв, маски, виртуальный оригинал, WebGL2 FBO-композитор, защита от муара. |
