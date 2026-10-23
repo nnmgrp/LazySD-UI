@@ -3,12 +3,66 @@
 Журнал коммитов для людей и ИИ-агентов. Перед началом работы сверяйся с
 `git log --oneline -20`, потому что этот файл обновляется не автоматически.
 
-> **Последний код-коммит:** `d322737` — feat(queue): serialize GPU jobs and fix History, presence, Dock (2026-10-23).
+> **Последний код-коммит:** `73b9ce8` — fix(ui): keep Dock stationary and repair Models Hub filters (2026-10-23).
 > Документация (этот файл и ссылки в MD) идёт отдельным коммитом `docs: ...`, его хеш смотри в `git log -1`.
 
 ---
 
 ## 2026-10-23
+
+### `73b9ce8` — fix(ui): keep Dock stationary, repair Models Hub filters, tolerate transient 502
+
+Исправлены регрессии, найденные вживую на `127.0.0.1:7871`: сдвиг Dock при
+открытии выбора модели в Drag-режиме, неработающие теги/поиск Models Hub и
+ошибки `Bad Gateway` в History/Halftone.
+
+Dock:
+- Причина сдвига: поповеры лежали в normal flow перед `.gemini-dock`; в
+  drag-режиме обёртка привязана к `top`, поэтому её рост увеличивал `top` самой
+  панели. Например, при `dockCustomY=120` панель уезжала на `top=378.5`.
+- `.dock-popover` теперь `position: absolute; bottom: calc(100% + 8px); left: 0`
+  и не влияет на геометрию обёртки. Для случая, когда сверху нет места,
+  `toggleDockPopover()` добавляет `.dock-popover-below`
+  (`top: calc(100% + 8px)`).
+- Проверено в браузере: Dock остаётся на `top=120` при открытии поповера и
+  вверху, и внизу экрана; смещение — `0 px`. Ручка Drag и inline `left/top`
+  не меняются.
+
+Models Hub:
+- Исправлен селектор активной кнопки: реальная разметка —
+  `#models-tab-filters .filter-chip` с `data-tab-filter`, а не
+  `#models-hub-filters .filter-pill`.
+- `renderModelsTab()` реально фильтрует `all`, `installed`, `custom`, `hidden`,
+  `svdq`, `sd_cpp`, `sdnq`, `klein`, `qwen`, `z-image`; поиск идёт по id,
+  названию, family, engine, описанию, текстовым энкодерам и вариантам.
+- `hidden` учитывает оба флага: `hidden_from_host` и `hidden_for_guests`.
+- Ветка `encoders` запрашивает `/api/encoders` и рисует отдельные карточки
+  (`renderEncodersTab`) с кнопкой скачивания; после скачивания сбрасывается
+  кэш энкодеров и вызывается `refreshConfig()`.
+- `frontend/js/modules/models-hub.js` синхронизирован: тот же селектор,
+  `hidden`-фильтр и обновление active по `data-tab-filter`.
+
+History/Halftone и сетевые ошибки:
+- Живые запросы `/api/history?page=1..3` и `/api/halftone/process` на CPU
+  вернули HTTP 200; в `logs/verify/quantfunc.log` не было ни 502, ни traceback.
+  Ошибки `Bad Gateway` возникали, когда проверочный сервер был недоступен:
+  запросы вообще не доходили до uvicorn.
+- Добавлен `_fetchWithRetry`: GET-запросы повторяются до 2 раз, превью
+  Halftone — 1 раз, только для `502/503/504` и сетевых ошибок. Мутирующие
+  POST-генерации не повторяются, чтобы не создать дубликаты задач.
+- Проверено инъекцией ответов: два подряд 502 на History и один 502 на
+  Halftone preview успешно перекрываются повтором, UI не показывает ошибку.
+
+Проверка:
+- `python -m pytest tests -q` → **36 passed**; статические guard-тесты
+  дополнены проверками Dock-поповеров, фильтров и retry.
+- Все 14 frontend JS-файлов прошли `node --check`; `compileall` и оба locale
+  JSON валидны.
+- Живые фильтры: 23 all, 7 installed, 0 custom, 1 hidden, 13 encoders, 7 SVDQ,
+  6 SD.CPP, 1 SDNQ, 11 Klein, 7 Qwen, 2 Z-Image; поиск `klein` — 10 карточек.
+- История: страницы 1–3 по 24 элемента, без тостов; Halftone CPU: 1024×1024,
+  1536×1536 и 2048×2048, HTTP 200, без `Halftone error`.
+- Bump cache-bust: `/js/app.js?v=20261023_04`, `/css/styles.css?v=20261023_04`.
 
 ### `d322737` — feat(queue): serialize GPU jobs, add presence monitor, fix History and Dock drag
 

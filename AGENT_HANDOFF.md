@@ -279,6 +279,13 @@ G:\QuantFunc-WebUI\
   позиция (если она есть), затем клампится к текущему окну.
 - `frontend/js/app.js` — активная реализация; `frontend/js/modules/dock.js`
   обязана повторять те же id/методы и CSS-класс.
+- Поповеры Dock (`#dock-popover-model|res|params|presets`) обязаны быть
+  **вне normal flow**: `.dock-popover` имеет `position:absolute;
+  bottom:calc(100% + 8px); left:0`. Иначе в drag-режиме обёртка привязана к
+  `top`, и открытие поповера увеличивает её высоту, сдвигая саму панель вниз.
+  Для положения у верхней границы `toggleDockPopover()` добавляет
+  `.dock-popover-below` (`top:calc(100% + 8px)`); геометрия Dock при этом
+  не меняется.
 - Сортировка текстовых энкодеров: установленные всегда первыми
   (`te.installed ? -1 : 1`) и выбираются по умолчанию.
 
@@ -320,6 +327,39 @@ G:\QuantFunc-WebUI\
   запрос мог завершиться позже нового и подвесить/перерисовать страницу.
 - Не вызывай `loadHistory()` повторно из рендера и не убирай `finally`:
   именно эти две вещи приводили к зависаниям.
+- `App._fetchWithRetry()` повторяет запрос только для HTTP `502/503/504` и
+  сетевых ошибок: `apiGet` — 2 раза, превью Halftone (`POST
+  /api/halftone/process` с `save:false`) — 1 раз. Мутирующие POST
+  `/api/generate` и `/api/manga/ai-job` **не повторяются**, иначе можно создать
+  дубликат GPU-задачи. Ошибка `Bad Gateway` при живом сервере означает, что
+  запрос не дошёл до uvicorn: сначала проверь процесс на порту и access-log.
+
+### 6.4. Models Hub: фильтры, поиск и текстовые энкодеры
+
+- Активная разметка — `#models-tab-filters`; у кнопок атрибут
+  `data-tab-filter`, а не `data-filter`. Старый селектор
+  `#models-hub-filters .filter-pill` не существует и делал фильтры
+  неработающими.
+- `App.setModelsTabFilter(filter, btnEl)` выставляет
+  `state.modelsTabFilter`, обновляет `.active` по `data-tab-filter` и вызывает
+  `renderModelsTab()`. `onModelsTabSearch()` обновляет
+  `state.modelsTabSearch`.
+- `renderModelsTab()` теперь `async`; для `encoders` она уходит в
+  `renderEncodersTab()` и `/api/encoders`. Остальные фильтры:
+  - `installed` — `model.installed === true`;
+  - `custom` — `model.is_custom === true`;
+  - `hidden` — `hidden_from_host` **или** `hidden_for_guests`;
+  - `svdq` — движок Nunchaku/SVDQ или SVDQ-трансформер;
+  - `sd_cpp` — `engine === "sd_cpp"` или GGUF;
+  - `sdnq`, `klein`/Flux.2, `qwen`, `z-image` — по engine/family/id.
+- Поиск идёт по id, name, family, engine, description, текстовым энкодерам и
+  id трансформеров, поэтому запрос `klein` находит не только модели с Klein в
+  названии.
+- `renderEncodersTab()` показывает 13 общих энкодеров с признаком установки,
+  размером и кнопкой `App.downloadSharedEncoder()`; после завершения
+  скачивания кэш `state.encoders` сбрасывается, вызывается `refreshConfig()`.
+- `frontend/js/modules/models-hub.js` должен повторять фильтры и селектор
+  активной кнопки; это проверяется статическим тестом.
 
 ---
 
@@ -392,16 +432,30 @@ G:\QuantFunc-WebUI\
      `transform:none` с `!important` там нужны — они нейтрализуют preset-классы
      и не мешают inline `left/top`. Тянуть разрешено только за
      `#dock-drag-handle` при включённом `dockDragEnabled`.
-8. **History: гонка запросов и потеря `finally`**:
+   - **Не возвращай `.dock-popover` в normal flow.** В drag-режиме wrap
+     привязан к `top`, и растущий поповер сдвигает саму панель вниз. Поповер
+     должен оставаться `position:absolute`; для нехватки места сверху
+     используется `.dock-popover-below`.
+8. **History: гонка запросов, потеря `finally` и 502**:
    - `loadHistory()` инкрементирует `historyRequestSeq`; ответ применяется
      только если seq всё ещё актуален. Снятие `history-loading` обязано быть в
      `finally` — иначе любой сетевой сбой навсегда оставляет скелетон/зависание.
    - API нельзя переключать на объект без query-параметров: старые клиенты
      ожидают массив. Пагинация включается наличием `page/page_size/filter/q`.
-9. **Presence middleware не должен ломать запросы**:
-   - `record_activity()` вызывается best-effort и глотает исключения. Не
-     поднимай ошибку из middleware при проблемах с registry: иначе упадёт
-     авторизация/статика. Гостю не отдавай список пользователей, только count.
+   - Повторы `_fetchWithRetry` спасают только от транзиентного шлюза. Если
+     `502` повторяется, проверь, что сервер слушает порт: такие запросы
+     отсутствуют в access-log.
+9. **Models Hub: селектор фильтров**:
+   - Кнопки находятся в `#models-tab-filters` и используют
+     `data-tab-filter`. Не возвращай несуществующий
+     `#models-hub-filters .filter-pill`; иначе active-состояние не
+     обновляется, а фильтрация выглядит неработающей.
+   - Ветка `encoders` обязана запрашивать `/api/encoders` и использовать
+     `renderEncodersTab()`, а не фильтровать `state.models`.
+10. **Presence middleware не должен ломать запросы**:
+    - `record_activity()` вызывается best-effort и глотает исключения. Не
+      поднимай ошибку из middleware при проблемах с registry: иначе упадёт
+      авторизация/статика. Гостю не отдавай список пользователей, только count.
 
 ---
 
@@ -450,6 +504,7 @@ G:\QuantFunc-WebUI\
 ### 2026-10-23
 | Коммит | Описание |
 |---|---|
+| `73b9ce8` | `fix(ui)`: Dock-поповеры выведены из normal flow (`position:absolute`, `dock-popover-below`), исправлены селектор и реальная фильтрация Models Hub, добавлены карточки/скачивание энкодеров, retry для транзиентных 502/503/504 в GET и Halftone preview; 36 тестов. |
 | `d322737` | `feat(queue)`: FIFO GPU-очередь для `/api/generate` и `/api/manga/ai-job`, queue-overlay, лимит CPU 4, presence-мониторинг с heartbeat, серверная пагинация/фильтры History, отдельный Drag-режим Dock и исправление `left:auto`; 36 тестов. |
 | `0470af4` | `fix(flux3)`: FLUX.3 Nunchaku через diffusers main и `ModularPipeline`; проба/установка `has_diffusers_flux3`, локальный `modular_model_index.json`, `NunchakuQwen3VLEncoderModel`, обход prompt upsampler, UI-проверка и тест `test_flux3_nunchaku_support`. |
 | `2e1b352` | `fix(lora)`: восстановлен LoRA Hub — переключение панели, `renderLoraHubGrid`/`renderLoraLibrary`, счётчик, вкладки модалки, HF-эндпоинты, путь `models_dir/loras`, регрессионный тест. |
