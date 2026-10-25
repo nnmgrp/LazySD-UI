@@ -141,6 +141,13 @@ from pathlib import Path
 from typing import Optional
 
 
+# Legacy Windows consoles (cp1251/cp866) cannot encode arrows/emoji used in
+# startup messages. Never let a log line crash the server before it binds.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
 
 
 
@@ -1609,6 +1616,24 @@ def create_app() -> FastAPI:
 
 
 
+    def _transformer_installed(model, variant, cache: CacheManager) -> bool:
+
+        try:
+
+            repo_id = getattr(variant, "repo_id", None) or (model.sources.primary.repo_id if model.sources and model.sources.primary else "")
+
+            if not repo_id or not variant.path:
+
+                return False
+
+            return (cache.repo_dir_for(repo_id) / variant.path).is_file()
+
+        except Exception:
+
+            return False
+
+
+
     def _model_is_installed(model, cache: CacheManager, gpu_tier: str) -> bool:
 
 
@@ -1953,9 +1978,16 @@ def create_app() -> FastAPI:
 
 
 
-                if not (local_base / "model_index.json").exists():
+                has_diffusers_index = (local_base / "model_index.json").exists()
 
-
+                # Imported folder-layout releases (OrbitQuant/SVDQ) often ship component
+                # configs but no root model_index.json. Treat them as installed when the
+                # transformer and VAE configs are present.
+                has_component_layout = (
+                    (local_base / "transformer" / "config.json").exists()
+                    and (local_base / "vae" / "config.json").exists()
+                )
+                if not has_diffusers_index and not has_component_layout:
 
                     return False
 
@@ -2334,6 +2366,10 @@ def create_app() -> FastAPI:
 
 
                         "note": t.note,
+
+
+
+                        "installed": _transformer_installed(m, t, cache),
 
 
 
@@ -3426,6 +3462,10 @@ def create_app() -> FastAPI:
 
 
 
+                        "installed": _transformer_installed(m, t, cache),
+
+
+
                     }
 
 
@@ -3830,7 +3870,7 @@ def create_app() -> FastAPI:
 
 
 
-            is_t_installed = entry.state.value in ("ready", "cached")
+            is_t_installed = entry.state.value == "installed"
 
 
 
@@ -3871,6 +3911,14 @@ def create_app() -> FastAPI:
 
 
                 "recommended_for_gpu": t.recommended_for_gpu,
+
+
+
+                "path": t.path,
+
+
+
+                "repo_id": getattr(t, "repo_id", None) or repo_id,
 
 
 
@@ -4870,12 +4918,16 @@ def create_app() -> FastAPI:
             raise HTTPException(500, f"Failed to open folder: {e}")
 
 
-
     @app.delete("/api/models/{model_id}/files")
 
-    async def api_model_delete_files(model_id: str, request: Request = None):
+    async def api_model_delete_files(model_id: str, variant_id: Optional[str] = None, request: Request = None):
 
-        """Delete downloaded model weights from disk to free space."""
+        """Delete downloaded weights for one variant (or the whole model) without touching shared files.
+
+        The endpoint removes only exact files referenced by the model manifest. Repositories are
+        never removed recursively: a repo may also hold shared encoders, VAEs, auxiliary sidecars
+        or variants belonging to other models.
+        """
 
         if request:
 
@@ -4891,7 +4943,13 @@ def create_app() -> FastAPI:
 
         registry = get_registry()
 
-        model = registry.get(model_id)
+        try:
+
+            model = registry.get(model_id)
+
+        except KeyError:
+
+            model = None
 
         if not model:
 
@@ -4899,68 +4957,44 @@ def create_app() -> FastAPI:
 
 
 
+        from backend.model_files import collect_delete_targets, delete_targets
+
         cache = CacheManager()
+        primary_repo = model.sources.primary.repo_id if model.sources and model.sources.primary else ""
+        if not primary_repo:
+            raise HTTPException(400, "У модели нет источника Hugging Face — удалять нечего")
 
-        deleted_files = []
+        try:
+            targets, protected, skipped_shared = collect_delete_targets(
+                model, registry.list_all(), cache, variant_id
+            )
+        except KeyError:
+            raise HTTPException(404, f"Variant '{variant_id}' not found for model '{model_id}'")
 
-        freed_bytes = 0
+        selected_variant = next(
+            (variant for variant in getattr(model, "transformers", []) or []
+             if getattr(variant, "id", None) == variant_id),
+            None,
+        ) if variant_id else None
+        result = delete_targets(cache, targets)
 
-
-
-        repo_id = model.sources.primary.repo_id if model.sources and model.sources.primary else ""
-
-        for t in model.transformers:
-
-            t_path = cache.path_for(repo_id, t.path) if repo_id else None
-
-            if t_path and t_path.is_file():
-
-                sz = t_path.stat().st_size
-
-                t_path.unlink(missing_ok=True)
-
-                deleted_files.append(str(t_path.name))
-
-                freed_bytes += sz
-
-
-
-        if repo_id:
-
-            repo_dir = cache.repo_dir_for(repo_id)
-
-            if repo_dir.exists() and repo_dir.resolve().is_relative_to(cache.cache_dir.resolve()):
-
-                import shutil
-
-                for f in repo_dir.rglob("*"):
-
-                    if f.is_file():
-
-                        freed_bytes += f.stat().st_size
-
-                        deleted_files.append(f.name)
-
-                shutil.rmtree(repo_dir, ignore_errors=True)
-
-
+        if not result["deleted_files"]:
+            message = ("Файлы используются другой моделью — удаление пропущено" if skipped_shared
+                       else "Файлы не найдены — возможно, веса уже удалены")
+        elif selected_variant:
+            message = f"Веса варианта «{selected_variant.id}» удалены"
+        else:
+            message = "Веса модели удалены"
 
         return {
-
             "status": "ok",
-
             "model_id": model_id,
-
-            "deleted_files_count": len(deleted_files),
-
-            "freed_mb": round(freed_bytes / (1024 * 1024), 1),
-
+            "variant_id": variant_id,
+            **result,
+            "protected_shared_count": len(protected),
+            "skipped_shared": sorted(skipped_shared),
+            "message": message,
         }
-
-
-
-
-
 
 
     # ---------- API: Presets & Templates ----------
@@ -5541,6 +5575,12 @@ def create_app() -> FastAPI:
 
                                     "vae/config.json", "vae/*.json", "vae/diffusion_pytorch_model.safetensors",
 
+                                    # Imported folder releases may ship their own pipeline script/fonts.
+
+                                    # They are downloaded for completeness and never executed automatically.
+
+                                    *(["*.py", "fonts/**"] if getattr(model, "is_custom", False) else []),
+
 
 
                                 ]
@@ -5912,6 +5952,36 @@ def create_app() -> FastAPI:
 
 
 
+
+
+
+                # Auxiliary quant sidecars (OrbitQuant codebooks/rotations, SVDQ metadata).
+
+                # They are small but the transformer cannot be reconstructed without them.
+
+                for aux in eng_args.get("aux_files") or []:
+
+                    if isinstance(aux, dict):
+
+                        aux_rel = str(aux.get("path") or "").replace("\\", "/").lstrip("/")
+
+                        aux_repo = aux.get("repo_id") or repo_id
+
+                    else:
+
+                        aux_rel = str(aux or "").replace("\\", "/").lstrip("/")
+
+                        aux_repo = repo_id
+
+                    if not aux_rel:
+
+                        continue
+
+                    local_aux = local_repo_dir / aux_rel
+
+                    if not local_aux.exists():
+
+                        tasks.append(("aux", aux_rel, aux_rel, aux_repo))
 
 
 

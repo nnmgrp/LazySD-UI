@@ -10,7 +10,7 @@
 
   <title>LazySD UI</title>
 
-  <link rel="stylesheet" href="/css/styles.css?v=20261023_04">
+  <link rel="stylesheet" href="/css/styles.css?v=20261025_01">
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EL%3C/text%3E%3C/svg%3E">
 
@@ -1214,6 +1214,38 @@
             </div>
 
           </div>
+
+          <details id="downloads-panel" class="downloads-panel" open>
+
+            <summary class="downloads-summary">
+
+              <span class="downloads-summary-title">
+
+                <svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+
+                Загрузки
+
+                <span id="downloads-active-count" class="downloads-count" hidden>0</span>
+
+              </span>
+
+              <span class="downloads-summary-actions">
+
+                <button type="button" class="downloads-clear-btn" onclick="event.preventDefault(); event.stopPropagation(); App.clearFinishedDownloads()">Очистить завершённые</button>
+
+                <span class="downloads-chevron" aria-hidden="true">▾</span>
+
+              </span>
+
+            </summary>
+
+            <div id="downloads-list" class="downloads-list">
+
+              <div class="downloads-empty">Нет активных загрузок</div>
+
+            </div>
+
+          </details>
 
           <div id="models-list"></div>
 
@@ -3997,7 +4029,7 @@
 
   <script src="/js/dropzone.js?v=20261022_01"></script>
 
-  <script src="/js/app.js?v=20261023_04"></script>
+  <script src="/js/app.js?v=20261025_01"></script>
 
   <script>
 
@@ -5292,6 +5324,10 @@
             <span id="hf-inspected-repo-badge" class="badge-installed" style="font-size: 10px;">Repo Layout</span>
 
           </div>
+
+          <!-- Detected metadata chips -->
+
+          <div id="hf-import-meta" class="hf-meta-row" style="display: none;"></div>
 
           <!-- Warning banner (Missing components) -->
 

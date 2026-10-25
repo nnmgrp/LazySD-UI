@@ -27,6 +27,10 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+const ICON_DOWNLOAD = `<svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>`;
+const ICON_TRASH = `<svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+const ICON_CHECK = `<svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>`;
+
 const App = {
   // ---------- State ----------
   state: {
@@ -64,6 +68,7 @@ const App = {
     encoders: null,
     selectedVae: "texture_fix",
     activeDockPopover: null,
+    downloads: {},
     hfInspectedRepo: null,
     activeLoras: [],
     loraLibrary: [],
@@ -1069,16 +1074,25 @@ const App = {
       let variantsHtml = "";
       if (model.transformers && model.transformers.length) {
         for (const v of model.transformers) {
-          const btn = isDisabled
-            ? `<button class="setting-btn" disabled style="opacity: 0.6; cursor: not-allowed;" title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ Отключено</button>`
-            : `<button class="icon-btn" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)">⬇ Download</button>`;
+          let variantAction = "";
+          if (isDisabled) {
+            variantAction = `<button type="button" class="btn-download" disabled title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ <span>Отключено</span></button>`;
+          } else if (v.installed) {
+            variantAction = `
+              <div class="variant-actions">
+                <span class="variant-state installed" title="Файл варианта найден в кэше">${ICON_CHECK}<span>На диске</span></span>
+                <button type="button" class="btn-delete-files" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.deleteModelFiles(this.dataset.modelId, this.dataset.variantId, this)" title="Удалить веса этого варианта" aria-label="Удалить веса варианта ${escapeHtml(v.id)}">${ICON_TRASH}<span>Удалить</span></button>
+              </div>`;
+          } else {
+            variantAction = `<button type="button" class="btn-download" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)" title="Скачать веса варианта" aria-label="Скачать веса варианта ${escapeHtml(v.id)}">${ICON_DOWNLOAD}<span>Скачать</span></button>`;
+          }
           variantsHtml += `
             <div class="variant-item">
               <div class="variant-info">
                 <span class="variant-name">${escapeHtml(v.id)}</span>
                 <span class="variant-sub">${escapeHtml(v.backend)} · ${v.steps} steps · ${(v.size_gb || 0).toFixed(1)} GB</span>
               </div>
-              ${btn}
+              ${variantAction}
             </div>
           `;
         }
@@ -1180,8 +1194,8 @@ const App = {
             ).join("")}</div>`
           : "";
         const actionBtn = enc.installed
-          ? `<button class="card-action-btn active" style="width: 100%;" disabled>✓ Установлен в кэш</button>`
-          : `<button class="card-action-btn download" style="width: 100%;" onclick="App.downloadSharedEncoder('${escapeHtml(enc.repo_id)}', '${escapeHtml(enc.file_path || enc.file)}', '${escapeHtml(enc.id)}', this)">⬇ Скачать энкодер${sizeText ? ` (${sizeText})` : ""}</button>`;
+          ? `<button type="button" class="card-action-btn active" style="width: 100%;" disabled>${ICON_CHECK} Установлен в кэш</button>`
+          : `<button type="button" class="btn-download encoder-download-btn" data-repo-id="${escapeHtml(enc.repo_id)}" data-file-path="${escapeHtml(enc.file_path || enc.file)}" data-te-id="${escapeHtml(enc.id)}" onclick="App.downloadSharedEncoder(this.dataset.repoId, this.dataset.filePath, this.dataset.teId, this)">${ICON_DOWNLOAD}<span>Скачать энкодер${sizeText ? ` (${sizeText})` : ""}</span></button>`;
 
         card.innerHTML = `
           <div>
@@ -1212,7 +1226,7 @@ const App = {
   async downloadSharedEncoder(repoId, filePath, teId, btnEl) {
     if (btnEl) {
       btnEl.disabled = true;
-      btnEl.textContent = "Downloading...";
+      btnEl.classList.add("is-loading");
     }
     try {
       const result = await this.apiPost("/api/encoders/download", {
@@ -1222,13 +1236,17 @@ const App = {
       this.state.encoders = null;
       this.toast("info", "Скачивание энкодера начато...");
       if (result.job_id && this.startDownloadPolling) {
-        this.startDownloadPolling(result.job_id);
+        this.startDownloadPolling(result.job_id, {
+          label: `Энкодер: ${filePath}`,
+          kind: "encoder",
+          repoId,
+        });
       }
     } catch (err) {
       this.toast("error", "Ошибка скачивания: " + err.message);
       if (btnEl) {
         btnEl.disabled = false;
-        btnEl.textContent = "⬇ Скачать энкодер";
+        btnEl.classList.remove("is-loading");
       }
     }
   },
@@ -1254,9 +1272,19 @@ const App = {
 
     if (btnEl) {
       btnEl.disabled = true;
-      btnEl.textContent = "Downloading...";
+      btnEl.classList.add("is-loading");
     }
-    await this.downloadModel();
+    const modelName = model?.name || modelId;
+    const started = await this.downloadModel({
+      label: variantId ? `${modelName} · ${variantId}` : modelName,
+      kind: "model",
+      modelId,
+      variantId: variantId || null,
+    });
+    if (!started && btnEl) {
+      btnEl.disabled = false;
+      btnEl.classList.remove("is-loading");
+    }
   },
 
   // ---------- Event handlers ----------
@@ -1492,6 +1520,21 @@ const App = {
     document.querySelectorAll(".lang-btn").forEach(btn => {
       btn.addEventListener("click", () => window.setLocale(btn.dataset.lang));
     });
+
+    // Collapsible downloads panel: remember the user's open/closed choice.
+    const downloadsPanel = document.getElementById("downloads-panel");
+    if (downloadsPanel && downloadsPanel.tagName === "DETAILS") {
+      try {
+        const saved = window.localStorage.getItem("qf-downloads-open");
+        if (saved !== null) downloadsPanel.open = saved === "1";
+      } catch (e) { /* localStorage can be unavailable */ }
+      downloadsPanel.addEventListener("toggle", () => {
+        try {
+          window.localStorage.setItem("qf-downloads-open", downloadsPanel.open ? "1" : "0");
+        } catch (e) { /* ignore */ }
+      });
+    }
+    this.renderDownloads();
 
     // Custom downward prompt resize handler (prevents Flexbox upward expansion bug)
     this.initPromptResize();
@@ -1928,30 +1971,13 @@ const App = {
     }
   },
 
-  async downloadModel() {
-    if (!this.state.selectedModel) return;
+  async downloadModel(meta = null) {
+    if (!this.state.selectedModel) return false;
     const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
     if (activeModel && activeModel.disabled) {
       this.toast("error", activeModel.disabled_reason || "Модель отключена");
-      return;
+      return false;
     }
-    if (activeModel && !activeModel.installed) {
-      const notice = document.getElementById("gen-uninstalled-notice");
-      const noticeText = document.getElementById("gen-uninstalled-notice-text");
-      if (notice) {
-        if (noticeText) noticeText.textContent = `Модель «${activeModel.name}» не скачана. Перейдите в Model Hub для загрузки.`;
-        notice.style.display = "flex";
-      }
-      this.toast("warning", `Модель «${activeModel.name}» не скачана. Скачайте её в Model Hub.`);
-      return;
-    }
-    if (false) {
-      this.toast("warning", activeModel.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
-      return;
-    }
-    const dlBtn = document.getElementById("download-model-btn");
-    if (dlBtn) { dlBtn.disabled = true; dlBtn.textContent = "Downloading..."; }
-
     try {
       const teSelect = document.getElementById("text-encoder-select");
       const teId = teSelect && teSelect.value && teSelect.value !== "custom" ? teSelect.value : (this.state.selectedTextEncoder || null);
@@ -1962,19 +1988,130 @@ const App = {
           text_encoder_id: teId,
         }
       );
-      this.toast("info", "Downloading model files...");
-      // Poll for download progress
-      this.startDownloadPolling(result.job_id);
+      this.toast("info", "Скачивание файлов модели начато...");
+      this.startDownloadPolling(result.job_id, meta || {
+        label: activeModel?.name || this.state.selectedModel,
+        kind: "model",
+        modelId: this.state.selectedModel,
+        variantId: this.state.selectedVariant || null,
+      });
+      return true;
     } catch (e) {
       this.toast("error", "Download failed: " + e.message);
-      if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = "⬇ Download model"; }
+      return false;
     }
   },
 
-  startDownloadPolling(jobId) {
-    const dlBtn = document.getElementById("download-model-btn");
+  registerDownload(jobId, meta = {}) {
+    if (!jobId) return;
+    this.state.downloads[jobId] = {
+      jobId,
+      label: meta.label || `Загрузка ${String(jobId).slice(0, 8)}`,
+      kind: meta.kind || "model",
+      modelId: meta.modelId || null,
+      variantId: meta.variantId || null,
+      repoId: meta.repoId || null,
+      status: "queued",
+      progress: 0,
+      message: "В очереди...",
+      startedAt: Date.now(),
+    };
+    const panel = document.getElementById("downloads-panel");
+    if (panel && panel.tagName === "DETAILS") panel.open = true;
+    this.renderDownloads();
+  },
+
+  updateDownload(jobId, status = {}) {
+    const entry = this.state.downloads[jobId];
+    if (!entry) return;
+    if (status.status) entry.status = status.status;
+    if (typeof status.progress === "number") entry.progress = Math.max(0, Math.min(1, status.progress));
+    if (status.message) entry.message = status.message;
+    if (status.error) entry.message = status.error;
+    this.renderDownloads();
+  },
+
+  renderDownloads() {
+    const list = document.getElementById("downloads-list");
+    if (!list) return;
+    const entries = Object.values(this.state.downloads).sort((a, b) => b.startedAt - a.startedAt);
+    const activeStatuses = new Set(["queued", "initializing", "downloading", "loading"]);
+    const activeCount = entries.filter(e => activeStatuses.has(e.status)).length;
+    const countEl = document.getElementById("downloads-active-count");
+    if (countEl) {
+      countEl.textContent = String(activeCount);
+      countEl.hidden = activeCount === 0;
+    }
+    if (!entries.length) {
+      list.innerHTML = `<div class="downloads-empty">Нет активных загрузок</div>`;
+      return;
+    }
+    const statusLabels = {
+      queued: "В очереди",
+      initializing: "Подготовка",
+      downloading: "Скачивание",
+      loading: "Загрузка",
+      complete: "Готово",
+      error: "Ошибка",
+      cancelled: "Отменено",
+    };
+    list.innerHTML = entries.map(entry => {
+      const active = activeStatuses.has(entry.status);
+      const pct = Math.round((entry.progress || 0) * 100);
+      const statusClass = entry.status === "error" ? "error" : (entry.status === "complete" ? "done" : (entry.status === "cancelled" ? "cancelled" : "active"));
+      const action = active
+        ? `<button type="button" class="download-cancel-btn" onclick="event.stopPropagation(); App.cancelDownload('${escapeHtml(entry.jobId)}')">Отменить</button>`
+        : `<button type="button" class="download-dismiss-btn" onclick="event.stopPropagation(); App.dismissDownload('${escapeHtml(entry.jobId)}')">Убрать</button>`;
+      return `
+        <div class="download-item ${statusClass}">
+          <div class="download-item-head">
+            <span class="download-item-title" title="${escapeHtml(entry.label)}">${escapeHtml(entry.label)}</span>
+            <span class="download-item-status">${statusLabels[entry.status] || escapeHtml(entry.status)}</span>
+          </div>
+          <div class="download-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+            <span style="width: ${pct}%"></span>
+          </div>
+          <div class="download-item-foot">
+            <span class="download-item-message" title="${escapeHtml(entry.message || "")}">${escapeHtml(entry.message || "")}</span>
+            ${action}
+          </div>
+        </div>
+      `;
+    }).join("");
+  },
+
+  dismissDownload(jobId) {
+    delete this.state.downloads[jobId];
+    this.renderDownloads();
+  },
+
+  clearFinishedDownloads() {
+    for (const [jobId, entry] of Object.entries(this.state.downloads)) {
+      if (!["queued", "initializing", "downloading", "loading"].includes(entry.status)) {
+        delete this.state.downloads[jobId];
+      }
+    }
+    this.renderDownloads();
+  },
+
+  async cancelDownload(jobId) {
+    try {
+      await this.apiPost(`/api/jobs/${encodeURIComponent(jobId)}/cancel`);
+      const entry = this.state.downloads[jobId];
+      if (entry) {
+        entry.status = "cancelled";
+        entry.message = "Отменено пользователем";
+      }
+      this.renderDownloads();
+    } catch (e) {
+      this.toast("error", "Не удалось отменить загрузку: " + e.message);
+    }
+  },
+
+  startDownloadPolling(jobId, meta = {}) {
     const overlay = document.getElementById("progress-overlay");
     if (overlay) overlay.style.display = "flex";
+    this.registerDownload(jobId, meta);
 
     let pollCount = 0;
     const MAX_POLLS = 3600;  // 30 minutes at 500ms interval — fail-safe against stuck jobs
@@ -1983,18 +2120,18 @@ const App = {
       pollCount++;
       if (pollCount > MAX_POLLS) {
         clearInterval(interval);
-        if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = "⬇ Download model"; }
+        this.updateDownload(jobId, { status: "error", message: "Таймаут загрузки (30 минут)" });
         if (overlay) overlay.style.display = "none";
         this.toast("error", "Download timed out (30 min) — check server logs");
         return;
       }
       try {
         const status = await this.apiGet(`/api/jobs/${jobId}`);
+        this.updateDownload(jobId, status);
         this.updateProgress(status);
 
         if (status.status === "complete") {
           clearInterval(interval);
-          if (dlBtn) { dlBtn.disabled = false; dlBtn.style.display = "none"; }
           if (overlay) overlay.style.display = "none";
           this.toast("success", "Model files downloaded ✓");
           // Refresh model/encoder metadata so the Models Hub flips to "Installed".
@@ -2002,12 +2139,10 @@ const App = {
           await this.refreshConfig();
         } else if (status.status === "error") {
           clearInterval(interval);
-          if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = "⬇ Download model"; }
           if (overlay) overlay.style.display = "none";
           this.toast("error", "Download failed: " + (status.error || status.message || ""));
         } else if (status.status === "cancelled") {
           clearInterval(interval);
-          if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = "⬇ Download model"; }
           if (overlay) overlay.style.display = "none";
           this.toast("info", "Download cancelled");
         }
@@ -2015,7 +2150,7 @@ const App = {
         console.error("[app] Download polling failed:", e);
         // If we get HTTP 404 (job not found), stop polling
         clearInterval(interval);
-        if (dlBtn) { dlBtn.disabled = false; dlBtn.textContent = "⬇ Download model"; }
+        this.updateDownload(jobId, { status: "error", message: e.message || "Задание не найдено" });
         if (overlay) overlay.style.display = "none";
         this.toast("error", "Download job not found — try again");
       }
@@ -4140,33 +4275,129 @@ const App = {
       this.state.hfInspectedRepo = info;
 
       if (titleEl) titleEl.textContent = `📦 ${info.repo_id}`;
+
+      const badgeEl = document.getElementById("hf-inspected-repo-badge");
+      if (badgeEl) {
+        const layoutLabel = info.layout === "folders" ? "Folders" : (info.layout || "Repo");
+        badgeEl.textContent = `${layoutLabel}${info.has_model_index ? " · model_index" : (info.has_component_configs ? " · component configs" : "")}`;
+      }
+
       const nameInp = document.getElementById("hf-import-name") || document.getElementById("hf-custom-name");
       const modelDisplayName = info.name || info.suggested_name || repoId.split("/").pop();
       if (nameInp) nameInp.value = `${modelDisplayName} (HF)`;
       const famSel = document.getElementById("hf-import-family") || document.getElementById("hf-custom-family");
       if (famSel && (info.family || info.suggested_family)) famSel.value = info.family || info.suggested_family;
+      const engineSel = document.getElementById("hf-import-engine");
+      if (engineSel && info.suggested_engine) engineSel.value = info.suggested_engine;
+      const folderInp = document.getElementById("hf-import-folder");
+      if (folderInp) folderInp.value = info.suggested_folder || repoId.split("/").pop() || "";
       const stepsInp = document.getElementById("hf-import-steps") || document.getElementById("hf-custom-steps");
       if (stepsInp && (info.steps || info.suggested_steps)) stepsInp.value = info.steps || info.suggested_steps;
       const cfgInp = document.getElementById("hf-import-cfg") || document.getElementById("hf-custom-cfg");
       const suggestedCfg = info.cfg !== undefined ? info.cfg : info.suggested_cfg;
       if (cfgInp && suggestedCfg !== undefined) cfgInp.value = suggestedCfg;
 
+      const metaEl = document.getElementById("hf-import-meta");
+      if (metaEl) {
+        const chips = [];
+        if (info.pipeline_tag) chips.push(`🎯 ${info.pipeline_tag}`);
+        if (info.license) chips.push(`📄 ${info.license}`);
+        if (Number(info.weight_size_gb) > 0) chips.push(`💾 ${Number(info.weight_size_gb).toFixed(2)} GB весов`);
+        if (info.base_model) chips.push(`🧬 ${info.base_model}`);
+        const counts = [
+          [info.diffusion_files?.length, "transformer"],
+          [info.text_encoder_files?.length, "TE"],
+          [info.vae_files?.length, "VAE"],
+          [info.aux_files?.length, "aux"],
+        ].filter(([n]) => Number(n) > 0).map(([n, label]) => `${n} ${label}`);
+        if (counts.length) chips.push(`🧩 ${counts.join(" · ")}`);
+        if (Array.isArray(info.tags) && info.tags.length) chips.push(`🏷 ${info.tags.slice(0, 6).join(", ")}`);
+        metaEl.innerHTML = chips.map(text => `<span class="hf-meta-chip">${escapeHtml(text)}</span>`).join("");
+        metaEl.style.display = chips.length ? "flex" : "none";
+      }
+
+      const warnEl = document.getElementById("hf-import-warning-banner");
+      if (warnEl) {
+        const missingLabels = { base: "базовая модель/конфиги", text_encoder: "текстовый энкодер", vae: "VAE" };
+        const warnings = [...(info.warnings || [])];
+        const missing = (info.missing || []).map(item => missingLabels[item] || item);
+        if (missing.length) warnings.push(`Не хватает: ${missing.join(", ")}. Заполните поля ниже.`);
+        const uniqueWarnings = [...new Set(warnings.filter(Boolean))];
+        warnEl.innerHTML = uniqueWarnings.map(text => `<div>⚠️ ${escapeHtml(text)}</div>`).join("");
+        warnEl.style.display = uniqueWarnings.length ? "block" : "none";
+      }
+
+      const reasonEl = document.getElementById("hf-import-engine-reason");
+      if (reasonEl) {
+        const reasons = Array.isArray(info.engine_reasons) ? info.engine_reasons.filter(Boolean) : [];
+        reasonEl.innerHTML = reasons.length
+          ? `<strong>Движок: ${escapeHtml(info.suggested_engine || "—")}</strong> · ${reasons.map(escapeHtml).join(" ")}`
+          : "";
+        reasonEl.style.display = reasons.length ? "block" : "none";
+      }
+
+      const foldersEl = document.getElementById("hf-import-folders-tree");
+      if (foldersEl) {
+        const folders = Array.isArray(info.folders) ? info.folders : [];
+        foldersEl.innerHTML = folders.length
+          ? `<div style="font-weight: 600; margin-bottom: 4px; color: var(--text-bright);">Структура репозитория</div>` +
+            folders.map(row => `<div class="hf-folder-row"><code>${escapeHtml(row.folder)}</code><span>${escapeHtml(row.role)} · ${row.files} файл(ов) · ${row.size_gb} GB</span></div>`).join("")
+          : "";
+        foldersEl.style.display = folders.length ? "block" : "none";
+      }
+
+      const manualEl = document.getElementById("hf-import-manual-section");
+      const hasTe = Array.isArray(info.text_encoder_files) && info.text_encoder_files.length > 0;
+      const hasVae = Array.isArray(info.vae_files) && info.vae_files.length > 0;
+      if (manualEl) {
+        manualEl.style.display = (info.needs_manual || !hasTe || !hasVae) ? "flex" : "none";
+      }
+      const baseInp = document.getElementById("hf-import-base-repo");
+      if (baseInp) {
+        baseInp.value = (info.needs_manual || !info.has_component_configs) ? (info.base_model || "") : "";
+      }
+      const teRefInp = document.getElementById("hf-import-custom-te");
+      if (teRefInp) {
+        const def = info.defaults?.text_encoder;
+        teRefInp.value = !hasTe && def?.repo_id && def?.path ? `${def.repo_id}::${def.path}` : "";
+      }
+      const vaeRefInp = document.getElementById("hf-import-custom-vae");
+      if (vaeRefInp) {
+        const def = info.defaults?.vae;
+        vaeRefInp.value = !hasVae && def?.repo_id && def?.path ? `${def.repo_id}::${def.path}` : "";
+      }
+
       if (filesListEl) {
         filesListEl.innerHTML = "";
-        const diffFiles = info.diffusion_files || [];
-        if (!diffFiles.length) {
+        const groups = [
+          { title: "Веса модели (transformer / diffusion)", files: info.diffusion_files || [], cls: "hf-diff-checkbox", check: true, interactive: true },
+          { title: "Текстовый энкодер (скачается из этого репозитория)", files: info.text_encoder_files || [], cls: "hf-role-file", role: "TE" },
+          { title: "VAE (скачается из этого репозитория)", files: info.vae_files || [], cls: "hf-role-file", role: "VAE" },
+          { title: "Auxiliary / OrbitQuant sidecars", files: info.aux_files || [], cls: "hf-role-file", role: "AUX" },
+        ];
+        const allFiles = groups.reduce((sum, group) => sum + group.files.length, 0);
+        if (!allFiles) {
           filesListEl.innerHTML = `<div style="font-size: 12px; color: #f87171;">В репозитории не найдено файлов .gguf или .safetensors.</div>`;
-        } else {
-          diffFiles.forEach((f, idx) => {
-            const isRec = f.quant === "Q8_0" || f.quant === "Q4_K_M" || idx === 0;
+        }
+        for (const group of groups) {
+          if (!group.files.length) continue;
+          const heading = document.createElement("div");
+          heading.className = "hf-file-group-title";
+          heading.textContent = group.title;
+          filesListEl.appendChild(heading);
+          group.files.forEach((f, idx) => {
+            const isRec = group.interactive && (f.quant === "Q8_0" || f.quant === "Q4_K_M" || idx === 0);
             const row = document.createElement("label");
             row.className = "hf-file-row";
+            const checkbox = group.interactive
+              ? `<input type="checkbox" class="hf-diff-checkbox" data-path="${escapeHtml(f.path)}" data-quant="${escapeHtml(f.quant || '')}" data-size="${f.size_gb || 0}" ${isRec ? "checked" : ""}>`
+              : `<input type="checkbox" class="${group.cls}" data-role="${escapeHtml(group.role)}" data-path="${escapeHtml(f.path)}" checked disabled>`;
             row.innerHTML = `
               <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-                <input type="checkbox" class="hf-diff-checkbox" data-path="${escapeHtml(f.path)}" data-quant="${escapeHtml(f.quant || '')}" data-size="${f.size_gb || 0}" ${isRec ? "checked" : ""}>
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(f.name)}</span>
+                ${checkbox}
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(f.path || f.name)}</span>
               </span>
-              <span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">${escapeHtml(f.quant || f.ext.toUpperCase())} · ${f.size_gb} GB</span>
+              <span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">${escapeHtml(group.role || f.quant || f.ext?.toUpperCase() || "")} · ${f.size_gb} GB</span>
             `;
             filesListEl.appendChild(row);
           });
@@ -4195,6 +4426,11 @@ const App = {
     const nameEl = document.getElementById("hf-import-name") || document.getElementById("hf-custom-name");
     const famEl = document.getElementById("hf-import-family") || document.getElementById("hf-custom-family");
     const cfgEl = document.getElementById("hf-import-cfg") || document.getElementById("hf-custom-cfg");
+    const engineEl = document.getElementById("hf-import-engine");
+    const folderEl = document.getElementById("hf-import-folder");
+    const baseRepoEl = document.getElementById("hf-import-base-repo");
+    const customTeEl = document.getElementById("hf-import-custom-te");
+    const customVaeEl = document.getElementById("hf-import-custom-vae");
 
     const selectedFiles = checkedBoxes.map(cb => ({
       path: cb.dataset.path,
@@ -4207,11 +4443,23 @@ const App = {
       repo_id: info.repo_id,
       name: nameEl?.value?.trim() || `${info.name || info.suggested_name || 'Model'} (HF)`,
       family: famEl?.value || info.family || info.suggested_family || "flux",
+      engine: engineEl?.value || info.suggested_engine || "sd_cpp",
       steps: parseInt(stepsEl?.value || "20", 10),
       cfg: parseFloat(cfgEl?.value || "3.5"),
+      local_folder: folderEl?.value?.trim() || info.suggested_folder || "",
+      base_repo_id: baseRepoEl?.value?.trim() || "",
+      custom_te_ref: customTeEl?.value?.trim() || "",
+      custom_vae_ref: customVaeEl?.value?.trim() || "",
+      pipeline_tag: info.pipeline_tag || "",
+      tags: info.tags || [],
+      license: info.license || "",
+      has_model_index: !!info.has_model_index,
       selected_files: selectedFiles,
       variants: selectedFiles,
-      text_encoder_files: (info.text_encoder_files || []).slice(0, 2),
+      text_encoder_files: (info.text_encoder_files || []).slice(0, 4),
+      selected_te_files: (info.text_encoder_files || []).slice(0, 4),
+      selected_vae_files: (info.vae_files || []).slice(0, 1),
+      aux_files: info.aux_files || [],
     };
 
     try {
@@ -4229,7 +4477,10 @@ const App = {
 
   async deleteCustomModel(modelId, event) {
     if (event) event.stopPropagation();
-    const confirmed = confirm(`Удалить модель «${modelId}» из реестра Model Hub?`);
+    const confirmed = confirm(
+      `Удалить модель «${modelId}» из реестра Model Hub и удалить её скачанные веса?\n\n` +
+      "Удаляются только файлы из манифеста этой модели. Общие энкодеры, VAE и файлы других моделей останутся на диске."
+    );
     if (!confirmed) return;
 
     try {
@@ -4240,13 +4491,56 @@ const App = {
         const data = await res.json();
         throw new Error(data.detail || "Failed to delete");
       }
-      this.toast("info", `Модель ${modelId} удалена из реестра`);
+      this.toast("info", `Модель ${modelId} удалена из реестра, общие файлы сохранены`);
       await this.refreshConfig();
       if (this.state.isModelPickerOpen) {
         this.renderModelPickerModal();
       }
     } catch (err) {
       this.toast("error", err.message);
+    }
+  },
+
+  async deleteModelFiles(modelId, variantId, btnEl) {
+    const model = (this.state.models || []).find(m => m.id === modelId);
+    const modelLabel = model?.name || modelId;
+    const variant = (model?.transformers || []).find(v => v.id === variantId);
+    const sizeText = variant && Number(variant.size_gb) > 0 ? ` (~${Number(variant.size_gb).toFixed(1)} GB)` : "";
+    const what = variantId
+      ? `веса варианта «${variantId}»${sizeText}`
+      : `все скачанные веса модели «${modelLabel}»`;
+    const confirmed = confirm(
+      `Удалить ${what}?\n\n` +
+      "Файлы будут удалены только из локального кэша. Общие энкодеры, VAE и файлы других моделей не затрагиваются."
+    );
+    if (!confirmed) return;
+
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.classList.add("is-loading");
+    }
+
+    try {
+      const query = variantId ? `?variant_id=${encodeURIComponent(variantId)}` : "";
+      const result = await this.apiDelete(`/api/models/${encodeURIComponent(modelId)}/files${query}`);
+      const freedMb = Number(result.freed_mb || 0);
+      const freedText = freedMb >= 1024 ? `${(freedMb / 1024).toFixed(2)} GB` : `${freedMb.toFixed(1)} MB`;
+      this.toast("success", result.message || `Удалено файлов: ${result.deleted_files_count || 0} (${freedText})`);
+
+      await this.refreshConfig();
+      if (this.state.selectedModel === modelId) {
+        if (variantId && this.state.selectedVariant === variantId) this.state.selectedVariant = null;
+        await this.onModelChange(this.state.selectedVariant || null);
+      }
+      if (this.state.isModelPickerOpen) {
+        this.renderModelPickerModal();
+      }
+    } catch (err) {
+      this.toast("error", "Не удалось удалить веса: " + err.message);
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.classList.remove("is-loading");
+      }
     }
   },
 

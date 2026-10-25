@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import requests
@@ -417,19 +418,45 @@ def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
     repo_meta = detect_file_metadata(clean_repo)
     suggested_name = clean_repo.split("/")[-1].replace("-", " ").replace("_", " ")
     card = info.get("cardData") or {}
+
+    raw_base = card.get("base_model")
+    if isinstance(raw_base, list):
+        raw_base = next((str(item) for item in raw_base if item), "")
+    base_model = (raw_base or "").strip() if isinstance(raw_base, str) else ""
+    # HF tags carry the same binding as base_model:quantized for many quantized releases.
+    if not base_model:
+        for tag in tags:
+            if tag.startswith("base_model:") and not tag.startswith("base_model:quantized:"):
+                base_model = tag.split(":", 1)[1].strip()
+                break
+
+    raw_license = card.get("license")
+    if isinstance(raw_license, list):
+        raw_license = next((str(item) for item in raw_license if item), "")
+    license_name = str(raw_license or "").strip()
+    if not license_name:
+        license_name = next((tag.split(":", 1)[1] for tag in tags if tag.startswith("license:")), "")
+
+    total_weight_gb = round(sum(float(f.get("size_gb") or 0) for f in [
+        *comps["diffusion_model"], *comps["checkpoint"],
+        *comps["text_encoder"], *comps["vae"], *comps["aux"],
+    ]), 2)
+
     return {
         "repo_id": clean_repo,
         "name": suggested_name,
         "suggested_name": suggested_name,
         "family": sniff["suggested_family"] or repo_meta["family"],
         "suggested_family": sniff["suggested_family"] or repo_meta["family"],
+        "pipeline_tag": info.get("pipeline_tag") or "",
         "steps": repo_meta["steps"],
         "suggested_steps": repo_meta["steps"],
         "cfg": repo_meta["cfg"],
         "suggested_cfg": repo_meta["cfg"],
         "tags": tags[:20],
-        "base_model": card.get("base_model") if isinstance(card.get("base_model"), str) else "",
-        "license": card.get("license") or "",
+        "base_model": base_model,
+        "license": license_name,
+        "weight_size_gb": total_weight_gb,
         # Legacy keys (older UI code paths)
         "diffusion_files": comps["diffusion_model"] + comps["checkpoint"],
         "text_encoder_files": comps["text_encoder"],
@@ -438,6 +465,8 @@ def inspect_hf_repo(repo_id: str) -> dict[str, Any]:
         "aux_files": comps["aux"],
         "layout": sniff["layout"],
         "has_model_index": sniff["has_model_index"],
+        "has_component_configs": sniff.get("has_component_configs", False),
+        "pipeline_code": sniff.get("pipeline_code", []),
         "folders": sniff["folders"],
         "suggested_engine": sniff["suggested_engine"],
         "engine_reasons": sniff["engine_reasons"],
@@ -488,13 +517,23 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
     raw_slug = slugify(name) or slugify(repo_id.split("/")[-1])
     model_id = f"custom_hf_{raw_slug}"
 
+    pipeline_tag = str(data.get("pipeline_tag") or "").lower()
+    pipeline = "image_edit" if "image-to-image" in pipeline_tag or "image_edit" in pipeline_tag else "text_to_image"
+
     transformers = []
     for idx, vf in enumerate(selected_files):
         fpath = (vf.get("path") or vf.get("name") or "").replace("\\", "/")
         if not fpath:
             continue
         meta = detect_file_metadata(fpath)
-        vid = slugify(Path(fpath).stem) or f"var_{idx}"
+        parts = Path(fpath).parts
+        vid = slugify(f"{parts[-2]}_{Path(fpath).stem}") if len(parts) > 1 else slugify(Path(fpath).stem)
+        vid = vid or f"var_{idx}"
+        base_vid = vid
+        suffix = 2
+        while any(t["id"] == vid for t in transformers):
+            vid = f"{base_vid}_{suffix}"
+            suffix += 1
         transformers.append({
             "id": vid,
             "path": fpath,
@@ -504,10 +543,6 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
             "size_gb": float(vf.get("size_gb") or 4.0),
             "recommended": idx == 0,
             "repo_id": repo_id,
-            "source": {
-                "repo_id": repo_id,
-                "file_path": fpath,
-            },
             "note": f"{fpath} ({meta['quant']})",
         })
 
@@ -525,24 +560,28 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
         te_meta = detect_file_metadata(te_path)
         te_id = slugify(Path(te_path).stem) or f"te_{idx}"
         te_size = float(tef.get("size_gb") or 0.0)
+        te_source = tef.get("source") if isinstance(tef.get("source"), dict) else {}
+        te_repo = te_source.get("repo_id") or tef.get("repo") or repo_id
         te_entry = {
             "id": te_id,
             "name": f"{Path(te_path).name} ({te_size} GB)" if te_size else Path(te_path).name,
-            "repo": repo_id,
+            "repo": te_repo,
             "file": te_path,
             "path": te_path,
             "size_gb": te_size,
             "precision": te_meta["quant"].lower() if te_meta["quant"] != "CUSTOM" else "bf16",
             "recommended": idx == 0,
             "source": {
-                "repo_id": repo_id,
-                "file_path": te_path,
+                "repo_id": te_repo,
+                "file_path": te_source.get("file_path") or te_path,
             },
         }
-        text_encoders.append(te_entry)
+        if not any((te.get("file") == te_path and (te.get("repo") or (te.get("source") or {}).get("repo_id")) == te_repo)
+                   for te in text_encoders):
+            text_encoders.append(te_entry)
         if idx == 0 and not engine_args.get("llm"):
             engine_args["llm"] = te_path
-            engine_args["llm_repo"] = repo_id
+            engine_args["llm_repo"] = te_repo
             engine_args["llm_file"] = te_path
 
     # 2. Bind repo-internal VAE files if discovered in repo or passed from UI
@@ -550,11 +589,29 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
     for vf in repo_vae_files:
         v_path = (vf.get("path") or vf.get("file") or vf.get("name") or "").replace("\\", "/")
         if v_path:
+            v_source = vf.get("source") if isinstance(vf.get("source"), dict) else {}
+            v_repo = v_source.get("repo_id") or vf.get("repo") or repo_id
             engine_args["vae"] = v_path
-            engine_args["vae_repo"] = repo_id
+            engine_args["vae_repo"] = v_repo
             engine_args["vae_file"] = v_path
-            engine_args["vae_remote"] = v_path
+            engine_args["vae_remote"] = v_source.get("file_path") or v_path
             break
+
+    # 2b. OrbitQuant / SVDQ sidecars (codebooks, rotations, manifests) must travel with the weights.
+    aux_entries: list[dict[str, Any]] = []
+    for aux in data.get("aux_files") or []:
+        aux_path = (aux.get("path") if isinstance(aux, dict) else str(aux or "")).replace("\\", "/")
+        if not aux_path:
+            continue
+        aux_source = aux.get("source") if isinstance(aux, dict) and isinstance(aux.get("source"), dict) else {}
+        aux_entries.append({
+            "path": aux_path,
+            "repo_id": aux_source.get("repo_id") or (aux.get("repo") if isinstance(aux, dict) else "") or repo_id,
+            "size_gb": float(aux.get("size_gb") or 0.0) if isinstance(aux, dict) else 0.0,
+        })
+    if aux_entries:
+        engine_args["aux_files"] = aux_entries
+        engine_args["aux_repo"] = repo_id
 
     # 3. Handle manual / custom TE input from user (overrides repo-internal / defaults)
     custom_te_ref = (data.get("custom_te_ref") or data.get("custom_te_url") or "").strip()
@@ -708,12 +765,16 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
         "id": model_id,
         "name": f"{name} (HF)" if not name.endswith("(HF)") else name,
         "family": family,
-        "pipeline": "text_to_image",
+        "pipeline": pipeline,
         "engine": engine,
         "engine_version": engine,
         "is_custom": True,
         "local_folder": local_folder,
         "base_repo_id": base_repo_id,
+        "has_model_index": bool(data.get("has_model_index")),
+        "hf_pipeline_tag": pipeline_tag,
+        "tags": list(data.get("tags") or [])[:20],
+        "license": data.get("license") or "",
         "default_cfg": cfg,
         "description": data.get("description") or f"Импортировано из Hugging Face: {repo_id} (движок: {engine})",
         "sources": {
@@ -795,18 +856,37 @@ def delete_custom_model(model_id: str, delete_files: bool = False) -> bool:
     if model_id in protected_system_models and not is_custom:
         raise ValueError("Нельзя удалять базовые системные модели. Используйте скрытие модели.")
 
-    # Optionally delete downloaded files
+    # Optionally delete downloaded files. Never remove a repository directory:
+    # another model may use the same repo for its encoder, VAE or transformer.
     if delete_files:
         try:
             from .cache import CacheManager
+            from .model_files import collect_delete_targets, delete_targets
+
+            sources_data = target_data.get("sources") or {}
+            primary = sources_data.get("primary") or {}
+            repo_id = primary.get("repo_id") or primary.get("repo") or ""
+            adapter = SimpleNamespace(
+                id=target_data.get("id") or model_id,
+                sources=SimpleNamespace(primary=SimpleNamespace(repo_id=repo_id)) if repo_id else None,
+                transformers=[
+                    SimpleNamespace(
+                        id=t.get("id") or "",
+                        path=t.get("path") or "",
+                        repo_id=t.get("repo_id"),
+                    )
+                    for t in target_data.get("transformers", [])
+                    if isinstance(t, dict)
+                ],
+                text_encoders=target_data.get("text_encoders") or [],
+                engine_args=target_data.get("engine_args") or {},
+            )
             cache = CacheManager()
-            repo_id = target_data.get("sources", {}).get("primary", {}).get("repo_id")
-            if repo_id:
-                repo_cache_dir = cache.repo_dir_for(repo_id)
-                if repo_cache_dir.exists() and repo_cache_dir.is_dir():
-                    import shutil
-                    shutil.rmtree(repo_cache_dir, ignore_errors=True)
-                    print(f"[delete] Removed cached repo: {repo_cache_dir}")
+            targets, _protected, skipped = collect_delete_targets(adapter, get_registry().list_all(), cache)
+            result = delete_targets(cache, targets)
+            print(f"[delete] Removed {result['deleted_files_count']} cached file(s) for {model_id}")
+            if skipped:
+                print(f"[delete] Kept {len(skipped)} shared file(s) for {model_id}")
         except Exception as e:
             print(f"[delete] Warning cleaning cache for {model_id}: {e}")
 

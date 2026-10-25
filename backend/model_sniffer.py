@@ -276,6 +276,22 @@ def sniff_files(files: list[dict], repo_id: str = "", tags: Optional[list[str]] 
     all_paths = [str(f.get("path", "")).replace("\\", "/").lstrip("/") for f in files]
     lower_paths = {p.lower() for p in all_paths}
     has_model_index = "model_index.json" in lower_paths
+    # Some quantized releases (e.g. WaveCut OrbitQuant bundles) ship every Diffusers
+    # component folder + configs but omit the root model_index.json and add a custom
+    # pipeline script instead. Treat those as self-contained components, not as a
+    # missing base model, and explain the runtime limitation separately.
+    pipeline_code = sorted(
+        p for p in all_paths
+        if "/" not in p and p.lower().endswith(".py")
+    )
+    has_component_configs = any(
+        p in lower_paths
+        for p in (
+            "transformer/config.json",
+            "unet/config.json",
+            "diffusion_model/config.json",
+        )
+    ) and any(p.startswith("scheduler/") for p in lower_paths)
 
     entries: list[dict] = []
     for f in files:
@@ -335,12 +351,21 @@ def sniff_files(files: list[dict], repo_id: str = "", tags: Optional[list[str]] 
         needs_te = meta_family in ("flux", "qwen", "klein", "moss-image")
         if layout == "diffusers" or engine in DIFFUSERS_ENGINES:
             if not has_model_index:
-                missing.append("base")
-            else:
-                if not comps["text_encoder"] and needs_te:
-                    missing.append("text_encoder")
-                if not comps["vae"]:
-                    missing.append("vae")
+                # A folders release can still contain all components and configs.
+                # Only ask for a base repo when the component configs are absent.
+                if not has_component_configs:
+                    missing.append("base")
+                elif pipeline_code:
+                    warnings.append(
+                        "В репозитории нет model_index.json, но есть конфиги всех компонентов и "
+                        f"кастомный pipeline-код ({', '.join(pipeline_code)}). "
+                        "Импорт и скачивание файлов поддерживаются; для запуска нужен адаптер "
+                        "движка, который умеет загружать этот pipeline."
+                    )
+            if not comps["text_encoder"] and needs_te:
+                missing.append("text_encoder")
+            if not comps["vae"]:
+                missing.append("vae")
         else:
             if needs_te and not comps["text_encoder"]:
                 missing.append("text_encoder")
@@ -372,6 +397,8 @@ def sniff_files(files: list[dict], repo_id: str = "", tags: Optional[list[str]] 
     return {
         "layout": layout,
         "has_model_index": has_model_index,
+        "has_component_configs": has_component_configs,
+        "pipeline_code": pipeline_code,
         "folders": sorted(folders.values(), key=lambda r: r["folder"]),
         "components": comps,
         "suggested_engine": engine,
