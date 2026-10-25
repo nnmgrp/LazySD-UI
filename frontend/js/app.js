@@ -1117,7 +1117,7 @@ const App = {
         ? `<button class="delete-custom-btn" style="margin-top: 12px; margin-left: 8px;" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)">🗑 Удалить</button>`
         : "";
 
-      const canEditCard = model.is_custom && !this.state.account?.is_guest;
+      const canEditCard = !this.state.account?.is_guest;
       const editCardBtn = canEditCard
         ? `<button class="history-action-btn" style="width: auto; margin-top: 12px; margin-left: 8px;" onclick="App.openModelCardEditor('${escapeHtml(model.id)}')" title="Редактировать карточку, энкодер и VAE">✎ Редактировать</button>`
         : "";
@@ -1157,13 +1157,11 @@ const App = {
              </div>
              <div class="component-actions">${componentAction("vae", 0, "", vaeInfo.installed, "VAE")}</div>
            </div>`
-        : `<div class="component-empty">В карточке не указан VAE.${model.is_custom ? " Откройте редактор и добавьте его." : ""}</div>`;
-      const vaeSection = (vaeInfo || model.is_custom)
-        ? `<details class="model-card-section" ${vaeMissing ? "open" : ""}>
+        : `<div class="component-empty">В карточке не указан VAE.${canEditCard ? " Откройте редактор и добавьте его." : ""}</div>`;
+      const vaeSection = `<details class="model-card-section" ${vaeMissing ? "open" : ""}>
              <summary class="model-card-section-title">VAE${vaeMissing ? ` <span class="section-warning">нужно скачать</span>` : ""}</summary>
              <div class="model-variants-list">${vaeRow}</div>
-           </details>`
-        : "";
+           </details>`;
 
       const auxList = Array.isArray(model.aux_files) ? model.aux_files : [];
       const auxRows = auxList.map((aux, idx) => {
@@ -4634,7 +4632,9 @@ const App = {
     try {
       const card = await this.apiGet(`/api/models/${encodeURIComponent(modelId)}/card`);
       const args = card.engine_args || {};
-      const vaePath = args.vae_remote || args.vae_file || args.vae || "";
+      const vaeInfo = card.vae || null;
+      const vaePath = vaeInfo?.path || args.vae_remote || args.vae_file || args.vae || "";
+      const vaeLocal = /^[A-Za-z]:[\\/]/.test(vaePath) || vaePath.startsWith("/");
       const textEncoders = (card.text_encoders || []).map(te => ({
         id: te.id,
         name: te.name || te.path || te.file,
@@ -4656,9 +4656,10 @@ const App = {
         manifest: card,
         te: textEncoders,
         vae: vaePath ? {
-          repo_id: args.vae_repo || card.repo_id || "",
+          repo_id: vaeInfo?.repo_id || args.vae_repo || card.repo_id || "",
           path: vaePath,
-          size_gb: 0,
+          size_gb: Number(vaeInfo?.size_gb || 0),
+          local: vaeLocal,
         } : null,
         aux: auxFiles,
         repoInfo: null,
@@ -4919,6 +4920,9 @@ const App = {
       vae: editor.vae,
       aux_files: editor.aux,
     };
+    if (editor.vae?.local) {
+      delete payload.vae;
+    }
     try {
       await this.apiPatch(`/api/models/${encodeURIComponent(editor.modelId)}/card`, payload);
       this.toast("success", "✓ Карточка модели сохранена");

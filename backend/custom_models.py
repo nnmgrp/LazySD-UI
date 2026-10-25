@@ -812,7 +812,7 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Model card editing (custom manifests only)
+# Model card editing (built-in and custom manifests)
 # ---------------------------------------------------------------------------
 
 CARD_ENGINES = ("sd_cpp", "sdnq", "nunchaku", "orbitquant", "quantfunc")
@@ -825,7 +825,7 @@ def _card_registry_dir() -> Path:
 
 
 def _find_custom_manifest(model_id: str) -> tuple[Path, dict[str, Any]]:
-    """Return the JSON path + payload for a custom model, never a built-in manifest."""
+    """Return the JSON path + payload for a registry model (built-in or custom)."""
     registry_dir = _card_registry_dir()
     candidates: list[Path] = []
     direct = registry_dir / f"{model_id}.json"
@@ -844,8 +844,6 @@ def _find_custom_manifest(model_id: str) -> tuple[Path, dict[str, Any]]:
             continue
         if str(data.get("id") or path.stem) != model_id:
             continue
-        if not (data.get("is_custom") or model_id.startswith("custom_")):
-            raise ValueError("Встроенные карточки моделей защищены от редактирования")
         return path, data
 
     raise ValueError(f"Модель {model_id} не найдена в реестре")
@@ -1110,13 +1108,22 @@ def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> di
 
 
 def get_custom_model_card(model_id: str) -> dict[str, Any]:
-    """Return the raw editable manifest of a custom model."""
+    """Return the raw editable manifest of any registry model (host only)."""
     _path, manifest = _find_custom_manifest(model_id)
-    return {
+    repo_id = _primary_repo(manifest)
+    card = {
         **manifest,
-        "repo_id": _primary_repo(manifest),
+        "repo_id": repo_id,
         "editable": True,
     }
+
+    from .cache import CacheManager
+    from .model_files import vae_payload_from_args
+
+    payload = vae_payload_from_args(manifest.get("engine_args") or {}, repo_id, CacheManager())
+    if payload is not None:
+        card["vae"] = payload
+    return card
 
 
 def update_custom_model_card(model_id: str, updates: dict[str, Any]) -> dict[str, Any]:

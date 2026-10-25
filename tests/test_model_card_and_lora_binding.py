@@ -171,14 +171,34 @@ def test_card_api_reads_and_updates_custom_manifest(tmp_path, monkeypatch):
     assert saved["engine_args"]["vae"] == "vae/model.safetensors"
 
 
-def test_card_api_protects_built_in_manifests(monkeypatch):
+def test_card_api_reads_and_updates_built_in_manifest(tmp_path, monkeypatch):
     import app as app_module
     from fastapi.testclient import TestClient
 
+    _patch_card_registry(monkeypatch, tmp_path)
+    manifest = _custom_manifest("flux_builtin_model")
+    manifest["is_custom"] = False
+    path = tmp_path / "flux_builtin_model.json"
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
     client = TestClient(app_module.create_app())
-    response = client.get("/api/models/flux_2_klein_4b_nunchaku/card")
-    assert response.status_code == 404
-    assert "защищены" in response.json()["detail"]
+
+    read = client.get("/api/models/flux_builtin_model/card")
+    assert read.status_code == 200, read.text
+    body = read.json()
+    assert body["editable"] is True
+    assert body["is_custom"] is False
+    assert body["repo_id"] == "org/test-model"
+
+    patch = client.patch("/api/models/flux_builtin_model/card", json={
+        "name": "Edited built-in card",
+        "description": "Built-in manifests are editable too",
+    })
+    assert patch.status_code == 200, patch.text
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["name"] == "Edited built-in card"
+    assert saved["is_custom"] is False
+    assert saved["description"] == "Built-in manifests are editable too"
 
 
 @pytest.mark.parametrize("unsafe_path", [
@@ -207,6 +227,45 @@ def test_component_download_rejects_unsafe_repository_paths(unsafe_path, monkeyp
     )
     assert response.status_code == 400
     assert "safe repository/path binding" in response.json()["detail"]
+
+
+def test_component_download_vae_checks_primary_local_target(tmp_path, monkeypatch):
+    import app as app_module
+    from fastapi.testclient import TestClient
+
+    class FakeCache:
+        def repo_dir_for(self, repo_id):
+            return tmp_path / str(repo_id).split("/")[-1]
+
+    model = SimpleNamespace(
+        id="vae_model",
+        sources=SimpleNamespace(primary=SimpleNamespace(repo_id="org/model", type="huggingface")),
+        engine_args={
+            "vae": "flux2-vae.safetensors",
+            "vae_repo": "unsloth/FLUX.2-VAE",
+            "vae_remote": "split_files/vae/flux2-vae.safetensors",
+        },
+        get_text_encoder=lambda _id: None,
+    )
+    target = tmp_path / "model" / "flux2-vae.safetensors"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"vae")
+
+    monkeypatch.setattr(app_module, "CacheManager", FakeCache)
+    monkeypatch.setattr(app_module, "get_registry", lambda: SimpleNamespace(get=lambda _mid: model))
+    client = TestClient(app_module.create_app())
+
+    response = client.post(
+        "/api/models/vae_model/component-download",
+        json={"role": "vae"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "already_installed"
+    assert body["repo_id"] == "unsloth/FLUX.2-VAE"
+    assert body["path"] == "split_files/vae/flux2-vae.safetensors"
+    assert body["local_repo_id"] == "org/model"
+    assert body["local_path"] == "flux2-vae.safetensors"
 
 
 def test_custom_model_card_is_restored_when_registry_reload_fails(tmp_path, monkeypatch):
@@ -366,6 +425,8 @@ def test_models_hub_card_editor_and_lora_binding_wiring():
     assert "await this.loadLoras(true);" in app_js
     assert "downloadModelComponent" in app_js
     assert "/component-download" in app_js
+    assert "const canEditCard = !this.state.account?.is_guest;" in app_js
+    assert "const vaeSection = `<details" in app_js
 
     assert 'id="model-card-editor-modal"' in index_html
     assert 'id="component-picker-modal"' in index_html

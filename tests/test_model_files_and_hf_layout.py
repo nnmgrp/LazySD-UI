@@ -92,6 +92,113 @@ def test_folders_without_component_configs_still_requires_base():
 
 
 # ---------------------------------------------------------------------------
+# VAE cache detection and download targets
+# ---------------------------------------------------------------------------
+
+def _vae_model(repo_id: str, **engine_args):
+    return SimpleNamespace(
+        id="vae_model",
+        sources=SimpleNamespace(primary=SimpleNamespace(repo_id=repo_id)),
+        engine_args=engine_args,
+        transformers=[],
+        text_encoders=[],
+    )
+
+
+def test_vae_payload_finds_declared_vae_in_primary_repo(tmp_path):
+    from backend.cache import CacheManager
+    from backend.model_files import vae_download_refs, vae_payload
+
+    cache = CacheManager(tmp_path / "cache")
+    _write(cache.repo_dir_for("org/model") / "flux2-vae.safetensors")
+    model = _vae_model(
+        "org/model",
+        vae="flux2-vae.safetensors",
+        vae_repo="unsloth/FLUX.2-VAE",
+        vae_remote="split_files/vae/flux2-vae.safetensors",
+    )
+
+    payload = vae_payload(model, "org/model", cache)
+    assert payload["installed"] is True
+    assert payload["repo_id"] == "unsloth/FLUX.2-VAE"
+    assert payload["path"] == "split_files/vae/flux2-vae.safetensors"
+    assert payload["local_repo_id"] == "org/model"
+    assert payload["local_path"] == "flux2-vae.safetensors"
+    assert payload["resolved_path"] == "flux2-vae.safetensors"
+
+    refs = vae_download_refs(model, "org/model")
+    assert refs == {
+        "source_repo": "unsloth/FLUX.2-VAE",
+        "source_path": "split_files/vae/flux2-vae.safetensors",
+        "local_repo": "org/model",
+        "local_path": "flux2-vae.safetensors",
+    }
+
+
+def test_vae_payload_finds_vae_in_separate_vae_repo(tmp_path):
+    from backend.cache import CacheManager
+    from backend.model_files import vae_payload
+
+    cache = CacheManager(tmp_path / "cache")
+    _write(
+        cache.repo_dir_for("unsloth/FLUX.2-VAE")
+        / "split_files" / "vae" / "flux2-vae.safetensors"
+    )
+    model = _vae_model(
+        "org/model",
+        vae="flux2-vae.safetensors",
+        vae_repo="unsloth/FLUX.2-VAE",
+        vae_remote="split_files/vae/flux2-vae.safetensors",
+    )
+
+    payload = vae_payload(model, "org/model", cache)
+    assert payload["installed"] is True
+    assert payload["resolved_repo_id"] == "unsloth/FLUX.2-VAE"
+
+
+def test_vae_payload_infers_repo_local_vae_when_manifest_has_none(tmp_path):
+    from backend.cache import CacheManager
+    from backend.model_files import vae_payload
+
+    cache = CacheManager(tmp_path / "cache")
+    _write(
+        cache.repo_dir_for("org/turbo")
+        / "vae" / "diffusion_pytorch_model.safetensors"
+    )
+    model = _vae_model("org/turbo")
+
+    payload = vae_payload(model, "org/turbo", cache)
+    assert payload["installed"] is True
+    assert payload["inferred"] is True
+    assert payload["repo_id"] == "org/turbo"
+    assert payload["path"] == "vae/diffusion_pytorch_model.safetensors"
+    assert payload["local_path"] == payload["path"]
+
+    assert vae_payload(_vae_model("org/empty"), "org/empty", cache) is None
+
+
+def test_model_file_refs_include_vae_local_target(tmp_path):
+    from backend.model_files import model_file_refs
+
+    model = _vae_model(
+        "org/model",
+        vae="flux2-vae.safetensors",
+        vae_repo="unsloth/FLUX.2-VAE",
+        vae_remote="split_files/vae/flux2-vae.safetensors",
+    )
+    refs = model_file_refs(model)
+    assert ("unsloth/FLUX.2-VAE", "split_files/vae/flux2-vae.safetensors") in refs
+    assert ("org/model", "flux2-vae.safetensors") in refs
+
+
+def test_vae_download_refs_rejects_absolute_paths():
+    from backend.model_files import vae_download_refs
+
+    model = _vae_model("org/model", vae="/etc/passwd")
+    assert vae_download_refs(model, "org/model") is None
+
+
+# ---------------------------------------------------------------------------
 # Safe deletion endpoint
 # ---------------------------------------------------------------------------
 

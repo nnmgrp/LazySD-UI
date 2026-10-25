@@ -177,6 +177,10 @@ from backend.cache import CacheManager
 
 
 
+from backend.model_files import vae_download_refs, vae_payload
+
+
+
 from backend.engine import (
 
 
@@ -1632,18 +1636,6 @@ def create_app() -> FastAPI:
 
 
 
-    def _is_vae_installed(engine_args: dict, primary_repo: str, cache: CacheManager) -> bool:
-
-        rel = engine_args.get("vae_remote") or engine_args.get("vae_file") or engine_args.get("vae")
-
-        if not rel:
-
-            return False
-
-        return _repo_file_installed(engine_args.get("vae_repo") or primary_repo, str(rel), cache)
-
-
-
     def _is_aux_installed(aux: dict, primary_repo: str, cache: CacheManager) -> bool:
 
         if not isinstance(aux, dict):
@@ -2271,23 +2263,7 @@ def create_app() -> FastAPI:
 
 
 
-                "vae": ({
-
-
-
-                    "repo_id": (getattr(m, "engine_args", {}) or {}).get("vae_repo") or repo_id,
-
-
-
-                    "path": (getattr(m, "engine_args", {}) or {}).get("vae_remote") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae") or "",
-
-
-
-                    "installed": _is_vae_installed(getattr(m, "engine_args", {}) or {}, repo_id, cache),
-
-
-
-                } if ((getattr(m, "engine_args", {}) or {}).get("vae") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae_remote")) else None),
+                "vae": vae_payload(m, repo_id, cache),
 
 
 
@@ -3436,23 +3412,7 @@ def create_app() -> FastAPI:
 
 
 
-                "vae": ({
-
-
-
-                    "repo_id": (getattr(m, "engine_args", {}) or {}).get("vae_repo") or repo_id,
-
-
-
-                    "path": (getattr(m, "engine_args", {}) or {}).get("vae_remote") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae") or "",
-
-
-
-                    "installed": _is_vae_installed(getattr(m, "engine_args", {}) or {}, repo_id, cache),
-
-
-
-                } if ((getattr(m, "engine_args", {}) or {}).get("vae") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae_remote")) else None),
+                "vae": vae_payload(m, repo_id, cache),
 
 
 
@@ -3690,7 +3650,7 @@ def create_app() -> FastAPI:
     async def api_model_card(model_id: str, request: Request = None):
 
 
-        """Return editable manifest data for a custom model card (host only)."""
+        """Return editable manifest data for a registry model card (host only)."""
 
 
         if request:
@@ -3729,7 +3689,7 @@ def create_app() -> FastAPI:
     async def api_update_model_card(model_id: str, body: dict, request: Request = None):
 
 
-        """Update an imported model card and keep engine_args in sync (host only)."""
+        """Update a model card and keep engine_args in sync (host only)."""
 
 
         if request:
@@ -4605,23 +4565,7 @@ def create_app() -> FastAPI:
 
 
 
-            "vae": ({
-
-
-
-                "repo_id": (getattr(model, "engine_args", {}) or {}).get("vae_repo") or repo_id,
-
-
-
-                "path": (getattr(model, "engine_args", {}) or {}).get("vae_remote") or (getattr(model, "engine_args", {}) or {}).get("vae_file") or (getattr(model, "engine_args", {}) or {}).get("vae") or "",
-
-
-
-                "installed": _is_vae_installed(getattr(model, "engine_args", {}) or {}, repo_id, cache),
-
-
-
-            } if ((getattr(model, "engine_args", {}) or {}).get("vae") or (getattr(model, "engine_args", {}) or {}).get("vae_file") or (getattr(model, "engine_args", {}) or {}).get("vae_remote")) else None),
+            "vae": vae_payload(model, repo_id, cache),
 
 
 
@@ -5603,6 +5547,8 @@ def create_app() -> FastAPI:
 
         repo_id = ""
         file_path = ""
+        local_repo_id = ""
+        local_path = ""
         if role == "text_encoder":
 
 
@@ -5627,13 +5573,25 @@ def create_app() -> FastAPI:
         elif role == "vae":
 
 
-            args = getattr(model, "engine_args", {}) or {}
+            refs = vae_download_refs(model, primary_repo)
 
 
-            repo_id = args.get("vae_repo") or primary_repo
+            if not refs:
 
 
-            file_path = args.get("vae_remote") or args.get("vae_file") or args.get("vae") or ""
+                raise HTTPException(400, "VAE has no downloadable repository/path binding")
+
+
+            repo_id = refs["source_repo"]
+
+
+            file_path = refs["source_path"]
+
+
+            local_repo_id = refs["local_repo"]
+
+
+            local_path = refs["local_path"]
 
 
         else:
@@ -5690,17 +5648,39 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "Component has no safe repository/path binding")
         file_path = "/".join(parts)
 
+        local_repo_id = local_repo_id or repo_id
+        local_path = str(local_path or file_path).replace("\\", "/").strip()
+        local_parts = [part for part in local_path.split("/") if part not in ("", ".")]
+        if (
+            not local_repo_id
+            or not local_parts
+            or local_path.startswith("/")
+            or any(part == ".." for part in local_parts)
+            or ":" in local_parts[0]
+        ):
+            raise HTTPException(400, "Component has no safe local destination")
+        local_path = "/".join(local_parts)
+
 
         cache = CacheManager()
 
 
-        destination = cache.repo_dir_for(repo_id) / file_path
+        destination = cache.repo_dir_for(local_repo_id) / local_path
+
+
+        source_cached = cache.repo_dir_for(repo_id) / file_path
 
 
         if destination.is_file():
 
 
-            return {"status": "already_installed", "repo_id": repo_id, "path": file_path}
+            return {
+                "status": "already_installed",
+                "repo_id": repo_id,
+                "path": file_path,
+                "local_repo_id": local_repo_id,
+                "local_path": local_path,
+            }
 
 
         job_id = str(uuid.uuid4())[:8]
@@ -5742,10 +5722,37 @@ def create_app() -> FastAPI:
                 source = get_source(source_type, token=_get_token_for_source(source_type))
 
 
-                local_dir = cache.repo_dir_for(repo_id)
+                local_dir = cache.repo_dir_for(local_repo_id)
 
 
-                source.download_file(repo_id, file_path, local_dir)
+                if source_cached.is_file() and source_cached.resolve() != destination.resolve():
+
+
+                    import shutil
+
+
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+
+
+                    shutil.copy2(source_cached, destination)
+
+
+                else:
+
+
+                    downloaded = Path(source.download_file(repo_id, file_path, local_dir))
+
+
+                    if role == "vae" and downloaded.resolve() != destination.resolve() and not destination.is_file():
+
+
+                        import shutil
+
+
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+
+
+                        shutil.copy2(downloaded, destination)
 
 
                 STATE.update_job(job_id, ProgressEvent(
@@ -5778,7 +5785,14 @@ def create_app() -> FastAPI:
         threading.Thread(target=run_component_download, daemon=True).start()
 
 
-        return {"status": "started", "job_id": job_id, "repo_id": repo_id, "path": file_path}
+        return {
+            "status": "started",
+            "job_id": job_id,
+            "repo_id": repo_id,
+            "path": file_path,
+            "local_repo_id": local_repo_id,
+            "local_path": local_path,
+        }
 
 
     @app.post("/api/models/{model_id}/download")
