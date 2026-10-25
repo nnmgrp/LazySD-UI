@@ -3,8 +3,68 @@
 Журнал коммитов для людей и ИИ-агентов. Перед началом работы сверяйся с
 `git log --oneline -20`, потому что этот файл обновляется не автоматически.
 
-> **Последний код-коммит:** `73b9ce8` — fix(ui): keep Dock stationary and repair Models Hub filters (2026-10-23).
+> **Последний код-коммит:** `1033602` — feat(models): safe weight deletion, download queue UI, folder-layout HF imports (2026-10-25).
 > Документация (этот файл и ссылки в MD) идёт отдельным коммитом `docs: ...`, его хеш смотри в `git log -1`.
+
+---
+
+## 2026-10-25
+
+### `1033602` — feat(models): safe weight deletion, download queue UI, folder-layout HF imports
+
+Безопасное удаление весов:
+- `DELETE /api/models/{id}/files` принимает необязательный `variant_id` и удаляет
+  только точные файлы из манифеста (вариант, шарды `-0000N-of-0000M`, `.incomplete`),
+  а не весь каталог репозитория. Общая логика вынесена в `backend/model_files.py`
+  (`collect_delete_targets`, `delete_targets`, `model_file_refs`).
+- Файл, на который ссылается другая модель реестра, никогда не удаляется. Ответ
+  содержит `deleted_files`, `deleted_files_count`, `freed_bytes`, `freed_mb`,
+  `removed_dirs`, `protected_shared_count`, `skipped_shared` и `message`.
+- Пустые каталоги удаляются только после успешного удаления файлов; путь обязан
+  находиться внутри `models/cache`.
+- Удаление кастомной модели (`?delete_files=true`) использует те же helpers и
+  больше не вызывает `shutil.rmtree` для каталога репозитория. Подтверждение в UI
+  объясняет, что общие энкодеры, VAE и файлы других моделей останутся на диске.
+- При удалении одного варианта sidecar-файлы `orbitquant_*`/`svdq_*` удаляются
+  вместе с ним только если в той же папке нет другого варианта. Repo-local TE/VAE
+  удаляются, общие энкодеры из других репозиториев защищены.
+
+Models Hub / загрузки:
+- Кнопки скачивания и удаления — настоящие `<button>` с inline SVG-иконками;
+  установленный вариант показывает «На диске» и отдельную кнопку удаления.
+- `<details id="downloads-panel">` — сворачиваемая панель загрузок: счётчик
+  активных, прогресс, отмена, «Очистить завершённые», сохранение open-state.
+- `installed` у вариантов вычисляется по фактическому файлу; в state/config
+  добавлены `path`, `repo_id`, `installed`.
+
+HF-импорт и folder-layout:
+- Релизы без корневого `model_index.json`, но с `transformer/config.json` и
+  `vae/config.json`, считаются самодостаточными. Вместо ложного `missing: base`
+  UI предупреждает о кастомном pipeline-коде.
+- Импорт скачивает декларированные `orbitquant_*`/`svdq_*` sidecar-файлы, а для
+  кастомных моделей — корневые `.py` и `fonts/**` (файлы не исполняются).
+- `inspect_hf_repo()` возвращает `pipeline_tag`, нормализованный `base_model`,
+  `license`, `weight_size_gb`, `has_component_configs`, `pipeline_code`;
+  инспектор показывает meta-chips, дерево папок и группы TE/VAE/aux.
+- Проверен `WaveCut/Fibo-2.0-edit-turbo-OrbitQuant-W4A8`: `layout=folders`,
+  `engine=orbitquant`, `family=flux`, 4 шага, CFG 1.0, `missing=[]`, 7.53 GB,
+  base `briaai/Fibo-2.0-edit-turbo`, лицензия `cc-by-nc-4.0`.
+  Манифест создан локально для проверки и **не входит в коммит**: W4A8 требует
+  `orbitquant>=0.15.0` и `BriaFibo2Pipeline`, а установленный OrbitQuant 0.14.0
+  модель не запустит.
+
+Запуск на Windows:
+- `app.py` переводит `stdout/stderr` в `errors="replace"`, а `start.bat` задаёт
+  `chcp 65001`, `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`. Раньше сообщение со
+  стрелкой (`→`) роняло сервер с `UnicodeEncodeError` на кодовой странице cp1251.
+
+Проверка:
+- `python -m pytest tests -q` — **44 passed**; `node --check frontend/js/app.js`,
+  `py_compile` и live-проверка на `127.0.0.1:7871` успешны.
+- Live: 24 модели, Fibo в списке как Custom, 57 кнопок скачивания, 7 кнопок
+  удаления, панель «Загрузки 0 / Очистить завершённые»; удаление несуществующего
+  варианта даёт 404, пустое удаление — 200 с `protected_shared_count=76`.
+- Bump cache-bust: `/css/styles.css?v=20261025_01`, `/js/app.js?v=20261025_01`.
 
 ---
 

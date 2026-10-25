@@ -44,7 +44,8 @@ G:\QuantFunc-WebUI\
 │   ├── gpu.py                  # Автоопределение GPU, VRAM и SM-архитектуры (Ampere, Ada, Blackwell sm_120)
 │   ├── model_sniffer.py        # Сниффер локальных весов и автоопределение моделей/LoRA
 │   ├── lora.py                 # Управление библиотекой LoRA, совместимость и скачивание
-│   ├── custom_models.py        # Импорт пользовательских моделей
+│   ├── custom_models.py        # Импорт пользовательских моделей и HF-инспектор
+│   ├── model_files.py          # Безопасное удаление весов по манифесту (общие файлы защищены)
 │   ├── security.py             # Валидация путей (Path Traversal protection) и безопасность
 │   ├── settings.py             # Настройки приложения и авторизация аккаунтов (Хост / Гость)
 │   └── registry/               # JSON-спецификации моделей и пресетов
@@ -85,6 +86,7 @@ G:\QuantFunc-WebUI\
     ├── test_es6_modules.py     # Тесты модульности frontend
     ├── test_halftone_and_manga.py # Тесты математики полутонов и манги
     ├── test_latest_fixes.py    # Интеграционные тесты последних исправлений
+    ├── test_model_files_and_hf_layout.py # Безопасное удаление, общие файлы, Fibo folder-layout
     └── test_queue_presence_history.py # GPU-очередь, presence, пагинация History, Dock/UI-контракты
 ```
 
@@ -361,6 +363,58 @@ G:\QuantFunc-WebUI\
 - `frontend/js/modules/models-hub.js` должен повторять фильтры и селектор
   активной кнопки; это проверяется статическим тестом.
 
+### 6.5. Безопасное удаление весов и панель загрузок
+
+- Источник истины при удалении — **манифест модели**, а не каталог репозитория.
+  Логика живёт в `backend/model_files.py`:
+  - `model_file_refs(model)` собирает все `(repo_id, relative_path)` из
+    `transformers`, `text_encoders`, `engine_args.vae*` и `aux_files`.
+  - `collect_delete_targets(model, all_models, cache, variant_id=None)` сначала
+    собирает ссылки **всех других** моделей в `protected`. Совпавшие файлы не
+    удаляются, а попадают в `skipped_shared`. При удалении одного варианта
+    sidecar-файлы `orbitquant_*`/`svdq_*` добавляются только если в его папке
+    нет другого варианта.
+  - `delete_targets()` раскрывает шарды `-00001-of-0000N`, удаляет
+    `.incomplete`, проверяет `resolve().is_relative_to(cache.cache_dir)` и
+    убирает только пустые каталоги. Никакого `shutil.rmtree` по репозиторию.
+- `DELETE /api/models/{model_id}/files?variant_id=...`:
+  - гость → 403, неизвестный вариант → 404, модель без HF-источника → 400;
+  - ответ: `deleted_files`, `deleted_files_count`, `freed_bytes`, `freed_mb`,
+    `removed_dirs`, `protected_shared_count`, `skipped_shared`, `message`.
+- `backend/custom_models.py:delete_custom_model(..., delete_files=True)` строит
+  `SimpleNamespace`-адаптер из JSON и вызывает те же helpers. Удалять каталог
+  репозитория нельзя: в нём могут лежать общий энкодер, VAE, sidecar'ы или
+  варианты другой модели. Это проверяет `test_custom_model_delete_uses_safe_helpers`.
+- UI: кнопки `.btn-download` / `.btn-delete-files` — настоящие `<button>` с SVG;
+  установленный вариант получает `.variant-state installed` → «На диске» и
+  отдельную кнопку удаления. `<details id="downloads-panel">` хранит open-state,
+  показывает счётчик, прогресс, отмену и «Очистить завершённые»
+  (`App.registerDownload`, `App.renderDownloads`, `App.clearFinishedDownloads`).
+  `App.deleteModelFiles(modelId, variantId, btnEl)` подтверждает удаление,
+  показывает `skipped_shared`/`freed_mb` и вызывает `refreshConfig()`.
+
+### 6.6. HF-импорт folder-layout релизов (OrbitQuant/SVDQ)
+
+- `backend/model_sniffer.py` различает `layout=folders` и
+  `has_component_configs`. Если есть `transformer/config.json` и
+  `vae/config.json`, релиз считается самодостаточным даже без корневого
+  `model_index.json`; `missing` не должен содержать `base`. Вместо этого UI
+  предупреждает о кастомном pipeline-коде.
+- `pipeline_code` (корневые `.py`, например `fibo2_orbitquant.py`) — только
+  предупреждение. Импорт скачивает `.py` и `fonts/**` для полноты, но никогда
+  их не импортирует и не исполняет.
+- `inspect_hf_repo()` отдаёт `pipeline_tag`, нормализованный `base_model`,
+  `license`, `weight_size_gb`, `has_component_configs`, `pipeline_code`;
+  инспектор показывает meta-chips, дерево папок и группы TE/VAE/aux.
+- Импорт обязан скачивать декларированные sidecar-файлы
+  `transformer/orbitquant_*.safetensors` и `transformer/svdq_*`: без них
+  квантованный трансформер не собрать. Они также удаляются вместе с вариантом.
+- Сгенерированный манифест пишется в
+  `backend/registry/models/custom_hf_<...>.json` и по умолчанию остаётся
+  неотслеживаемым пользовательским артефактом. Не коммить манифест модели,
+  runtime которой ещё не поддерживается: пользователь скачает гигабайты и
+  получит ошибку движка.
+
 ---
 
 ## 7. Архитектурный план реализации системы слоёв (Layer System Plan)
@@ -456,6 +510,22 @@ G:\QuantFunc-WebUI\
     - `record_activity()` вызывается best-effort и глотает исключения. Не
       поднимай ошибку из middleware при проблемах с registry: иначе упадёт
       авторизация/статика. Гостю не отдавай список пользователей, только count.
+11. **Удаление весов: никогда не удаляй каталог репозитория**:
+    - Только `backend/model_files.py` и точные пути из манифеста. `shutil.rmtree`
+      по `models/cache/<repo>` удалит общие энкодеры, VAE, sidecar'ы и варианты
+      других моделей.
+    - Перед удалением сверяй `(repo_id, path)` со ссылками **всех** моделей
+      реестра; защищённые файлы возвращай в `skipped_shared`.
+    - Удаление варианта не должно трогать TE/VAE другого варианта той же модели;
+      sidecar'ы `orbitquant_*`/`svdq_*` удаляй только вместе с последним
+      вариантом в папке.
+    - Гостю удаление запрещено; путь обязан оставаться внутри `models/cache`.
+12. **Кодовая страница Windows и логи со стрелками**:
+    - На cp1251/cp866 символ `→` или эмодзи в `print()` вызывает
+      `UnicodeEncodeError` и может убить сервер до старта. В `app.py` уже стоит
+      `stdout/stderr.reconfigure(errors="replace")`, в `start.bat` —
+      `chcp 65001`, `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`.
+    - Не убирай эти настройки и не добавляй `print()` до их выполнения.
 
 ---
 
@@ -480,9 +550,10 @@ G:\QuantFunc-WebUI\
    ```powershell
    python -m pytest G:\QuantFunc-WebUI\tests -q
    ```
-   *Все 36 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
-   test_flux3_nunchaku_support, test_lora_hub_frontend_sync и
-   test_queue_presence_history) должны проходить со статусом PASS (100%).*
+   *Все 44 теста (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
+   test_flux3_nunchaku_support, test_lora_hub_frontend_sync,
+   test_model_files_and_hf_layout и test_queue_presence_history) должны
+   проходить со статусом PASS (100%).*
    `venv\Scripts\python.exe` не содержит pytest — используй глобальный `python`.
 3. **Проверка JSON-локалей и компиляции Python**:
    ```powershell
@@ -500,6 +571,11 @@ G:\QuantFunc-WebUI\
 
 > Полный журнал с деталями: [`CHANGELOG.md`](CHANGELOG.md).
 > Актуальный список всегда: `git log --oneline -20`.
+
+### 2026-10-25
+| Коммит | Описание |
+|---|---|
+| `1033602` | `feat(models)`: безопасное удаление весов только по манифесту с защитой общих файлов, `backend/model_files.py`, удаление кастомных моделей без `rmtree`, настоящие кнопки скачивания/удаления, сворачиваемая панель загрузок, aux-sidecar'ы и `.py`/`fonts` при HF-импорте, self-contained folder-layout без `model_index.json` (Fibo), UTF-8 запуск на Windows; 44 теста. |
 
 ### 2026-10-23
 | Коммит | Описание |
