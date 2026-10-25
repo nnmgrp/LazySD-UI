@@ -811,6 +811,344 @@ def register_hf_custom_model(data: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
+# ---------------------------------------------------------------------------
+# Model card editing (custom manifests only)
+# ---------------------------------------------------------------------------
+
+CARD_ENGINES = ("sd_cpp", "sdnq", "nunchaku", "orbitquant", "quantfunc")
+CARD_PIPELINES = ("text_to_image", "image_edit", "img2img", "inpaint")
+CARD_FAMILIES = ("flux", "klein", "qwen", "sdxl", "z-image", "moss-image", "ideogram", "qwen-layered")
+
+
+def _card_registry_dir() -> Path:
+    return Path(__file__).parent / "registry" / "models"
+
+
+def _find_custom_manifest(model_id: str) -> tuple[Path, dict[str, Any]]:
+    """Return the JSON path + payload for a custom model, never a built-in manifest."""
+    registry_dir = _card_registry_dir()
+    candidates: list[Path] = []
+    direct = registry_dir / f"{model_id}.json"
+    if direct.exists():
+        candidates.append(direct)
+    else:
+        candidates.extend(sorted(registry_dir.glob("*.json")))
+
+    for path in candidates:
+        if path.name == "registry_schema.json":
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except Exception:
+            continue
+        if str(data.get("id") or path.stem) != model_id:
+            continue
+        if not (data.get("is_custom") or model_id.startswith("custom_")):
+            raise ValueError("Встроенные карточки моделей защищены от редактирования")
+        return path, data
+
+    raise ValueError(f"Модель {model_id} не найдена в реестре")
+
+
+def _primary_repo(manifest: dict[str, Any]) -> str:
+    sources = manifest.get("sources") or {}
+    primary = sources.get("primary") or {}
+    return str(primary.get("repo_id") or primary.get("repo") or "").strip()
+
+
+def _clean_repo_id(value: Any, field: str, fallback: str = "") -> str:
+    from .model_sniffer import normalize_hf_repo
+
+    raw = str(value or "").strip().strip('"').strip("'")
+    if not raw:
+        raw = fallback
+    repo = normalize_hf_repo(raw) if raw else ""
+    if not repo or "/" not in repo:
+        raise ValueError(f"{field}: укажите репозиторий в формате author/repo")
+    return repo
+
+
+def _clean_component_path(value: Any, field: str) -> str:
+    path = str(value or "").replace("\\", "/").strip()
+    if path.startswith("/"):
+        raise ValueError(f"{field}: укажите относительный путь внутри репозитория")
+    if not path:
+        raise ValueError(f"{field}: укажите путь к файлу внутри репозитория")
+    parts = [part for part in path.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError(f"{field}: путь не должен выходить за пределы репозитория")
+    if ":" in parts[0]:
+        raise ValueError(f"{field}: укажите относительный путь внутри репозитория")
+    return "/".join(parts)
+
+
+def _clean_size(value: Any) -> float:
+    try:
+        size = float(value or 0)
+    except (TypeError, ValueError):
+        size = 0.0
+    return round(max(0.0, size), 2)
+
+
+def _normalize_text_encoders(items: Any, primary_repo: str) -> list[dict[str, Any]]:
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ValueError("text_encoders должен быть списком")
+    if len(items) > 12:
+        raise ValueError("Слишком много текстовых энкодеров (максимум 12)")
+
+    encoders: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError("Некорректная запись текстового энкодера")
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        repo = _clean_repo_id(
+            source.get("repo_id") or item.get("repo") or item.get("repo_id"),
+            f"Энкодер #{index + 1}",
+            fallback=primary_repo,
+        )
+        path = _clean_component_path(
+            item.get("path") or item.get("file") or source.get("file_path"),
+            f"Энкодер #{index + 1}",
+        )
+        te_id = slugify(str(item.get("id") or Path(path).stem)) or f"te_{index + 1}"
+        base_id = te_id
+        suffix = 2
+        while te_id in used_ids:
+            te_id = f"{base_id}_{suffix}"
+            suffix += 1
+        used_ids.add(te_id)
+        name = str(item.get("name") or Path(path).name).strip()[:160] or Path(path).name
+        encoders.append({
+            "id": te_id,
+            "name": name,
+            "repo": repo,
+            "file": path,
+            "path": path,
+            "size_gb": _clean_size(item.get("size_gb")),
+            "precision": str(item.get("precision") or "custom").strip()[:32] or "custom",
+            "recommended": bool(item.get("recommended", index == 0)),
+            "source": {"repo_id": repo, "file_path": path},
+        })
+    if encoders and not any(te.get("recommended") for te in encoders):
+        encoders[0]["recommended"] = True
+    return encoders
+
+
+def _normalize_vae(item: Any, primary_repo: str) -> Optional[dict[str, Any]]:
+    if not item:
+        return None
+    if not isinstance(item, dict):
+        raise ValueError("Некорректная запись VAE")
+    source = item.get("source") if isinstance(item.get("source"), dict) else {}
+    repo = _clean_repo_id(
+        source.get("repo_id") or item.get("repo") or item.get("repo_id"),
+        "VAE",
+        fallback=primary_repo,
+    )
+    path = _clean_component_path(item.get("path") or item.get("file") or source.get("file_path"), "VAE")
+    return {
+        "repo_id": repo,
+        "path": path,
+        "size_gb": _clean_size(item.get("size_gb")),
+    }
+
+
+def _normalize_aux_files(items: Any, primary_repo: str) -> list[dict[str, Any]]:
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ValueError("aux_files должен быть списком")
+    if len(items) > 24:
+        raise ValueError("Слишком много вспомогательных файлов (максимум 24)")
+
+    entries: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(items):
+        if isinstance(item, dict):
+            source = item.get("source") if isinstance(item.get("source"), dict) else {}
+            repo = _clean_repo_id(
+                source.get("repo_id") or item.get("repo_id") or item.get("repo"),
+                f"Aux #{index + 1}",
+                fallback=primary_repo,
+            )
+            path = _clean_component_path(
+                item.get("path") or item.get("file") or source.get("file_path"),
+                f"Aux #{index + 1}",
+            )
+            size = _clean_size(item.get("size_gb"))
+        else:
+            repo = _clean_repo_id("", f"Aux #{index + 1}", fallback=primary_repo)
+            path = _clean_component_path(item, f"Aux #{index + 1}")
+            size = 0.0
+        key = (repo, path)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append({"path": path, "repo_id": repo, "size_gb": size})
+    return entries
+
+
+def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    """Validate editable card fields and keep engine_args in sync."""
+    if not isinstance(updates, dict):
+        raise ValueError("Некорректные данные карточки")
+
+    primary_repo = _primary_repo(manifest)
+
+    if "name" in updates:
+        name = str(updates.get("name") or "").strip()
+        if not name:
+            raise ValueError("Название модели не может быть пустым")
+        manifest["name"] = name[:160]
+
+    if "description" in updates:
+        manifest["description"] = str(updates.get("description") or "").strip()[:2000]
+
+    if "family" in updates:
+        family = str(updates.get("family") or "").strip().lower()
+        if not family or len(family) > 40:
+            raise ValueError("Некорректное семейство модели")
+        manifest["family"] = family
+
+    if "pipeline" in updates:
+        pipeline = str(updates.get("pipeline") or "").strip().lower()
+        if pipeline not in CARD_PIPELINES:
+            raise ValueError(f"Неизвестный pipeline: {pipeline}")
+        manifest["pipeline"] = pipeline
+
+    if "engine" in updates:
+        engine = str(updates.get("engine") or "").strip().lower()
+        if engine not in CARD_ENGINES:
+            raise ValueError(f"Неизвестный движок: {engine}")
+        manifest["engine"] = engine
+        manifest["engine_version"] = engine
+        if engine in ("sdnq", "nunchaku", "orbitquant") and not manifest.get("base_models"):
+            manifest["base_models"] = {"50x-above": ".", "50x-below": "."}
+
+    if "license" in updates:
+        manifest["license"] = str(updates.get("license") or "").strip()[:160]
+
+    if "base_repo_id" in updates:
+        raw_base = str(updates.get("base_repo_id") or "").strip()
+        manifest["base_repo_id"] = _clean_repo_id(raw_base, "Базовая модель") if raw_base else ""
+
+    if "tags" in updates:
+        raw_tags = updates.get("tags")
+        if isinstance(raw_tags, str):
+            raw_tags = [tag.strip() for tag in raw_tags.split(",")]
+        if not isinstance(raw_tags, list):
+            raise ValueError("tags должен быть списком")
+        manifest["tags"] = [str(tag).strip()[:40] for tag in raw_tags if str(tag).strip()][:30]
+
+    steps = manifest.get("scheduler_presets", {}).get("default", {}).get("steps", 20)
+    cfg = manifest.get("default_cfg", 1.0)
+    if "steps" in updates:
+        try:
+            steps = int(updates.get("steps"))
+        except (TypeError, ValueError):
+            raise ValueError("steps должен быть целым числом")
+        if not 1 <= steps <= 150:
+            raise ValueError("steps должен быть от 1 до 150")
+    if "cfg" in updates:
+        try:
+            cfg = float(updates.get("cfg"))
+        except (TypeError, ValueError):
+            raise ValueError("cfg должен быть числом")
+        if not 0.0 <= cfg <= 30.0:
+            raise ValueError("cfg должен быть от 0 до 30")
+
+    engine_args = manifest.setdefault("engine_args", {})
+    if not isinstance(engine_args, dict):
+        engine_args = {}
+        manifest["engine_args"] = engine_args
+
+    if "text_encoders" in updates:
+        encoders = _normalize_text_encoders(updates.get("text_encoders"), primary_repo)
+        manifest["text_encoders"] = encoders
+        for key in ("llm", "llm_repo", "llm_file", "llm_remote"):
+            engine_args.pop(key, None)
+        if encoders:
+            primary_te = next((te for te in encoders if te.get("recommended")), encoders[0])
+            engine_args["llm"] = primary_te["path"]
+            engine_args["llm_repo"] = primary_te["repo"]
+            engine_args["llm_file"] = primary_te["path"]
+
+    if "vae" in updates:
+        vae = _normalize_vae(updates.get("vae"), primary_repo)
+        for key in ("vae", "vae_repo", "vae_file", "vae_remote"):
+            engine_args.pop(key, None)
+        if vae:
+            engine_args["vae"] = vae["path"]
+            engine_args["vae_repo"] = vae["repo_id"]
+            engine_args["vae_file"] = vae["path"]
+            engine_args["vae_remote"] = vae["path"]
+
+    if "aux_files" in updates:
+        aux = _normalize_aux_files(updates.get("aux_files"), primary_repo)
+        if aux:
+            engine_args["aux_files"] = aux
+            engine_args["aux_repo"] = primary_repo
+        else:
+            engine_args.pop("aux_files", None)
+            engine_args.pop("aux_repo", None)
+
+    manifest["default_cfg"] = round(float(cfg), 3)
+    presets = manifest.setdefault("scheduler_presets", {})
+    if not isinstance(presets, dict):
+        presets = {}
+        manifest["scheduler_presets"] = presets
+    default_preset = presets.get("default") if isinstance(presets.get("default"), dict) else {}
+    default_preset["steps"] = int(steps)
+    default_preset["cfg"] = round(float(cfg), 3)
+    presets["default"] = default_preset
+
+    return manifest
+
+
+def get_custom_model_card(model_id: str) -> dict[str, Any]:
+    """Return the raw editable manifest of a custom model."""
+    _path, manifest = _find_custom_manifest(model_id)
+    return {
+        **manifest,
+        "repo_id": _primary_repo(manifest),
+        "editable": True,
+    }
+
+
+def update_custom_model_card(model_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Validate + atomically save card edits, then reload the registry."""
+    path, manifest = _find_custom_manifest(model_id)
+    updated = _apply_card_updates(manifest, updates)
+
+    backup = path.read_bytes()
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(updated, handle, indent=2, ensure_ascii=False)
+        tmp_path.replace(path)
+        reload_registry()
+        get_registry().get(model_id)
+    except Exception as exc:
+        try:
+            path.write_bytes(backup)
+            reload_registry()
+        except Exception:
+            pass
+        raise ValueError(f"Не удалось сохранить карточку модели: {exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return {
+        **updated,
+        "repo_id": _primary_repo(updated),
+        "editable": True,
+    }
+
+
 def delete_custom_model(model_id: str, delete_files: bool = False) -> bool:
     """Delete a custom or imported model manifest and optionally downloaded files."""
     registry_dir = Path(__file__).parent / "registry" / "models"

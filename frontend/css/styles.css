@@ -3536,6 +3536,264 @@ textarea {
   text-align: right;
   color: var(--text-muted);
 }
+.lora-compat-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.lora-compat-badge.compatible {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.lora-compat-badge.incompatible {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.lora-card-item.incompatible {
+  opacity: 0.72;
+}
+.lora-card-item.incompatible input[type="checkbox"] {
+  cursor: not-allowed;
+}
+.lora-incompat-reason {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  border-radius: 5px;
+  padding: 4px 6px;
+  margin-bottom: 8px;
+}
+
+/* ============================================================
+   Model card sections & component editor
+   ============================================================ */
+.model-card-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  padding: 8px 10px;
+}
+.model-card-section[open] {
+  padding-bottom: 10px;
+}
+.model-card-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.model-card-section-title::-webkit-details-marker {
+  display: none;
+}
+.model-card-section-title::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform var(--t-fast);
+}
+.model-card-section[open] > .model-card-section-title::before {
+  content: "▾";
+}
+.component-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.component-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.component-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.component-sub {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+.component-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.component-empty {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding: 8px 2px;
+  line-height: 1.4;
+}
+.component-primary {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.section-warning {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.card-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.card-editor-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+  background: var(--bg-input);
+}
+.card-editor-section > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.card-editor-component-list {
+  margin-top: 8px;
+}
+.card-editor-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.card-editor-add-row input {
+  flex: 1;
+  min-width: 200px;
+}
+.card-editor-repo-box {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.05);
+}
+.card-editor-repo-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.card-editor-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.card-editor-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+.card-editor-suggestion {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+.card-editor-suggestion code {
+  font-size: 10px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+.card-editor-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.card-editor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 2px;
+  cursor: pointer;
+}
+.card-editor-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+.card-editor-check-meta {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.card-editor-check.check-disabled {
+  opacity: 0.6;
+}
+.card-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.hf-result-item {
+  cursor: pointer;
+}
+.hf-result-meta {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.card-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 
 /* ============================================================
    ROLE BADGES & GUEST MODE PROTECTION

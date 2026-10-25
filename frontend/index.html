@@ -10,7 +10,7 @@
 
   <title>LazySD UI</title>
 
-  <link rel="stylesheet" href="/css/styles.css?v=20261025_01">
+  <link rel="stylesheet" href="/css/styles.css?v=20261025_02">
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EL%3C/text%3E%3C/svg%3E">
 
@@ -4029,7 +4029,7 @@
 
   <script src="/js/dropzone.js?v=20261022_01"></script>
 
-  <script src="/js/app.js?v=20261025_01"></script>
+  <script src="/js/app.js?v=20261025_02"></script>
 
   <script>
 
@@ -5469,6 +5469,226 @@
 
         </div>
 
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Modal: Model Card Editor (custom / imported models) -->
+
+  <div id="model-card-editor-modal" class="modal-overlay" style="display: none; z-index: 10004;" onclick="if(event.target===this) App.closeModelCardEditor()">
+
+    <div class="modal-content" style="max-width: 860px; padding: 22px; max-height: 90vh; overflow-y: auto;">
+
+      <button class="modal-close" onclick="App.closeModelCardEditor()">✕</button>
+
+      <h3 style="margin: 0 0 6px; font-size: 17px;">✎ Редактор карточки модели</h3>
+
+      <p id="model-card-editor-subtitle" style="margin: 0 0 14px; font-size: 12px; color: var(--text-dim);">Проверьте репозиторий, добавьте недостающий энкодер или VAE и сохраните карточку.</p>
+
+      <input type="hidden" id="model-card-editor-id">
+
+      <div class="card-editor-grid">
+
+        <div class="control-group">
+          <label>Название</label>
+          <input type="text" id="model-card-editor-name" maxlength="160">
+        </div>
+
+        <div class="control-group">
+          <label>Семейство</label>
+          <input type="text" id="model-card-editor-family" placeholder="flux / qwen / sdxl / z-image" maxlength="40">
+        </div>
+
+        <div class="control-group">
+          <label>Движок</label>
+          <select id="model-card-editor-engine">
+            <option value="sd_cpp">SD.CPP</option>
+            <option value="sdnq">SDNQ</option>
+            <option value="nunchaku">Nunchaku</option>
+            <option value="orbitquant">OrbitQuant</option>
+            <option value="quantfunc">QuantFunc</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Pipeline</label>
+          <select id="model-card-editor-pipeline">
+            <option value="text_to_image">text_to_image</option>
+            <option value="image_edit">image_edit</option>
+            <option value="img2img">img2img</option>
+            <option value="inpaint">inpaint</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Steps</label>
+          <input type="number" id="model-card-editor-steps" min="1" max="150" step="1">
+        </div>
+
+        <div class="control-group">
+          <label>CFG</label>
+          <input type="number" id="model-card-editor-cfg" min="0" max="30" step="0.1">
+        </div>
+
+        <div class="control-group">
+          <label>Лицензия</label>
+          <input type="text" id="model-card-editor-license" maxlength="160" placeholder="cc-by-nc-4.0">
+        </div>
+
+        <div class="control-group">
+          <label>Базовая модель (author/repo)</label>
+          <input type="text" id="model-card-editor-base-repo" maxlength="160" placeholder="briaai/Fibo-2.0-edit-turbo">
+        </div>
+
+      </div>
+
+      <div class="control-group">
+        <label>Описание</label>
+        <textarea id="model-card-editor-description" rows="2" maxlength="2000"></textarea>
+      </div>
+
+      <div class="card-editor-repo-box">
+        <div class="card-editor-repo-head">
+          <span>📦 Репозиторий модели: <code id="model-card-editor-repo">—</code></span>
+          <button type="button" class="dock-mini-btn" onclick="App.inspectCardRepo()">🔍 Проверить репозиторий</button>
+        </div>
+        <div id="model-card-editor-repo-status" class="card-editor-hint">Проверка покажет, какие энкодеры, VAE и sidecar-файлы уже лежат в репозитории.</div>
+        <div id="model-card-editor-suggestions" class="card-editor-suggestions"></div>
+      </div>
+
+      <details class="card-editor-section" open>
+        <summary>Текстовые энкодеры (<span id="model-card-editor-te-count">0</span>)</summary>
+        <div id="model-card-editor-te-list" class="card-editor-component-list"></div>
+        <div class="card-editor-add-row">
+          <input type="text" id="model-card-editor-te-ref" placeholder="author/repo::text_encoder/model.safetensors">
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('te')">Добавить по ссылке</button>
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.openComponentPicker('te')">🔎 Найти на HF</button>
+        </div>
+      </details>
+
+      <details class="card-editor-section" open>
+        <summary>VAE</summary>
+        <div id="model-card-editor-vae-list" class="card-editor-component-list"></div>
+        <div class="card-editor-add-row">
+          <input type="text" id="model-card-editor-vae-ref" placeholder="author/repo::vae/diffusion_pytorch_model.safetensors">
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('vae')">Добавить по ссылке</button>
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.openComponentPicker('vae')">🔎 Найти на HF</button>
+        </div>
+      </details>
+
+      <details class="card-editor-section">
+        <summary>Aux / sidecars (<span id="model-card-editor-aux-count">0</span>)</summary>
+        <div id="model-card-editor-aux-list" class="card-editor-component-list"></div>
+        <div class="card-editor-add-row">
+          <input type="text" id="model-card-editor-aux-ref" placeholder="author/repo::transformer/orbitquant_codebooks.safetensors">
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('aux')">Добавить sidecar</button>
+        </div>
+      </details>
+
+      <div class="card-editor-footer">
+        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeModelCardEditor()">Отмена</button>
+        <button type="button" class="generate-btn" style="background: var(--accent);" onclick="App.saveModelCard()">💾 Сохранить карточку</button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Modal: Component picker (filtered HF component search) -->
+
+  <div id="component-picker-modal" class="modal-overlay" style="display: none; z-index: 10005;" onclick="if(event.target===this) App.closeComponentPicker()">
+
+    <div class="modal-content" style="max-width: 720px; padding: 22px; max-height: 88vh; overflow-y: auto;">
+
+      <button class="modal-close" onclick="App.closeComponentPicker()">✕</button>
+
+      <h3 id="component-picker-title" style="margin: 0 0 6px; font-size: 17px;">🔎 Найти компонент на Hugging Face</h3>
+
+      <p style="margin: 0 0 12px; font-size: 12px; color: var(--text-dim);">Сначала найдите репозиторий, затем выберите файл нужной роли. Фильтр работает по дереву выбранного репозитория.</p>
+
+      <div class="card-editor-add-row">
+        <input type="text" id="component-picker-search" placeholder="Поиск репозиториев: flux text encoder, qwen vae..." onkeydown="if(event.key==='Enter') App.searchComponentRepos()">
+        <button type="button" class="dock-mini-btn" onclick="App.searchComponentRepos()">🔎 Найти репозитории</button>
+      </div>
+
+      <div id="component-picker-results" class="hf-results-box" style="display: none; max-height: 170px; overflow-y: auto;"></div>
+
+      <div class="card-editor-add-row" style="margin-top: 12px;">
+        <input type="text" id="component-picker-repo" placeholder="author/repo (или вставьте ссылку Hugging Face)" onkeydown="if(event.key==='Enter') App.inspectComponentRepo()">
+        <button type="button" class="dock-mini-btn" onclick="App.inspectComponentRepo()">Проверить файлы</button>
+      </div>
+
+      <div id="component-picker-files" class="card-editor-component-list" style="margin-top: 10px;"></div>
+
+      <div class="card-editor-add-row" style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px;">
+        <input type="text" id="component-picker-manual" placeholder="author/repo::path/to/file.safetensors">
+        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.addComponentFromManual()">Добавить по ссылке</button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Modal: LoRA binding -->
+
+  <div id="lora-binding-modal" class="modal-overlay" style="display: none; z-index: 10006;" onclick="if(event.target===this) App.closeLoraBinding()">
+
+    <div class="modal-content" style="max-width: 680px; padding: 22px; max-height: 88vh; overflow-y: auto;">
+
+      <button class="modal-close" onclick="App.closeLoraBinding()">✕</button>
+
+      <h3 style="margin: 0 0 6px; font-size: 17px;">🔗 Привязка LoRA</h3>
+
+      <p style="margin: 0 0 12px; font-size: 12px; color: var(--text-dim);">Точная привязка к моделям имеет приоритет над совпадением архитектуры. Пустой список моделей оставляет LoRA архитектурно-универсальной.</p>
+
+      <input type="hidden" id="lora-binding-name">
+
+      <div class="card-editor-grid">
+
+        <div class="control-group">
+          <label>Архитектура</label>
+          <select id="lora-binding-architecture">
+            <option value="flux">Flux / FLUX.2 Klein</option>
+            <option value="qwen">Qwen-Image</option>
+            <option value="sdxl">SDXL / Pony / Illustrious</option>
+            <option value="z_image">Z-Image</option>
+            <option value="any">Любая / универсальная</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Scale по умолчанию</label>
+          <input type="number" id="lora-binding-scale" min="-2" max="2" step="0.05" placeholder="1.0">
+        </div>
+
+      </div>
+
+      <div class="control-group">
+        <label>Триггер-слова</label>
+        <input type="text" id="lora-binding-trigger" placeholder="Lineart, LineAniAF">
+      </div>
+
+      <div class="control-group">
+        <label>Target modules (необязательно)</label>
+        <input type="text" id="lora-binding-targets" placeholder="q_proj, k_proj, v_proj">
+      </div>
+
+      <div class="control-group">
+        <label>Разрешённые движки (пусто = любой поддерживаемый)</label>
+        <div id="lora-binding-engines" class="card-editor-checks"></div>
+      </div>
+
+      <div class="control-group">
+        <label>Точная привязка к моделям</label>
+        <div id="lora-binding-models" class="card-editor-checks" style="max-height: 190px; overflow-y: auto;"></div>
+      </div>
+
+      <div class="card-editor-footer">
+        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.bindLoraToCurrentModel()">Привязать к текущей модели</button>
+        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.clearLoraBinding()">Очистить привязку</button>
+        <button type="button" class="generate-btn" style="background: var(--accent);" onclick="App.saveLoraBinding()">💾 Сохранить</button>
       </div>
 
     </div>

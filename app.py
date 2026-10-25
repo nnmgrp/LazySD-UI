@@ -1616,6 +1616,44 @@ def create_app() -> FastAPI:
 
 
 
+    def _repo_file_installed(repo_id: str, file_path: str, cache: CacheManager) -> bool:
+
+        if not repo_id or not file_path:
+
+            return False
+
+        try:
+
+            return (cache.repo_dir_for(repo_id) / file_path).is_file()
+
+        except Exception:
+
+            return False
+
+
+
+    def _is_vae_installed(engine_args: dict, primary_repo: str, cache: CacheManager) -> bool:
+
+        rel = engine_args.get("vae_remote") or engine_args.get("vae_file") or engine_args.get("vae")
+
+        if not rel:
+
+            return False
+
+        return _repo_file_installed(engine_args.get("vae_repo") or primary_repo, str(rel), cache)
+
+
+
+    def _is_aux_installed(aux: dict, primary_repo: str, cache: CacheManager) -> bool:
+
+        if not isinstance(aux, dict):
+
+            return False
+
+        return _repo_file_installed(aux.get("repo_id") or primary_repo, str(aux.get("path") or ""), cache)
+
+
+
     def _transformer_installed(model, variant, cache: CacheManager) -> bool:
 
         try:
@@ -2229,6 +2267,66 @@ def create_app() -> FastAPI:
 
 
 
+                "primary_repo_id": repo_id,
+
+
+
+                "vae": ({
+
+
+
+                    "repo_id": (getattr(m, "engine_args", {}) or {}).get("vae_repo") or repo_id,
+
+
+
+                    "path": (getattr(m, "engine_args", {}) or {}).get("vae_remote") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae") or "",
+
+
+
+                    "installed": _is_vae_installed(getattr(m, "engine_args", {}) or {}, repo_id, cache),
+
+
+
+                } if ((getattr(m, "engine_args", {}) or {}).get("vae") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae_remote")) else None),
+
+
+
+                "aux_files": [
+
+
+
+                    {
+
+
+
+                        "path": aux.get("path") if isinstance(aux, dict) else str(aux),
+
+
+
+                        "repo_id": (aux.get("repo_id") if isinstance(aux, dict) else "") or repo_id,
+
+
+
+                        "size_gb": float(aux.get("size_gb") or 0) if isinstance(aux, dict) else 0.0,
+
+
+
+                        "installed": _is_aux_installed(aux, repo_id, cache),
+
+
+
+                    }
+
+
+
+                    for aux in ((getattr(m, "engine_args", {}) or {}).get("aux_files") or [])
+
+
+
+                ],
+
+
+
                 "model_path": getattr(m, "model_path", "") or getattr(m, "engine_args", {}).get("diffusion_model") or getattr(m, "engine_args", {}).get("checkpoint") or (m.transformers[0].path if m.transformers else ""),
 
 
@@ -2306,6 +2404,14 @@ def create_app() -> FastAPI:
 
 
                         "file": te.get("file"),
+
+
+
+                        "path": te.get("path") or te.get("file"),
+
+
+
+                        "repo_id": (te.get("source") or {}).get("repo_id") or te.get("repo") or repo_id,
 
 
 
@@ -3326,6 +3432,66 @@ def create_app() -> FastAPI:
 
 
 
+                "primary_repo_id": repo_id,
+
+
+
+                "vae": ({
+
+
+
+                    "repo_id": (getattr(m, "engine_args", {}) or {}).get("vae_repo") or repo_id,
+
+
+
+                    "path": (getattr(m, "engine_args", {}) or {}).get("vae_remote") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae") or "",
+
+
+
+                    "installed": _is_vae_installed(getattr(m, "engine_args", {}) or {}, repo_id, cache),
+
+
+
+                } if ((getattr(m, "engine_args", {}) or {}).get("vae") or (getattr(m, "engine_args", {}) or {}).get("vae_file") or (getattr(m, "engine_args", {}) or {}).get("vae_remote")) else None),
+
+
+
+                "aux_files": [
+
+
+
+                    {
+
+
+
+                        "path": aux.get("path") if isinstance(aux, dict) else str(aux),
+
+
+
+                        "repo_id": (aux.get("repo_id") if isinstance(aux, dict) else "") or repo_id,
+
+
+
+                        "size_gb": float(aux.get("size_gb") or 0) if isinstance(aux, dict) else 0.0,
+
+
+
+                        "installed": _is_aux_installed(aux, repo_id, cache),
+
+
+
+                    }
+
+
+
+                    for aux in ((getattr(m, "engine_args", {}) or {}).get("aux_files") or [])
+
+
+
+                ],
+
+
+
                 "model_path": getattr(m, "model_path", "") or getattr(m, "engine_args", {}).get("diffusion_model") or getattr(m, "engine_args", {}).get("checkpoint") or (m.transformers[0].path if m.transformers else ""),
 
 
@@ -3399,6 +3565,14 @@ def create_app() -> FastAPI:
 
 
                         "file": te.get("file"),
+
+
+
+                        "path": te.get("path") or te.get("file"),
+
+
+
+                        "repo_id": (te.get("source") or {}).get("repo_id") or te.get("repo") or repo_id,
 
 
 
@@ -3508,6 +3682,87 @@ def create_app() -> FastAPI:
 
 
 
+
+
+    @app.get("/api/models/{model_id}/card")
+
+
+    async def api_model_card(model_id: str, request: Request = None):
+
+
+        """Return editable manifest data for a custom model card (host only)."""
+
+
+        if request:
+
+
+            from backend.accounts import resolve_account_from_scope
+
+
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+
+            if caller.get("is_guest", False):
+
+
+                raise HTTPException(403, "Guests cannot edit model cards")
+
+
+        from backend.custom_models import get_custom_model_card
+
+
+        try:
+
+
+            return get_custom_model_card(model_id)
+
+
+        except ValueError as e:
+
+
+            raise HTTPException(404, str(e))
+
+
+    @app.patch("/api/models/{model_id}/card")
+
+
+    async def api_update_model_card(model_id: str, body: dict, request: Request = None):
+
+
+        """Update an imported model card and keep engine_args in sync (host only)."""
+
+
+        if request:
+
+
+            from backend.accounts import resolve_account_from_scope
+
+
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+
+            if caller.get("is_guest", False):
+
+
+                raise HTTPException(403, "Guests cannot edit model cards")
+
+
+        from backend.custom_models import update_custom_model_card
+
+
+        try:
+
+
+            manifest = update_custom_model_card(model_id, body or {})
+
+
+            return {"status": "ok", "model": manifest}
+
+
+        except ValueError as e:
+
+
+            raise HTTPException(400, str(e))
 
 
     @app.get("/api/models/{model_id}/state")
@@ -3742,6 +3997,14 @@ def create_app() -> FastAPI:
 
 
 
+                    "path": te.get("path") or te.get("file"),
+
+
+
+                    "repo_id": (te.get("source") or {}).get("repo_id") or te.get("repo") or "",
+
+
+
                     "size_gb": te.get("size_gb"),
 
 
@@ -3755,6 +4018,54 @@ def create_app() -> FastAPI:
 
 
                     "installed": te_exists,
+
+
+
+                })
+
+
+
+            custom_engine_args = getattr(model, "engine_args", {}) or {}
+
+
+
+            vae_rel = str(custom_engine_args.get("vae") or custom_engine_args.get("vae_file") or "")
+
+
+
+            vae_installed = bool(vae_rel and (Path(vae_rel).is_file() or (custom_dir / vae_rel).is_file()))
+
+
+
+            aux_result = []
+
+
+
+            for aux in custom_engine_args.get("aux_files") or []:
+
+
+
+                aux_path = str((aux.get("path") if isinstance(aux, dict) else aux) or "")
+
+
+
+                aux_result.append({
+
+
+
+                    "path": aux_path,
+
+
+
+                    "repo_id": (aux.get("repo_id") if isinstance(aux, dict) else "") or "",
+
+
+
+                    "size_gb": float(aux.get("size_gb") or 0) if isinstance(aux, dict) else 0.0,
+
+
+
+                    "installed": bool(aux_path and (Path(aux_path).is_file() or (custom_dir / aux_path).is_file())),
 
 
 
@@ -3783,6 +4094,30 @@ def create_app() -> FastAPI:
 
 
                 "base_model_installed": True,
+
+
+
+                "vae": ({
+
+
+
+                    "repo_id": custom_engine_args.get("vae_repo") or "",
+
+
+
+                    "path": vae_rel,
+
+
+
+                    "installed": vae_installed,
+
+
+
+                } if vae_rel else None),
+
+
+
+                "aux_files": aux_result,
 
 
 
@@ -4090,6 +4425,14 @@ def create_app() -> FastAPI:
 
 
 
+                "path": te.get("path") or te_f,
+
+
+
+                "repo_id": (te.get("source") or {}).get("repo_id") or te.get("repo") or repo_id,
+
+
+
                 "size_gb": te.get("size_gb"),
 
 
@@ -4259,6 +4602,62 @@ def create_app() -> FastAPI:
 
 
             "base_model_installed": base_installed,
+
+
+
+            "vae": ({
+
+
+
+                "repo_id": (getattr(model, "engine_args", {}) or {}).get("vae_repo") or repo_id,
+
+
+
+                "path": (getattr(model, "engine_args", {}) or {}).get("vae_remote") or (getattr(model, "engine_args", {}) or {}).get("vae_file") or (getattr(model, "engine_args", {}) or {}).get("vae") or "",
+
+
+
+                "installed": _is_vae_installed(getattr(model, "engine_args", {}) or {}, repo_id, cache),
+
+
+
+            } if ((getattr(model, "engine_args", {}) or {}).get("vae") or (getattr(model, "engine_args", {}) or {}).get("vae_file") or (getattr(model, "engine_args", {}) or {}).get("vae_remote")) else None),
+
+
+
+            "aux_files": [
+
+
+
+                {
+
+
+
+                    "path": aux.get("path") if isinstance(aux, dict) else str(aux),
+
+
+
+                    "repo_id": (aux.get("repo_id") if isinstance(aux, dict) else "") or repo_id,
+
+
+
+                    "size_gb": float(aux.get("size_gb") or 0) if isinstance(aux, dict) else 0.0,
+
+
+
+                    "installed": _is_aux_installed(aux, repo_id, cache),
+
+
+
+                }
+
+
+
+                for aux in ((getattr(model, "engine_args", {}) or {}).get("aux_files") or [])
+
+
+
+            ],
 
 
 
@@ -5143,6 +5542,243 @@ def create_app() -> FastAPI:
 
 
 
+
+
+    @app.post("/api/models/{model_id}/component-download")
+
+
+    async def api_model_component_download(model_id: str, body: dict, request: Request = None):
+
+
+        """Download exactly one repository-local component (TE / VAE / aux) for a model."""
+
+
+        if request:
+
+
+            from backend.accounts import resolve_account_from_scope
+
+
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+
+            if caller.get("is_guest", False):
+
+
+                raise HTTPException(403, "Guests cannot trigger downloads")
+
+
+        registry = get_registry()
+
+
+        try:
+
+
+            model = registry.get(model_id)
+
+
+        except KeyError:
+
+
+            raise HTTPException(404, f"Model not found: {model_id}")
+
+
+        role = str((body or {}).get("role") or "").strip().lower()
+
+
+        if role not in ("text_encoder", "vae", "aux"):
+
+
+            raise HTTPException(400, "role must be text_encoder, vae or aux")
+
+
+        primary_repo = ""
+
+
+        if model.sources and model.sources.primary:
+
+
+            primary_repo = model.sources.primary.repo_id or ""
+
+
+        repo_id = ""
+        file_path = ""
+        if role == "text_encoder":
+
+
+            te = model.get_text_encoder((body or {}).get("id"))
+
+
+            if not te:
+
+
+                raise HTTPException(404, "Text encoder not found in model card")
+
+
+            source = te.get("source") or {}
+
+
+            repo_id = source.get("repo_id") or te.get("repo") or primary_repo
+
+
+            file_path = source.get("file_path") or te.get("path") or te.get("file") or ""
+
+
+        elif role == "vae":
+
+
+            args = getattr(model, "engine_args", {}) or {}
+
+
+            repo_id = args.get("vae_repo") or primary_repo
+
+
+            file_path = args.get("vae_remote") or args.get("vae_file") or args.get("vae") or ""
+
+
+        else:
+
+
+            args = getattr(model, "engine_args", {}) or {}
+
+
+            aux_list = args.get("aux_files") or []
+
+
+            try:
+                index = int((body or {}).get("index") or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "index must be an integer")
+
+
+            if index < 0 or index >= len(aux_list):
+
+
+                raise HTTPException(404, "Aux file not found in model card")
+
+
+            aux = aux_list[index]
+
+
+            if isinstance(aux, dict):
+
+
+                repo_id = aux.get("repo_id") or primary_repo
+
+
+                file_path = aux.get("path") or ""
+
+
+            else:
+
+
+                repo_id = primary_repo
+
+
+                file_path = str(aux)
+
+
+        file_path = str(file_path or "").replace("\\", "/").strip()
+        parts = [part for part in file_path.split("/") if part not in ("", ".")]
+        if (
+            not repo_id
+            or not parts
+            or file_path.startswith("/")
+            or any(part == ".." for part in parts)
+            or ":" in parts[0]
+        ):
+            raise HTTPException(400, "Component has no safe repository/path binding")
+        file_path = "/".join(parts)
+
+
+        cache = CacheManager()
+
+
+        destination = cache.repo_dir_for(repo_id) / file_path
+
+
+        if destination.is_file():
+
+
+            return {"status": "already_installed", "repo_id": repo_id, "path": file_path}
+
+
+        job_id = str(uuid.uuid4())[:8]
+
+
+        STATE.register_job(job_id)
+
+
+        source_type = "huggingface"
+
+
+        if model.sources and model.sources.primary and model.sources.primary.type:
+
+
+            source_type = model.sources.primary.type
+
+
+        def run_component_download():
+
+
+            try:
+
+
+                from backend.sources import get_source
+
+
+                STATE.update_job(job_id, ProgressEvent(
+
+
+                    status=JobStatus.DOWNLOADING, progress=0.05,
+
+
+                    message=f"Downloading {role}: {file_path}",
+
+
+                ))
+
+
+                source = get_source(source_type, token=_get_token_for_source(source_type))
+
+
+                local_dir = cache.repo_dir_for(repo_id)
+
+
+                source.download_file(repo_id, file_path, local_dir)
+
+
+                STATE.update_job(job_id, ProgressEvent(
+
+
+                    status=JobStatus.COMPLETE, progress=1.0,
+
+
+                    message=f"Downloaded {role}: {file_path}",
+
+
+                ))
+
+
+            except Exception as exc:
+
+
+                STATE.update_job(job_id, ProgressEvent(
+
+
+                    status=JobStatus.ERROR, progress=0.0,
+
+
+                    message=f"Download failed: {exc}",
+
+
+                ))
+
+
+        threading.Thread(target=run_component_download, daemon=True).start()
+
+
+        return {"status": "started", "job_id": job_id, "repo_id": repo_id, "path": file_path}
 
 
     @app.post("/api/models/{model_id}/download")
@@ -7029,19 +7665,59 @@ def create_app() -> FastAPI:
 
 
 
-    async def api_list_loras():
+    async def api_list_loras(model_id: Optional[str] = None):
 
 
 
-        """List all discovered LoRA files and metadata."""
+        """List all discovered LoRA files and metadata, optionally with model compatibility."""
 
 
 
-        from backend.lora import list_loras
+        from backend.lora import list_loras, check_lora_compatibility
 
 
 
-        return {"loras": list_loras()}
+        loras = list_loras()
+
+
+
+        model = None
+
+
+
+        if model_id:
+
+
+
+            try:
+
+
+
+                model = get_registry().get(model_id)
+
+
+
+            except KeyError:
+
+
+
+                model = None
+
+
+
+        if model is not None:
+
+
+
+            for item in loras:
+
+
+
+                item["compatibility"] = check_lora_compatibility(item.get("name"), model)
+
+
+
+        return {"loras": loras}
 
 
 
@@ -7221,15 +7897,35 @@ def create_app() -> FastAPI:
 
 
 
-    async def api_update_lora_metadata(name: str, body: dict):
+    async def api_update_lora_metadata(name: str, body: dict, request: Request = None):
 
 
 
-        """Update host-configured metadata (family, trigger, label) for a LoRA."""
+        """Update host-configured architecture, trigger and explicit model bindings."""
 
 
 
-        from backend.lora import set_lora_metadata
+        if request:
+
+
+
+            from backend.accounts import resolve_account_from_scope
+
+
+
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+
+
+
+            if caller.get("is_guest", False):
+
+
+
+                raise HTTPException(403, "Guests cannot edit LoRA bindings")
+
+
+
+        from backend.lora import update_lora_metadata
 
 
 
@@ -7237,11 +7933,11 @@ def create_app() -> FastAPI:
 
 
 
-            set_lora_metadata(name, body)
+            result = update_lora_metadata(name, body or {})
 
 
 
-            return {"status": "ok", "name": name}
+            return {"status": "ok", **result}
 
 
 
@@ -7293,7 +7989,27 @@ def create_app() -> FastAPI:
 
 
 
+        architecture = body.get("architecture")
+
+
+
         trigger = body.get("trigger")
+
+
+
+        compatible_models = body.get("compatible_models")
+
+
+
+        engine = body.get("engine")
+
+
+
+        target_modules = body.get("target_modules")
+
+
+
+        scale_default = body.get("scale_default")
 
 
 
@@ -7329,7 +8045,27 @@ def create_app() -> FastAPI:
 
 
 
+                architecture=architecture,
+
+
+
                 trigger=trigger,
+
+
+
+                compatible_models=compatible_models,
+
+
+
+                engine=engine,
+
+
+
+                target_modules=target_modules,
+
+
+
+                scale_default=scale_default,
 
 
 
@@ -7942,6 +8678,34 @@ def create_app() -> FastAPI:
 
 
                 raise HTTPException(400, f"LoRA error: {e}")
+
+
+
+            from backend.lora import check_lora_compatibility
+
+
+
+            for item in raw_loras:
+
+
+
+                if not isinstance(item, dict):
+
+
+
+                    continue
+
+
+
+                compat = check_lora_compatibility(item.get("name"), model)
+
+
+
+                if not compat.get("compatible", False):
+
+
+
+                    raise HTTPException(400, f"LoRA «{item.get('name')}»: {compat.get('reason', 'несовместима')}")
 
 
 

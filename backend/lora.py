@@ -113,9 +113,91 @@ def set_lora_metadata(name: str, meta: dict) -> None:
     save_all_lora_meta(data)
 
 
+def _as_string_list(value, limit: int = 32) -> list[str]:
+    """Normalize comma/semicolon separated strings or lists to a clean string list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[,;\n]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        parts = [value]
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        text = str(part or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text[:80])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _coerce_float(value, default=None):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number:  # NaN
+        return default
+    return number
+
+
+LORA_META_EDITABLE = {
+    "label", "trigger", "family", "architecture", "base", "repo_id",
+    "compatible_models", "engine", "target_modules", "rank", "scale_default",
+}
+
+
+def update_lora_metadata(name: str, updates: dict) -> dict:
+    """Validate + persist host-editable LoRA binding metadata."""
+    if not name or name != Path(name).name:
+        raise ValueError("Invalid LoRA name")
+    lora_path = get_loras_dir() / name
+    if not lora_path.is_file():
+        raise ValueError(f"LoRA not found: {name}")
+    if not isinstance(updates, dict):
+        raise ValueError("Metadata payload must be an object")
+
+    cleaned: dict = {}
+    for key in LORA_META_EDITABLE:
+        if key not in updates:
+            continue
+        value = updates.get(key)
+        if key in ("compatible_models", "engine", "target_modules"):
+            cleaned[key] = _as_string_list(value, limit=32 if key == "compatible_models" else 8)
+        elif key in ("family", "architecture"):
+            cleaned[key] = normalize_model_family(value) if value is not None else ""
+        elif key == "scale_default":
+            number = _coerce_float(value)
+            cleaned[key] = None if number is None else max(MIN_STRENGTH, min(MAX_STRENGTH, number))
+        elif key == "rank":
+            try:
+                cleaned[key] = max(0, int(value))
+            except (TypeError, ValueError):
+                cleaned[key] = None
+        else:
+            cleaned[key] = str(value or "").strip()[:160]
+    set_lora_metadata(name, cleaned)
+    return {"name": name, **detect_lora_info(lora_path)}
+
+
 def detect_lora_info(path: Path) -> dict:
-    """Best-effort metadata (family / rank / trigger words). Never raises."""
-    info: dict = {"family": None, "rank": None, "trigger": None, "base": None}
+    """Best-effort metadata (family / architecture / rank / trigger words). Never raises."""
+    info: dict = {
+        "family": None,
+        "architecture": None,
+        "rank": None,
+        "trigger": None,
+        "base": None,
+        "compatible_models": [],
+        "engine": [],
+        "target_modules": [],
+        "scale_default": None,
+    }
     meta_overrides = load_all_lora_meta().get(path.name, {})
 
     if path.suffix.lower() == ".safetensors":
@@ -161,6 +243,26 @@ def detect_lora_info(path: Path) -> dict:
         info["trigger"] = meta_overrides["trigger"]
     if meta_overrides.get("base"):
         info["base"] = meta_overrides["base"]
+    if meta_overrides.get("architecture"):
+        info["architecture"] = str(meta_overrides["architecture"]).strip()[:40] or None
+    if meta_overrides.get("compatible_models") is not None:
+        info["compatible_models"] = _as_string_list(meta_overrides.get("compatible_models"))
+    if meta_overrides.get("engine") is not None:
+        info["engine"] = _as_string_list(meta_overrides.get("engine"), limit=8)
+    if meta_overrides.get("target_modules") is not None:
+        info["target_modules"] = _as_string_list(meta_overrides.get("target_modules"))
+    scale_default = _coerce_float(meta_overrides.get("scale_default"))
+    if scale_default is not None:
+        info["scale_default"] = max(MIN_STRENGTH, min(MAX_STRENGTH, scale_default))
+    explicit_rank = meta_overrides.get("rank")
+    if explicit_rank is not None:
+        try:
+            info["rank"] = int(explicit_rank)
+        except (TypeError, ValueError):
+            pass
+    if info["architecture"] is None and info["family"]:
+        # A detected family doubles as the architecture until the host overrides it.
+        info["architecture"] = info["family"]
 
     return info
 
@@ -354,6 +456,8 @@ def inspect_hf_lora(url_or_repo: str, token: Optional[str] = None) -> dict:
             pass
 
     base_model = card_data.get("base_model") or ""
+    if isinstance(base_model, list):
+        base_model = next((str(item) for item in base_model if item), "")
     suggested_name = clean_repo.split("/")[-1].replace("-", " ").replace("_", " ")
 
     return {
@@ -362,9 +466,11 @@ def inspect_hf_lora(url_or_repo: str, token: Optional[str] = None) -> dict:
         "files": files,
         "family": suggested_family,
         "suggested_family": suggested_family,
+        "architecture": suggested_family,
         "trigger": trigger or "",
         "suggested_trigger": trigger or "",
         "base_model": str(base_model) if base_model else "",
+        "suggested_models": suggest_model_bindings(str(base_model) if base_model else ""),
         "tags": tags[:15],
     }
 
@@ -412,10 +518,19 @@ def download_hf_lora(
     filename: Optional[str] = None,
     rename: Optional[str] = None,
     family: Optional[str] = None,
+    architecture: Optional[str] = None,
     trigger: Optional[str] = None,
+    compatible_models: Optional[list[str]] = None,
+    engine: Optional[list[str]] = None,
+    target_modules: Optional[list[str]] = None,
+    scale_default: Optional[float] = None,
     token: Optional[str] = None,
 ) -> dict:
-    """Download a LoRA file from a Hugging Face repo into the library."""
+    """Download a LoRA file from a Hugging Face repo into the library.
+
+    When the HF card declares a base model, matching registry models are bound
+    automatically so the adapter is no longer model-agnostic.
+    """
     from huggingface_hub import HfApi, hf_hub_download
 
     clean_repo = normalize_hf_repo_lora(repo_id)
@@ -455,32 +570,50 @@ def download_hf_lora(
         shutil.move(cached, dest)
         shutil.rmtree(loras_dir / ".hf_tmp", ignore_errors=True)
 
-    # Auto-detect trigger/family from repo card if not explicitly passed
-    if not family or not trigger:
-        try:
-            insp = inspect_hf_lora(clean_repo, token=token)
-            if not family:
-                family = insp.get("suggested_family")
-            if not trigger:
-                trigger = insp.get("suggested_trigger")
-        except Exception:
-            pass
+    # Auto-detect trigger / architecture / base model from the repo card.
+    insp: dict = {}
+    try:
+        insp = inspect_hf_lora(clean_repo, token=token)
+    except Exception:
+        insp = {}
+    if not family:
+        family = insp.get("suggested_family")
+    if not architecture:
+        architecture = insp.get("architecture") or family
+    if not trigger:
+        trigger = insp.get("suggested_trigger")
+
+    base_model = str(insp.get("base_model") or "").strip()
+    auto_bound = suggest_model_bindings(base_model) if base_model else []
 
     meta_payload: dict = {"repo_id": clean_repo}
     if family:
         meta_payload["family"] = family
+    if architecture:
+        meta_payload["architecture"] = normalize_model_family(architecture)
     if trigger:
         meta_payload["trigger"] = trigger
+    if base_model:
+        meta_payload["base"] = base_model
+    if compatible_models:
+        meta_payload["compatible_models"] = _as_string_list(compatible_models)
+    elif auto_bound:
+        meta_payload["compatible_models"] = auto_bound
+    if engine:
+        meta_payload["engine"] = _as_string_list(engine, limit=8)
+    if target_modules:
+        meta_payload["target_modules"] = _as_string_list(target_modules)
+    if scale_default is not None:
+        meta_payload["scale_default"] = max(MIN_STRENGTH, min(MAX_STRENGTH, float(scale_default)))
     set_lora_metadata(dest.name, meta_payload)
 
     info_out = detect_lora_info(dest)
     meta_map = load_all_lora_meta().get(dest.name, {})
-    if meta_map.get("family"):
-        info_out["family"] = meta_map["family"]
-    if meta_map.get("trigger"):
-        info_out["trigger"] = meta_map["trigger"]
-    if meta_map.get("repo_id"):
-        info_out["repo_id"] = meta_map["repo_id"]
+    for key in ("family", "trigger", "repo_id", "architecture", "compatible_models", "engine",
+                "target_modules", "scale_default"):
+        if meta_map.get(key) is not None:
+            info_out[key] = meta_map[key]
+    info_out["suggested_models"] = auto_bound
     return {"name": dest.name, **info_out}
 
 
@@ -519,73 +652,170 @@ def normalize_model_family(family: Optional[str]) -> str:
     return f or "any"
 
 
-def check_lora_compatibility(lora_name: Optional[str], model_spec) -> dict:
-    """Check whether a LoRA file is compatible with a given ModelSpec and its runtime engine.
+def suggest_model_bindings(base_model: str) -> list[str]:
+    """Model IDs whose source/base repository matches a LoRA's declared base model."""
+    from .model_sniffer import normalize_hf_repo
 
-    Returns dict with:
-      compatible (bool), supported_by_engine (bool), lora_family (str),
-      model_family (str), engine (str), reason (str)
+    base = normalize_hf_repo(str(base_model or ""))
+    if not base:
+        return []
+    base_low = base.lower()
+    try:
+        from .registry.loader import get_registry
+        models = get_registry().list_all()
+    except Exception:
+        return []
+
+    matched: list[str] = []
+    for model in models:
+        refs: set[str] = set()
+        sources = getattr(model, "sources", None)
+        primary = getattr(sources, "primary", None) if sources else None
+        if primary and getattr(primary, "repo_id", ""):
+            refs.add(str(primary.repo_id))
+        for attr in ("base_repo_id", "upstream_model"):
+            value = getattr(model, attr, "")
+            if value:
+                refs.add(str(value))
+        if any(ref.strip().lower() == base_low for ref in refs):
+            matched.append(str(getattr(model, "id", "")))
+    return sorted({model_id for model_id in matched if model_id})
+
+
+def _compat_result(
+    *,
+    engine: str,
+    model_family: str,
+    model_id: str,
+    lora_family: Optional[str] = None,
+    architecture: Optional[str] = None,
+    bound_models: Optional[list[str]] = None,
+    bound_engines: Optional[list[str]] = None,
+    compatible: bool,
+    supported_by_engine: bool = True,
+    match_level: str = "none",
+    reason: str,
+) -> dict:
+    return {
+        "compatible": compatible,
+        "supported_by_engine": supported_by_engine,
+        "lora_family": lora_family,
+        "architecture": architecture,
+        "model_family": model_family,
+        "model_id": model_id,
+        "engine": engine,
+        "bound_models": bound_models or [],
+        "bound_engines": bound_engines or [],
+        "match_level": match_level,
+        "reason": reason,
+    }
+
+
+def check_lora_compatibility(lora_name: Optional[str], model_spec) -> dict:
+    """Check a LoRA against a ModelSpec, explicit bindings first, family fallback second.
+
+    Explicit ``compatible_models`` always outrank architecture-family matching.
+    Legacy LoRAs without bindings keep working through the old family heuristic.
     """
     engine = getattr(model_spec, "engine", "quantfunc") if model_spec else "sd_cpp"
     model_fam = normalize_model_family(getattr(model_spec, "family", "flux") if model_spec else "flux")
+    model_id = str(getattr(model_spec, "id", "") or "")
 
     if engine not in LORA_SUPPORTED_ENGINES:
-        return {
-            "compatible": False,
-            "supported_by_engine": False,
-            "lora_family": None,
-            "model_family": model_fam,
-            "engine": engine,
-            "reason": (
+        return _compat_result(
+            engine=engine,
+            model_family=model_fam,
+            model_id=model_id,
+            compatible=False,
+            supported_by_engine=False,
+            reason=(
                 f"Движок {engine.upper()} не поддерживает динамическое подключение внешних LoRA-адаптеров. "
                 "Используйте модель на движке Nunchaku (vitoom), SD.CPP (GGUF), QuantFunc или SDNQ."
             ),
-        }
+        )
 
     if not lora_name:
-        return {
-            "compatible": True,
-            "supported_by_engine": True,
-            "lora_family": None,
-            "model_family": model_fam,
-            "engine": engine,
-            "reason": "Движок поддерживает LoRA.",
-        }
+        return _compat_result(
+            engine=engine,
+            model_family=model_fam,
+            model_id=model_id,
+            compatible=True,
+            match_level="engine",
+            reason="Движок поддерживает LoRA.",
+        )
 
     safe_name = Path(str(lora_name)).name
     lora_path = (get_loras_dir() / safe_name).resolve()
     if lora_path.parent != get_loras_dir().resolve() or not lora_path.is_file():
-        return {
-            "compatible": False,
-            "supported_by_engine": True,
-            "lora_family": None,
-            "model_family": model_fam,
-            "engine": engine,
-            "reason": f"Файл LoRA не найден: {safe_name}",
-        }
+        return _compat_result(
+            engine=engine,
+            model_family=model_fam,
+            model_id=model_id,
+            compatible=False,
+            reason=f"Файл LoRA не найден: {safe_name}",
+        )
 
     info = detect_lora_info(lora_path)
+    explicit_arch = normalize_model_family(info.get("architecture") or info.get("family") or "any")
     lora_fam = normalize_model_family(info.get("family") or "any")
+    bound_models = _as_string_list(info.get("compatible_models"))
+    bound_engines = [item.lower() for item in _as_string_list(info.get("engine"), limit=8)]
 
-    if lora_fam not in ("any", "") and model_fam not in ("any", "") and lora_fam != model_fam:
-        return {
-            "compatible": False,
-            "supported_by_engine": True,
-            "lora_family": lora_fam,
-            "model_family": model_fam,
-            "engine": engine,
-            "reason": (
-                f"Несовместимая архитектура: LoRA предназначена для «{lora_fam}», "
+    common = {
+        "engine": engine,
+        "model_family": model_fam,
+        "model_id": model_id,
+        "lora_family": lora_fam,
+        "architecture": explicit_arch,
+        "bound_models": bound_models,
+        "bound_engines": bound_engines,
+    }
+
+    # 1. Exact model binding wins over every family/architecture heuristic.
+    if bound_models:
+        if model_id and model_id in bound_models:
+            return _compat_result(
+                **common,
+                compatible=True,
+                match_level="exact",
+                reason=f"Точная привязка к модели «{model_id}» на движке {engine.upper()}.",
+            )
+        return _compat_result(
+            **common,
+            compatible=False,
+            reason=(
+                "LoRA привязана к другим моделям: "
+                + ", ".join(bound_models[:6])
+                + ". Снимите привязку или выберите одну из этих моделей."
+            ),
+        )
+
+    # 2. Optional engine allow-list.
+    if bound_engines and engine.lower() not in bound_engines:
+        return _compat_result(
+            **common,
+            compatible=False,
+            reason=(
+                f"LoRA разрешена только для движков: {', '.join(bound_engines)}. "
+                f"Выбран движок {engine}."
+            ),
+        )
+
+    # 3. Architecture family fallback (legacy behaviour).
+    if explicit_arch not in ("any", "") and model_fam not in ("any", "") and explicit_arch != model_fam:
+        return _compat_result(
+            **common,
+            compatible=False,
+            reason=(
+                f"Несовместимая архитектура: LoRA предназначена для «{explicit_arch}», "
                 f"а выбранная модель относится к семейству «{model_fam}»."
             ),
-        }
+        )
 
-    return {
-        "compatible": True,
-        "supported_by_engine": True,
-        "lora_family": lora_fam,
-        "model_family": model_fam,
-        "engine": engine,
-        "reason": f"Совместимо ({lora_fam.upper()} на движке {engine.upper()}).",
-    }
+    return _compat_result(
+        **common,
+        compatible=True,
+        match_level="architecture" if explicit_arch not in ("any", "") else "family",
+        reason=f"Совместимо по архитектуре ({explicit_arch or lora_fam} на движке {engine.upper()}).",
+    )
 

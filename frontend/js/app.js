@@ -72,6 +72,9 @@ const App = {
     hfInspectedRepo: null,
     activeLoras: [],
     loraLibrary: [],
+    modelCardEditor: null,
+    componentPicker: null,
+    loraBinding: null,
     compareActive: false,
     comparePercentage: 50,
     previousPreviewUrl: null,
@@ -1114,6 +1117,73 @@ const App = {
         ? `<button class="delete-custom-btn" style="margin-top: 12px; margin-left: 8px;" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)">🗑 Удалить</button>`
         : "";
 
+      const canEditCard = model.is_custom && !this.state.account?.is_guest;
+      const editCardBtn = canEditCard
+        ? `<button class="history-action-btn" style="width: auto; margin-top: 12px; margin-left: 8px;" onclick="App.openModelCardEditor('${escapeHtml(model.id)}')" title="Редактировать карточку, энкодер и VAE">✎ Редактировать</button>`
+        : "";
+
+      const componentAction = (role, index, teId, installed, label) => installed
+        ? `<span class="variant-state installed" title="Файл найден в кэше">${ICON_CHECK}<span>На диске</span></span>`
+        : `<button type="button" class="btn-download" data-model-id="${escapeHtml(model.id)}" data-role="${role}" data-index="${index}" data-te-id="${escapeHtml(teId || "")}" onclick="App.downloadModelComponent(this.dataset.modelId, this.dataset.role, this.dataset.index, this.dataset.teId, this)" title="Скачать ${escapeHtml(label)}" aria-label="Скачать ${escapeHtml(label)}">${ICON_DOWNLOAD}<span>Скачать</span></button>`;
+
+      const teList = Array.isArray(model.text_encoders) ? model.text_encoders : [];
+      const teMissing = teList.some(te => !te.installed);
+      const teRows = teList.map((te, idx) => {
+        const tech = [te.repo_id, te.path || te.file, te.precision, te.size_gb ? `${te.size_gb} GB` : ""]
+          .filter(Boolean).join(" · ");
+        return `
+          <div class="component-item">
+            <div class="component-info">
+              <span class="component-name">${escapeHtml(te.name || te.file || te.id || "Text encoder")}</span>
+              <span class="component-sub" title="${escapeHtml(tech)}">${escapeHtml(tech)}</span>
+            </div>
+            <div class="component-actions">${componentAction("text_encoder", idx, te.id, te.installed, "текстовый энкодер")}</div>
+          </div>`;
+      }).join("");
+      const teSection = (teList.length || model.is_custom)
+        ? `<details class="model-card-section" ${teMissing ? "open" : ""}>
+             <summary class="model-card-section-title">Текстовые энкодеры (${teList.length})${teMissing ? ` <span class="section-warning">нужно скачать</span>` : ""}</summary>
+             <div class="model-variants-list">${teRows || `<div class="component-empty">В карточке не указан энкодер. Откройте редактор и добавьте его из репозитория или по ссылке.</div>`}</div>
+           </details>`
+        : "";
+
+      const vaeInfo = model.vae;
+      const vaeMissing = Boolean(vaeInfo && !vaeInfo.installed);
+      const vaeRow = vaeInfo
+        ? `<div class="component-item">
+             <div class="component-info">
+               <span class="component-name">VAE</span>
+               <span class="component-sub" title="${escapeHtml([vaeInfo.repo_id, vaeInfo.path].filter(Boolean).join(" · "))}">${escapeHtml([vaeInfo.repo_id, vaeInfo.path].filter(Boolean).join(" · "))}</span>
+             </div>
+             <div class="component-actions">${componentAction("vae", 0, "", vaeInfo.installed, "VAE")}</div>
+           </div>`
+        : `<div class="component-empty">В карточке не указан VAE.${model.is_custom ? " Откройте редактор и добавьте его." : ""}</div>`;
+      const vaeSection = (vaeInfo || model.is_custom)
+        ? `<details class="model-card-section" ${vaeMissing ? "open" : ""}>
+             <summary class="model-card-section-title">VAE${vaeMissing ? ` <span class="section-warning">нужно скачать</span>` : ""}</summary>
+             <div class="model-variants-list">${vaeRow}</div>
+           </details>`
+        : "";
+
+      const auxList = Array.isArray(model.aux_files) ? model.aux_files : [];
+      const auxRows = auxList.map((aux, idx) => {
+        const tech = [aux.repo_id, aux.path, aux.size_gb ? `${aux.size_gb} GB` : ""].filter(Boolean).join(" · ");
+        return `
+          <div class="component-item">
+            <div class="component-info">
+              <span class="component-name">${escapeHtml(String(aux.path || "").split("/").pop() || "Aux file")}</span>
+              <span class="component-sub" title="${escapeHtml(tech)}">${escapeHtml(tech)}</span>
+            </div>
+            <div class="component-actions">${componentAction("aux", idx, "", aux.installed, "sidecar")}</div>
+          </div>`;
+      }).join("");
+      const auxSection = auxList.length
+        ? `<details class="model-card-section">
+             <summary class="model-card-section-title">Aux / sidecars (${auxList.length})</summary>
+             <div class="model-variants-list">${auxRows}</div>
+           </details>`
+        : "";
+
       const noticeHtml = isDisabled
         ? `<div style="margin-top: 10px; padding: 8px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 12px; color: #f87171;">⚠️ ${escapeHtml(model.disabled_reason || "Отключено из-за дефектов весов upstream. Включить можно в Настройках.")}</div>`
         : "";
@@ -1137,10 +1207,16 @@ const App = {
             <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
             ${vramStr ? `<span>📼 ${vramStr}</span>` : ""}
           </div>
-          <div class="model-variants-title">Transformers (${model.transformers?.length || 0})</div>
-          <div class="model-variants-list">${variantsHtml}</div>
-          <div style="margin-top: 8px; display: flex; align-items: center;">
+          <details class="model-card-section" open>
+            <summary class="model-card-section-title">Transformers (${model.transformers?.length || 0})</summary>
+            <div class="model-variants-list">${variantsHtml}</div>
+          </details>
+          ${teSection}
+          ${vaeSection}
+          ${auxSection}
+          <div style="margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
             ${selectBtnHtml}
+            ${editCardBtn}
             ${deleteCustomBtn}
           </div>
         </div>
@@ -1240,6 +1316,42 @@ const App = {
           label: `Энкодер: ${filePath}`,
           kind: "encoder",
           repoId,
+        });
+      }
+    } catch (err) {
+      this.toast("error", "Ошибка скачивания: " + err.message);
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.classList.remove("is-loading");
+      }
+    }
+  },
+
+  async downloadModelComponent(modelId, role, index, teId, btnEl) {
+    const model = this.state.models.find(m => m.id === modelId);
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.classList.add("is-loading");
+    }
+    try {
+      const result = await this.apiPost(`/api/models/${encodeURIComponent(modelId)}/component-download`, {
+        role,
+        index: parseInt(index || "0", 10),
+        id: teId || null,
+      });
+      if (result.status === "already_installed") {
+        this.toast("info", "Компонент уже скачан");
+        await this.refreshConfig();
+        return;
+      }
+      const roleLabel = role === "text_encoder" ? "Энкодер" : role === "vae" ? "VAE" : "Sidecar";
+      this.toast("info", `${roleLabel}: скачивание начато...`);
+      if (result.job_id && this.startDownloadPolling) {
+        this.startDownloadPolling(result.job_id, {
+          label: `${model?.name || modelId} · ${roleLabel}`,
+          kind: role,
+          modelId,
+          repoId: result.repo_id,
         });
       }
     } catch (err) {
@@ -1682,6 +1794,7 @@ const App = {
       cfgSlider.value = recCfg.toFixed(1);
     }
 
+    await this.loadLoras(true);
     this.updateModelTrigger();
   },
 
@@ -4501,6 +4614,441 @@ const App = {
     }
   },
 
+  parseComponentRef(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const urlMatch = text.match(/^https?:\/\/(?:www\.)?huggingface\.co\/([^/]+)\/([^/]+)\/(?:blob|resolve)\/[^/]+\/([^?#]+)/i);
+    if (urlMatch) {
+      return { repo_id: `${urlMatch[1]}/${urlMatch[2]}`, path: decodeURIComponent(urlMatch[3]) };
+    }
+    if (text.includes("::")) {
+      const [repoRaw, ...pathParts] = text.split("::");
+      const repo = repoRaw.replace(/^https?:\/\/(?:www\.)?huggingface\.co\//i, "").replace(/\/+$/, "");
+      const path = pathParts.join("::").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (repo.includes("/") && path) return { repo_id: repo, path };
+    }
+    return null;
+  },
+
+  async openModelCardEditor(modelId) {
+    try {
+      const card = await this.apiGet(`/api/models/${encodeURIComponent(modelId)}/card`);
+      const args = card.engine_args || {};
+      const vaePath = args.vae_remote || args.vae_file || args.vae || "";
+      const textEncoders = (card.text_encoders || []).map(te => ({
+        id: te.id,
+        name: te.name || te.path || te.file,
+        repo_id: (te.source || {}).repo_id || te.repo || card.repo_id || "",
+        path: te.path || te.file || "",
+        size_gb: Number(te.size_gb || 0),
+        precision: te.precision || "custom",
+        recommended: Boolean(te.recommended),
+      }));
+      const auxFiles = (args.aux_files || []).map(aux => {
+        if (aux && typeof aux === "object") {
+          return { repo_id: aux.repo_id || card.repo_id || "", path: aux.path || "", size_gb: Number(aux.size_gb || 0) };
+        }
+        return { repo_id: card.repo_id || "", path: String(aux || ""), size_gb: 0 };
+      });
+      this.state.modelCardEditor = {
+        modelId,
+        repoId: card.repo_id || "",
+        manifest: card,
+        te: textEncoders,
+        vae: vaePath ? {
+          repo_id: args.vae_repo || card.repo_id || "",
+          path: vaePath,
+          size_gb: 0,
+        } : null,
+        aux: auxFiles,
+        repoInfo: null,
+      };
+
+      const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value ?? "";
+      };
+      setValue("model-card-editor-id", modelId);
+      setValue("model-card-editor-name", card.name || "");
+      setValue("model-card-editor-family", card.family || "flux");
+      setValue("model-card-editor-engine", card.engine || "sd_cpp");
+      setValue("model-card-editor-pipeline", card.pipeline || "text_to_image");
+      setValue("model-card-editor-steps", card.scheduler_presets?.default?.steps ?? 20);
+      setValue("model-card-editor-cfg", card.default_cfg ?? card.scheduler_presets?.default?.cfg ?? 1.0);
+      setValue("model-card-editor-license", card.license || "");
+      setValue("model-card-editor-base-repo", card.base_repo_id || "");
+      setValue("model-card-editor-description", card.description || "");
+      const repoEl = document.getElementById("model-card-editor-repo");
+      if (repoEl) repoEl.textContent = card.repo_id || "не указан";
+      const subtitle = document.getElementById("model-card-editor-subtitle");
+      if (subtitle) subtitle.textContent = `${card.name || modelId} · ${card.repo_id || "локальная модель"}`;
+      const statusEl = document.getElementById("model-card-editor-repo-status");
+      if (statusEl) statusEl.textContent = "Проверка покажет, какие энкодеры, VAE и sidecar-файлы уже лежат в репозитории.";
+      const suggestionsEl = document.getElementById("model-card-editor-suggestions");
+      if (suggestionsEl) suggestionsEl.innerHTML = "";
+
+      this.renderModelCardEditorComponents();
+      document.getElementById("model-card-editor-modal").style.display = "flex";
+      if (card.repo_id) this.inspectCardRepo(true);
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  closeModelCardEditor() {
+    const modal = document.getElementById("model-card-editor-modal");
+    if (modal) modal.style.display = "none";
+    this.state.modelCardEditor = null;
+  },
+
+  renderModelCardEditorComponents() {
+    const editor = this.state.modelCardEditor;
+    if (!editor) return;
+    const teList = document.getElementById("model-card-editor-te-list");
+    const vaeList = document.getElementById("model-card-editor-vae-list");
+    const auxList = document.getElementById("model-card-editor-aux-list");
+    const teCount = document.getElementById("model-card-editor-te-count");
+    const auxCount = document.getElementById("model-card-editor-aux-count");
+    if (teCount) teCount.textContent = String(editor.te.length);
+    if (auxCount) auxCount.textContent = String(editor.aux.length);
+
+    if (teList) {
+      teList.innerHTML = editor.te.length
+        ? editor.te.map((te, idx) => `
+            <div class="component-item">
+              <div class="component-info">
+                <span class="component-name">${escapeHtml(te.name || te.path || "Text encoder")} ${te.recommended ? '<span class="component-primary">основной</span>' : ""}</span>
+                <span class="component-sub" title="${escapeHtml([te.repo_id, te.path, te.precision].filter(Boolean).join(" · "))}">${escapeHtml([te.repo_id, te.path, te.precision, te.size_gb ? `${te.size_gb} GB` : ""].filter(Boolean).join(" · "))}</span>
+              </div>
+              <div class="component-actions">
+                <button type="button" class="dock-ctrl-btn" onclick="App.makeCardTePrimary(${idx})" title="Сделать основным">★</button>
+                <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('te', ${idx})" title="Убрать из карточки">✕</button>
+              </div>
+            </div>`).join("")
+        : `<div class="component-empty">Энкодер не указан. Добавьте его из репозитория, через поиск или по ссылке.</div>`;
+    }
+
+    if (vaeList) {
+      vaeList.innerHTML = editor.vae
+        ? `<div class="component-item">
+             <div class="component-info">
+               <span class="component-name">VAE</span>
+               <span class="component-sub" title="${escapeHtml([editor.vae.repo_id, editor.vae.path].filter(Boolean).join(" · "))}">${escapeHtml([editor.vae.repo_id, editor.vae.path].filter(Boolean).join(" · "))}</span>
+             </div>
+             <div class="component-actions">
+               <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('vae', 0)" title="Убрать VAE">✕</button>
+             </div>
+           </div>`
+        : `<div class="component-empty">VAE не указан. Добавьте его из репозитория, через поиск или по ссылке.</div>`;
+    }
+
+    if (auxList) {
+      auxList.innerHTML = editor.aux.length
+        ? editor.aux.map((aux, idx) => `
+            <div class="component-item">
+              <div class="component-info">
+                <span class="component-name">${escapeHtml(String(aux.path || "").split("/").pop() || "Sidecar")}</span>
+                <span class="component-sub" title="${escapeHtml([aux.repo_id, aux.path].filter(Boolean).join(" · "))}">${escapeHtml([aux.repo_id, aux.path, aux.size_gb ? `${aux.size_gb} GB` : ""].filter(Boolean).join(" · "))}</span>
+              </div>
+              <div class="component-actions">
+                <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('aux', ${idx})" title="Убрать sidecar">✕</button>
+              </div>
+            </div>`).join("")
+        : `<div class="component-empty">Sidecar-файлы не указаны.</div>`;
+    }
+  },
+
+  makeCardTePrimary(index) {
+    const editor = this.state.modelCardEditor;
+    if (!editor || !editor.te[index]) return;
+    editor.te.forEach((te, idx) => { te.recommended = idx === index; });
+    this.renderModelCardEditorComponents();
+  },
+
+  removeCardComponent(role, index) {
+    const editor = this.state.modelCardEditor;
+    if (!editor) return;
+    if (role === "te") editor.te.splice(index, 1);
+    else if (role === "vae") editor.vae = null;
+    else if (role === "aux") editor.aux.splice(index, 1);
+    this.renderModelCardEditorComponents();
+  },
+
+  addCardComponent(role, component) {
+    const editor = this.state.modelCardEditor;
+    if (!editor || !component || !component.path) return;
+    const repo = component.repo_id || editor.repoId || "";
+    if (role === "vae") {
+      editor.vae = {
+        repo_id: repo,
+        path: component.path,
+        size_gb: Number(component.size_gb || 0),
+      };
+      this.renderModelCardEditorComponents();
+      return;
+    }
+    if (role === "aux") {
+      const exists = editor.aux.some(aux => aux.repo_id === repo && aux.path === component.path);
+      if (!exists) {
+        editor.aux.push({ repo_id: repo, path: component.path, size_gb: Number(component.size_gb || 0) });
+      }
+      this.renderModelCardEditorComponents();
+      return;
+    }
+
+    const exists = editor.te.some(te => te.repo_id === repo && te.path === component.path);
+    if (exists) {
+      this.toast("info", "Этот энкодер уже добавлен в карточку");
+      return;
+    }
+    let baseId = String(component.path.split("/").pop() || "te").replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "te";
+    let teId = baseId;
+    let suffix = 2;
+    while (editor.te.some(te => te.id === teId)) {
+      teId = `${baseId}_${suffix}`;
+      suffix += 1;
+    }
+    editor.te.push({
+      id: teId,
+      name: component.name || component.path.split("/").pop(),
+      repo_id: repo,
+      path: component.path,
+      size_gb: Number(component.size_gb || 0),
+      precision: component.precision || "custom",
+      recommended: editor.te.length === 0,
+    });
+    this.renderModelCardEditorComponents();
+  },
+
+  addCardComponentFromInput(role) {
+    const inputId = role === "te" ? "model-card-editor-te-ref" : role === "vae" ? "model-card-editor-vae-ref" : "model-card-editor-aux-ref";
+    const input = document.getElementById(inputId);
+    const parsed = this.parseComponentRef(input?.value || "");
+    if (!parsed) {
+      this.toast("warning", "Укажите ссылку вида author/repo::path/to/file.safetensors");
+      return;
+    }
+    this.addCardComponent(role, { ...parsed, size_gb: 0, precision: "custom" });
+    if (input) input.value = "";
+  },
+
+  async inspectCardRepo(silent = false) {
+    const editor = this.state.modelCardEditor;
+    if (!editor || !editor.repoId) {
+      if (!silent) this.toast("warning", "В карточке не указан репозиторий модели");
+      return;
+    }
+    const statusEl = document.getElementById("model-card-editor-repo-status");
+    const suggestionsEl = document.getElementById("model-card-editor-suggestions");
+    if (statusEl) statusEl.textContent = "Проверяем репозиторий...";
+    try {
+      const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(editor.repoId)}`);
+      editor.repoInfo = info;
+      const teFiles = info.text_encoder_files || [];
+      const vaeFiles = info.vae_files || [];
+      const auxFiles = info.aux_files || [];
+      if (statusEl) {
+        const parts = [
+          `энкодеров: ${teFiles.length}`,
+          `VAE: ${vaeFiles.length}`,
+          `sidecars: ${auxFiles.length}`,
+        ];
+        statusEl.innerHTML = `${teFiles.length ? "✅" : "⚠️"} В репозитории найдено ${parts.join(" · ")}.` +
+          (teFiles.length ? "" : " Энкодер не найден — добавьте его вручную или найдите на HF.");
+      }
+      if (!suggestionsEl) return;
+      const rows = [];
+      const pushSuggestion = (role, file, label) => {
+        const exists = role === "te"
+          ? editor.te.some(te => te.path === file.path)
+          : role === "vae"
+            ? editor.vae?.path === file.path
+            : editor.aux.some(aux => aux.path === file.path);
+        const size = Number(file.size_gb || 0);
+        rows.push(`
+          <div class="card-editor-suggestion">
+            <span><strong>${escapeHtml(label)}</strong> <code>${escapeHtml(file.path)}</code>${size ? ` · ${size} GB` : ""}</span>
+            ${exists
+              ? `<span class="component-primary">уже в карточке</span>`
+              : `<button type="button" class="dock-mini-btn" data-role="${role}" data-repo="${escapeHtml(editor.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" onclick="App.addCardSuggestion(this.dataset.role, this.dataset.repo, this.dataset.path, this.dataset.size)">＋ Добавить</button>`}
+          </div>`);
+      };
+      teFiles.slice(0, 8).forEach(file => pushSuggestion("te", file, "Энкодер"));
+      vaeFiles.slice(0, 4).forEach(file => pushSuggestion("vae", file, "VAE"));
+      auxFiles.slice(0, 8).forEach(file => pushSuggestion("aux", file, "Sidecar"));
+      suggestionsEl.innerHTML = rows.join("") || `<div class="component-empty">В репозитории не найдено компонентов, которые можно добавить.</div>`;
+    } catch (e) {
+      if (statusEl) statusEl.innerHTML = `<span style="color:#f87171;">Не удалось проверить репозиторий: ${escapeHtml(e.message)}</span>`;
+      if (suggestionsEl) suggestionsEl.innerHTML = "";
+      if (!silent) this.toast("error", e.message);
+    }
+  },
+
+  addCardSuggestion(role, repoId, path, size) {
+    this.addCardComponent(role, {
+      repo_id: repoId,
+      path,
+      size_gb: Number(size || 0),
+      precision: role === "vae" ? "custom" : undefined,
+    });
+  },
+
+  async saveModelCard() {
+    const editor = this.state.modelCardEditor;
+    if (!editor) return;
+    const value = id => document.getElementById(id)?.value ?? "";
+    const payload = {
+      name: value("model-card-editor-name").trim(),
+      family: value("model-card-editor-family").trim(),
+      engine: value("model-card-editor-engine"),
+      pipeline: value("model-card-editor-pipeline"),
+      steps: parseInt(value("model-card-editor-steps") || "20", 10),
+      cfg: parseFloat(value("model-card-editor-cfg") || "1.0"),
+      license: value("model-card-editor-license").trim(),
+      base_repo_id: value("model-card-editor-base-repo").trim(),
+      description: value("model-card-editor-description").trim(),
+      text_encoders: editor.te.map(te => ({
+        id: te.id,
+        name: te.name,
+        repo_id: te.repo_id,
+        path: te.path,
+        size_gb: te.size_gb,
+        precision: te.precision,
+        recommended: te.recommended,
+      })),
+      vae: editor.vae,
+      aux_files: editor.aux,
+    };
+    try {
+      await this.apiPatch(`/api/models/${encodeURIComponent(editor.modelId)}/card`, payload);
+      this.toast("success", "✓ Карточка модели сохранена");
+      this.closeModelCardEditor();
+      await this.refreshConfig();
+      if (this.state.selectedModel === editor.modelId) {
+        await this.onModelChange(this.state.selectedVariant || null);
+      }
+    } catch (e) {
+      this.toast("error", e.message);
+    }
+  },
+
+  openComponentPicker(role) {
+    if (!this.state.modelCardEditor) return;
+    this.state.componentPicker = { role, repoId: this.state.modelCardEditor.repoId || "", info: null };
+    const modal = document.getElementById("component-picker-modal");
+    if (modal) modal.style.display = "flex";
+    const title = document.getElementById("component-picker-title");
+    if (title) title.textContent = role === "vae" ? "🔎 Найти VAE на Hugging Face" : role === "aux" ? "🔎 Найти sidecar на Hugging Face" : "🔎 Найти текстовый энкодер на Hugging Face";
+    const search = document.getElementById("component-picker-search");
+    if (search) search.value = "";
+    const results = document.getElementById("component-picker-results");
+    if (results) { results.innerHTML = ""; results.style.display = "none"; }
+    const repoInput = document.getElementById("component-picker-repo");
+    if (repoInput) repoInput.value = this.state.componentPicker.repoId;
+    const files = document.getElementById("component-picker-files");
+    if (files) files.innerHTML = "";
+    const manual = document.getElementById("component-picker-manual");
+    if (manual) { manual.value = ""; manual.placeholder = role === "vae" ? "author/repo::vae/file.safetensors" : "author/repo::text_encoder/model.safetensors"; }
+    if (this.state.componentPicker.repoId) this.inspectComponentRepo();
+  },
+
+  closeComponentPicker() {
+    const modal = document.getElementById("component-picker-modal");
+    if (modal) modal.style.display = "none";
+    this.state.componentPicker = null;
+  },
+
+  async searchComponentRepos() {
+    const picker = this.state.componentPicker;
+    if (!picker) return;
+    const input = document.getElementById("component-picker-search");
+    const query = (input?.value || "").trim() || (picker.role === "vae" ? "flux vae" : "flux text encoder");
+    const resultsEl = document.getElementById("component-picker-results");
+    if (resultsEl) { resultsEl.style.display = "block"; resultsEl.innerHTML = `<div class="component-empty">Поиск репозиториев...</div>`; }
+    try {
+      const res = await this.apiGet(`/api/hf/search?q=${encodeURIComponent(query)}&limit=12`);
+      const results = res.results || [];
+      if (!resultsEl) return;
+      resultsEl.innerHTML = results.length
+        ? results.map(item => `
+            <div class="hf-result-item" data-repo="${escapeHtml(item.repo_id)}" onclick="App.pickComponentRepo(this.dataset.repo)">
+              <div>${escapeHtml(item.repo_id)}</div>
+              <div class="hf-result-meta">${escapeHtml(item.pipeline_tag || "")} ${item.downloads ? `· ⬇ ${item.downloads}` : ""}</div>
+            </div>`).join("")
+        : `<div class="component-empty">Репозитории не найдены. Вставьте ссылку author/repo вручную ниже.</div>`;
+    } catch (e) {
+      if (resultsEl) resultsEl.innerHTML = `<div class="component-empty" style="color:#f87171;">${escapeHtml(e.message)}</div>`;
+    }
+  },
+
+  pickComponentRepo(repoId) {
+    const input = document.getElementById("component-picker-repo");
+    if (input) input.value = repoId;
+    this.inspectComponentRepo();
+  },
+
+  async inspectComponentRepo() {
+    const picker = this.state.componentPicker;
+    if (!picker) return;
+    const repoInput = document.getElementById("component-picker-repo");
+    const repoId = (repoInput?.value || "").trim();
+    const filesEl = document.getElementById("component-picker-files");
+    if (!repoId) {
+      this.toast("warning", "Укажите репозиторий Hugging Face");
+      return;
+    }
+    if (filesEl) filesEl.innerHTML = `<div class="component-empty">Проверяем дерево репозитория...</div>`;
+    try {
+      const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(repoId)}`);
+      picker.repoId = info.repo_id || repoId;
+      picker.info = info;
+      const files = picker.role === "vae" ? (info.vae_files || []) : picker.role === "aux" ? (info.aux_files || []) : (info.text_encoder_files || []);
+      if (!filesEl) return;
+      if (!files.length) {
+        const what = picker.role === "vae" ? "VAE" : picker.role === "aux" ? "sidecar" : "текстового энкодера";
+        filesEl.innerHTML = `<div class="component-empty">В репозитории не найдено файлов ${what}. Проверьте другую папку/репозиторий или добавьте ссылку вручную.</div>`;
+        return;
+      }
+      filesEl.innerHTML = files.map(file => {
+        const size = Number(file.size_gb || 0);
+        return `
+          <div class="component-item">
+            <div class="component-info">
+              <span class="component-name">${escapeHtml(file.path)}</span>
+              <span class="component-sub">${size ? `${size} GB` : ""} ${file.quant ? `· ${file.quant}` : ""}</span>
+            </div>
+            <div class="component-actions">
+              <button type="button" class="dock-mini-btn" data-repo="${escapeHtml(picker.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" data-precision="${escapeHtml(file.quant || 'custom')}" onclick="App.pickComponentFile(this.dataset.repo, this.dataset.path, this.dataset.size, this.dataset.precision)">＋ Добавить</button>
+            </div>
+          </div>`;
+      }).join("");
+    } catch (e) {
+      if (filesEl) filesEl.innerHTML = `<div class="component-empty" style="color:#f87171;">${escapeHtml(e.message)}</div>`;
+    }
+  },
+
+  pickComponentFile(repoId, path, size, precision) {
+    const picker = this.state.componentPicker;
+    if (!picker) return;
+    this.addCardComponent(picker.role, { repo_id: repoId, path, size_gb: Number(size || 0), precision: precision || "custom" });
+    this.closeComponentPicker();
+    this.toast("success", "Компонент добавлен в карточку");
+  },
+
+  addComponentFromManual() {
+    const picker = this.state.componentPicker;
+    if (!picker) return;
+    const manual = document.getElementById("component-picker-manual");
+    const parsed = this.parseComponentRef(manual?.value || "");
+    if (!parsed) {
+      this.toast("warning", "Укажите ссылку вида author/repo::path/to/file.safetensors");
+      return;
+    }
+    this.addCardComponent(picker.role, { ...parsed, size_gb: 0, precision: "custom" });
+    this.closeComponentPicker();
+    this.toast("success", "Компонент добавлен в карточку");
+  },
+
   async deleteModelFiles(modelId, variantId, btnEl) {
     const model = (this.state.models || []).find(m => m.id === modelId);
     const modelLabel = model?.name || modelId;
@@ -4980,14 +5528,58 @@ const App = {
   // ============================================================
   // LoRA Management & Stacking
   // ============================================================
-  async loadLoras() {
+  currentLoraModelId() {
+    const select = document.getElementById("model-select");
+    return this.state.selectedModel || (select ? select.value : "") || "";
+  },
+
+  async loadLoras(notifyIncompatible = true) {
+    const modelId = this.currentLoraModelId();
+    const query = modelId ? `?model_id=${encodeURIComponent(modelId)}` : "";
     try {
-      const res = await this.apiGet("/api/loras");
+      const res = await this.apiGet(`/api/loras${query}`);
       this.state.loraLibrary = Array.isArray(res) ? res : (res.loras || []);
+      this.pruneIncompatibleLoras(notifyIncompatible);
       this.renderLoraUI();
     } catch (e) {
       console.warn("[lora] Failed to load loras:", e);
     }
+  },
+
+  loraCompatibility(item) {
+    return item && item.compatibility ? item.compatibility : null;
+  },
+
+  isLoraCompatible(item) {
+    const compat = this.loraCompatibility(item);
+    return !compat || compat.compatible !== false;
+  },
+
+  loraCompatBadge(item) {
+    const compat = this.loraCompatibility(item);
+    if (!compat) return "";
+    if (compat.compatible === false) {
+      return `<span class="lora-compat-badge incompatible" title="${escapeHtml(compat.reason || "")}">несовместима</span>`;
+    }
+    const labels = { exact: "точная", architecture: "архитектура", family: "семейство", engine: "движок" };
+    const label = labels[compat.match_level] || "совместима";
+    return `<span class="lora-compat-badge compatible" title="${escapeHtml(compat.reason || "")}">${escapeHtml(label)}</span>`;
+  },
+
+  pruneIncompatibleLoras(notify = true) {
+    const blocked = [];
+    this.state.activeLoras = this.state.activeLoras.filter(active => {
+      const item = this.state.loraLibrary.find(l => l.name === active.name);
+      if (item && !this.isLoraCompatible(item)) {
+        blocked.push(active.name);
+        return false;
+      }
+      return true;
+    });
+    if (blocked.length && notify) {
+      this.toast("warning", `Отключены несовместимые LoRA: ${blocked.join(", ")}`);
+    }
+    return blocked;
   },
 
   renderLoraUI() {
@@ -5016,19 +5608,24 @@ const App = {
         dockList.innerHTML = this.state.loraLibrary.map(item => {
           const activeItem = this.state.activeLoras.find(l => l.name === item.name);
           const isActive = !!activeItem;
-          const strength = activeItem ? activeItem.strength : 1.0;
+          const incompatible = !this.isLoraCompatible(item);
+          const strength = activeItem ? activeItem.strength : (Number(item.scale_default) || 1.0);
           const family = item.family ? `<span class="lora-meta-tag">${escapeHtml(item.family)}</span>` : "";
           const size = item.size_mb ? `<span class="lora-meta-tag">${item.size_mb} MB</span>` : "";
           return `
-            <div class="lora-card-item ${isActive ? 'active' : ''}">
+            <div class="lora-card-item ${isActive ? 'active' : ''} ${incompatible ? 'incompatible' : ''}">
               <div class="lora-card-header">
                 <div class="lora-title-group" onclick="App.toggleLora('${escapeHtml(item.name)}')" style="cursor: pointer;">
-                  <input type="checkbox" ${isActive ? 'checked' : ''} onclick="event.stopPropagation(); App.toggleLora('${escapeHtml(item.name)}')">
+                  <input type="checkbox" ${isActive ? 'checked' : ''} ${incompatible && !isActive ? 'disabled' : ''} onclick="event.stopPropagation(); App.toggleLora('${escapeHtml(item.name)}')">
                   <span class="lora-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                   ${family}
                   ${size}
+                  ${this.loraCompatBadge(item)}
                 </div>
-                <button type="button" class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить файл LoRA">✕</button>
+                <div style="display: flex; gap: 2px;">
+                  <button type="button" class="dock-ctrl-btn" onclick="App.openLoraBinding('${escapeHtml(item.name)}')" title="Привязать к моделям">⚙</button>
+                  <button type="button" class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить файл LoRA">✕</button>
+                </div>
               </div>
               ${isActive ? `
                 <div class="lora-slider-row">
@@ -5102,11 +5699,16 @@ const App = {
     grid.innerHTML = list.map(item => {
       const activeItem = this.state.activeLoras.find(l => l.name === item.name);
       const isActive = !!activeItem;
+      const compat = this.loraCompatibility(item);
+      const incompatible = compat && compat.compatible === false;
       const family = item.family
         ? `<span class="model-badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3);">${escapeHtml(item.family)}</span>`
         : "";
       const size = item.size_mb
         ? `<span class="model-badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-muted);">${item.size_mb} MB</span>`
+        : "";
+      const bound = (compat && compat.bound_models && compat.bound_models.length)
+        ? `<span class="model-badge" style="background: rgba(168, 85, 247, 0.15); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.3);">🔗 ${compat.bound_models.length}</span>`
         : "";
       return `
         <div class="model-card ${isActive ? 'active' : ''}" style="display: flex; flex-direction: column; justify-content: space-between; min-height: 140px;">
@@ -5114,19 +5716,24 @@ const App = {
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
               <div style="font-weight: 600; font-size: 13.5px; color: var(--text); word-break: break-all;" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
               <div style="display: flex; gap: 4px;">
-                <button class="dock-ctrl-btn" onclick="App.editLoraMetadata('${escapeHtml(item.name)}', '${escapeHtml(item.family || '')}', '${escapeHtml(item.trigger || '')}')" title="Настроить архитектуру и триггеры">⚙️</button>
+                <button class="dock-ctrl-btn" onclick="App.openLoraBinding('${escapeHtml(item.name)}')" title="Привязать к моделям и настроить архитектуру">⚙️</button>
                 <button class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить">✕</button>
               </div>
             </div>
             <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px;">
               ${family}
               ${size}
+              ${bound}
+              ${this.loraCompatBadge(item)}
             </div>
+            ${incompatible
+              ? `<div class="lora-incompat-reason" title="${escapeHtml(compat.reason || "")}">${escapeHtml(compat.reason || "Несовместима с выбранной моделью")}</div>`
+              : ""}
             ${item.trigger ? `<div style="font-size: 11px; color: #93c5fd; background: rgba(59, 130, 246, 0.1); border-radius: 4px; padding: 3px 6px; margin-bottom: 8px; cursor: pointer;" onclick="App.insertLoraTrigger('${escapeHtml(item.trigger)}')" title="Нажмите, чтобы вставить в промпт">💬 ${escapeHtml(item.trigger)}</div>` : ''}
           </div>
           <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
-            <button class="card-action-btn ${isActive ? 'danger' : 'primary'}" style="flex: 1; height: 30px; font-size: 12px;" onclick="App.toggleLora('${escapeHtml(item.name)}')">
-              ${isActive ? 'Отключить' : 'Подключить'}
+            <button class="card-action-btn ${isActive ? 'danger' : 'primary'}" style="flex: 1; height: 30px; font-size: 12px;" ${incompatible && !isActive ? 'disabled' : ''} onclick="App.toggleLora('${escapeHtml(item.name)}')">
+              ${isActive ? 'Отключить' : incompatible ? 'Несовместима' : 'Подключить'}
             </button>
           </div>
         </div>
@@ -5157,20 +5764,23 @@ const App = {
 
     listEl.innerHTML = list.map(item => {
       const isActive = this.state.activeLoras.some(l => l.name === item.name);
+      const incompatible = !this.isLoraCompatible(item);
       const meta = [
         item.size_mb ? `${item.size_mb} MB` : "",
-        item.family || "",
+        item.architecture || item.family || "",
         item.trigger ? `💬 ${item.trigger}` : "",
       ].filter(Boolean).join(" · ");
       return `
-        <div class="lora-card-item ${isActive ? 'active' : ''}" style="margin-bottom: 6px;">
+        <div class="lora-card-item ${isActive ? 'active' : ''} ${incompatible ? 'incompatible' : ''}" style="margin-bottom: 6px;">
           <div class="lora-card-header">
             <div class="lora-title-group" onclick="App.toggleLora('${escapeHtml(item.name)}')" style="cursor: pointer; min-width: 0;">
-              <input type="checkbox" ${isActive ? 'checked' : ''} onclick="event.stopPropagation(); App.toggleLora('${escapeHtml(item.name)}')">
+              <input type="checkbox" ${isActive ? 'checked' : ''} ${incompatible && !isActive ? 'disabled' : ''} onclick="event.stopPropagation(); App.toggleLora('${escapeHtml(item.name)}')">
               <span class="lora-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
             </div>
             <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
+              ${this.loraCompatBadge(item)}
               <span style="font-size: 10px; color: var(--text-dim);">${escapeHtml(meta)}</span>
+              <button type="button" class="dock-ctrl-btn" onclick="App.openLoraBinding('${escapeHtml(item.name)}')" title="Привязка к моделям">⚙</button>
               <button type="button" class="dock-ctrl-btn" onclick="App.deleteLora('${escapeHtml(item.name)}')" title="Удалить">✕</button>
             </div>
           </div>
@@ -5185,9 +5795,15 @@ const App = {
       this.state.activeLoras.splice(idx, 1);
     } else {
       const item = this.state.loraLibrary.find(l => l.name === name);
+      if (item && !this.isLoraCompatible(item)) {
+        const reason = this.loraCompatibility(item)?.reason || "несовместима с выбранной моделью";
+        this.toast("warning", `LoRA «${name}»: ${reason}`);
+        return;
+      }
+      const scale = Number(item?.scale_default);
       this.state.activeLoras.push({
         name: name,
-        strength: 1.0,
+        strength: Number.isFinite(scale) && scale !== 0 ? scale : 1.0,
         info: item || {},
       });
     }
@@ -5291,22 +5907,152 @@ const App = {
     }
   },
 
-  async editLoraMetadata(name, family, trigger) {
-    const nextFamily = prompt(`Архитектура LoRA «${name}» (flux / qwen / sdxl / z_image / any):`, family || "");
-    if (nextFamily === null) return;
-    const nextTrigger = prompt("Триггер-слова (через запятую):", trigger || "");
-    if (nextTrigger === null) return;
+  openLoraBinding(name) {
+    if (this.state.account?.is_guest) {
+      this.toast("warning", "Гости не могут менять привязку LoRA");
+      return;
+    }
+    const item = this.state.loraLibrary.find(l => l.name === name);
+    if (!item) {
+      this.toast("error", `LoRA не найдена: ${name}`);
+      return;
+    }
+    this.state.loraBinding = {
+      name,
+      item,
+      models: new Set(item.compatible_models || []),
+      engines: new Set((item.engine || []).map(value => String(value).toLowerCase())),
+    };
 
+    const nameEl = document.getElementById("lora-binding-name");
+    if (nameEl) nameEl.value = name;
+    const archSelect = document.getElementById("lora-binding-architecture");
+    if (archSelect) {
+      const architecture = String(item.architecture || item.family || "any").toLowerCase();
+      archSelect.innerHTML = `
+        <option value="flux">Flux / FLUX.2 Klein</option>
+        <option value="qwen">Qwen-Image</option>
+        <option value="sdxl">SDXL / Pony / Illustrious</option>
+        <option value="z_image">Z-Image</option>
+        <option value="any">Любая / универсальная</option>`;
+      if (!Array.from(archSelect.options).some(option => option.value === architecture) && architecture) {
+        archSelect.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(architecture)}">${escapeHtml(architecture)}</option>`);
+      }
+      archSelect.value = architecture || "any";
+    }
+    const scaleEl = document.getElementById("lora-binding-scale");
+    if (scaleEl) scaleEl.value = item.scale_default ?? 1.0;
+    const triggerEl = document.getElementById("lora-binding-trigger");
+    if (triggerEl) triggerEl.value = item.trigger || "";
+    const targetsEl = document.getElementById("lora-binding-targets");
+    if (targetsEl) targetsEl.value = (item.target_modules || []).join(", ");
+
+    this.renderLoraBindingEngines();
+    this.renderLoraBindingModels();
+    const modal = document.getElementById("lora-binding-modal");
+    if (modal) modal.style.display = "flex";
+  },
+
+  closeLoraBinding() {
+    const modal = document.getElementById("lora-binding-modal");
+    if (modal) modal.style.display = "none";
+    this.state.loraBinding = null;
+  },
+
+  renderLoraBindingEngines() {
+    const bind = this.state.loraBinding;
+    const host = document.getElementById("lora-binding-engines");
+    if (!bind || !host) return;
+    const engines = [
+      ["sd_cpp", "SD.CPP (GGUF)"],
+      ["quantfunc", "QuantFunc"],
+      ["nunchaku", "Nunchaku (SVDQ)"],
+      ["sdnq", "SDNQ"],
+      ["orbitquant", "OrbitQuant (сейчас без LoRA)"],
+    ];
+    host.innerHTML = engines.map(([value, label]) => `
+      <label class="card-editor-check ${value === "orbitquant" ? "check-disabled" : ""}">
+        <input type="checkbox" value="${value}" ${bind.engines.has(value) ? "checked" : ""} onchange="App.toggleLoraBindingEngine('${value}', this.checked)">
+        <span>${escapeHtml(label)}</span>
+      </label>`).join("");
+  },
+
+  toggleLoraBindingEngine(engine, checked) {
+    const bind = this.state.loraBinding;
+    if (!bind) return;
+    if (checked) bind.engines.add(engine);
+    else bind.engines.delete(engine);
+  },
+
+  renderLoraBindingModels() {
+    const bind = this.state.loraBinding;
+    const host = document.getElementById("lora-binding-models");
+    if (!bind || !host) return;
+    const currentModelId = this.currentLoraModelId();
+    const models = (this.state.models || []).slice().sort((a, b) => {
+      if (a.id === currentModelId) return -1;
+      if (b.id === currentModelId) return 1;
+      return String(a.name || a.id).localeCompare(String(b.name || b.id));
+    });
+    host.innerHTML = models.map(model => `
+      <label class="card-editor-check">
+        <input type="checkbox" value="${escapeHtml(model.id)}" ${bind.models.has(model.id) ? "checked" : ""} onchange="App.toggleLoraBindingModel('${escapeHtml(model.id)}', this.checked)">
+        <span>${escapeHtml(model.name || model.id)}</span>
+        <span class="card-editor-check-meta">${escapeHtml([model.engine, model.family].filter(Boolean).join(" · "))}${model.id === currentModelId ? " · текущая" : ""}</span>
+      </label>`).join("") || `<div class="component-empty">Модели не загружены.</div>`;
+  },
+
+  toggleLoraBindingModel(modelId, checked) {
+    const bind = this.state.loraBinding;
+    if (!bind) return;
+    if (checked) bind.models.add(modelId);
+    else bind.models.delete(modelId);
+  },
+
+  async saveLoraBinding() {
+    const bind = this.state.loraBinding;
+    if (!bind) return;
+    const value = id => document.getElementById(id)?.value ?? "";
+    const architecture = value("lora-binding-architecture").trim();
+    const scaleRaw = value("lora-binding-scale").trim();
+    const payload = {
+      architecture: architecture === "any" ? "" : architecture,
+      trigger: value("lora-binding-trigger").trim(),
+      target_modules: value("lora-binding-targets").trim(),
+      scale_default: scaleRaw === "" ? null : parseFloat(scaleRaw),
+      engine: Array.from(bind.engines),
+      compatible_models: Array.from(bind.models),
+    };
     try {
-      await this.apiPatch(`/api/loras/${encodeURIComponent(name)}/metadata`, {
-        family: nextFamily.trim() || null,
-        trigger: nextTrigger.trim() || null,
-      });
-      this.toast("success", "✓ Метаданные LoRA обновлены");
+      await this.apiPatch(`/api/loras/${encodeURIComponent(bind.name)}/metadata`, payload);
+      this.toast("success", "✓ Привязка LoRA сохранена");
+      this.closeLoraBinding();
       await this.loadLoras();
     } catch (e) {
       this.toast("error", e.message);
     }
+  },
+
+  async bindLoraToCurrentModel() {
+    const bind = this.state.loraBinding;
+    const modelId = this.currentLoraModelId();
+    if (!bind || !modelId) {
+      this.toast("warning", "Сначала выберите модель");
+      return;
+    }
+    bind.models.add(modelId);
+    this.renderLoraBindingModels();
+    await this.saveLoraBinding();
+  },
+
+  async clearLoraBinding() {
+    const bind = this.state.loraBinding;
+    if (!bind) return;
+    bind.models.clear();
+    bind.engines.clear();
+    this.renderLoraBindingModels();
+    this.renderLoraBindingEngines();
+    await this.saveLoraBinding();
   },
 
   insertLoraTrigger(trigger) {
