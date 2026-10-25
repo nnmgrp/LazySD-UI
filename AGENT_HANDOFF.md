@@ -87,6 +87,7 @@ G:\QuantFunc-WebUI\
     ├── test_halftone_and_manga.py # Тесты математики полутонов и манги
     ├── test_latest_fixes.py    # Интеграционные тесты последних исправлений
     ├── test_model_files_and_hf_layout.py # Безопасное удаление, общие файлы, Fibo folder-layout
+    ├── test_model_card_and_lora_binding.py # Карточки кастомных моделей и явная привязка LoRA
     └── test_queue_presence_history.py # GPU-очередь, presence, пагинация History, Dock/UI-контракты
 ```
 
@@ -415,6 +416,86 @@ G:\QuantFunc-WebUI\
   runtime которой ещё не поддерживается: пользователь скачает гигабайты и
   получит ошибку движка.
 
+### 6.7. Редактируемые карточки и скачивание компонентов
+
+- Редактировать можно **только** кастомные модели (`is_custom` или id
+  `custom_*`). `_find_custom_manifest()` отказывает встроенным манифестам:
+  `GET/PATCH /api/models/{id}/card` возвращает 404 «защищены». Гость получает
+  403 на оба метода.
+- `PATCH /api/models/{id}/card` принимает поля `name`, `description`, `family`,
+  `pipeline`, `engine`, `steps`, `cfg`, `license`, `base_repo_id`, `tags`,
+  `text_encoders`, `vae`, `aux_files`. Валидация в
+  `backend/custom_models.py:_apply_card_updates()`:
+  - `steps` 1–150, `cfg` 0–30, известный `engine`, `pipeline`;
+  - репозитории нормализуются к `author/repo`;
+  - пути компонентов только относительные, без `..`, `:` в первом сегменте и
+    выхода за пределы репозитория;
+  - TE/VAE/aux принимаются как `{repo_id, path}` или как вложенный
+    `source.file_path` — не заставляй пользователя дублировать путь.
+- Сохранение атомарное: `*.tmp` → `replace`, затем `reload_registry()` и
+  `get_registry().get(model_id)`. При любой ошибке файл восстанавливается из
+  побайтового бэкапа и реестр перезагружается. Не сохраняй манифест напрямую
+  через `open(..., "w")` без этой проверки.
+- `engine_args` — производное поле. При сохранении TE пересобирает
+  `llm/llm_repo/llm_file`, VAE — `vae/vae_repo/vae_file/vae_remote`, aux —
+  `aux_files/aux_repo`. Если список очищен, старые ключи удаляются; иначе
+  движок продолжит искать удалённый файл.
+- `POST /api/models/{id}/component-download` скачивает ровно один компонент:
+  `role=text_encoder` + `id`, `role=vae`, или `role=aux` + `index`. Endpoint
+  повторно санитизирует путь (traversal, абсолютный путь, `:`), проверяет
+  `destination.is_file()` и возвращает `already_installed`, иначе запускает
+  фоновую job с прогрессом. Гость получает 403.
+- `/api/models` и `/api/models/{id}/state` обязаны отдавать TE с `repo_id`,
+  `path`, `precision`, `size_gb`, `installed`, VAE с `repo_id`, `path`,
+  `installed`, и полный `aux_files`. Раньше Fibo показывал только
+  transformer, потому что TE/VAE искались лишь в `engine_args.llm*`, а не в
+  repo-local путях манифеста.
+- UI: секции карточки — `<details class="model-card-section">`
+  (Transformers / TE / VAE / Aux), у компонентов кнопки
+  `App.downloadModelComponent()` и удаления. Модалки —
+  `#model-card-editor-modal` и `#component-picker-modal`; состояние лежит в
+  `App.state.modelCardEditor` и `App.state.componentPicker`.
+- Выбор компонента: HF не умеет искать репозитории по роли файла. Поэтому
+  сначала ищется репозиторий (`/api/hf/search`), затем инспектируется его
+  дерево, а найденные файлы фильтруются по TE/VAE/aux. Не обещай фильтр
+  «только энкодеры» на уровне поиска репозиториев.
+
+### 6.8. Явная привязка LoRA к моделям
+
+- Модельно-независимая LoRA — неправильная модель поведения. В метаданных
+  `.loras_meta.json` хранятся `architecture`, `compatible_models`, `engine`,
+  `target_modules`, `rank`, `scale_default`, `trigger`, `base`, `repo_id`.
+- `check_lora_compatibility()` соблюдает порядок:
+  1. `compatible_models` — точная привязка; совпадение даёт `match_level=exact`
+     и перекрывает несовпадение family;
+  2. если привязка есть, но модели в ней нет — LoRA несовместима, даже когда
+     family совпадает (не возвращай старый family-heuristic раньше привязки);
+  3. `engine` — allow-list движков;
+  4. `architecture`/`family` — только legacy-fallback для LoRA без привязки.
+- `suggest_model_bindings(base_model)` сопоставляет HF `base_model` с
+  `sources.primary.repo_id`, `base_repo_id` и `upstream_model`. Импорт LoRA с
+  HF автоматически заполняет `compatible_models`, а `info["suggested_models"]`
+  возвращается в ответе.
+- `GET /api/loras?model_id=...` добавляет каждому элементу `compatibility`
+  (`compatible`, `supported_by_engine`, `match_level`, `reason`,
+  `bound_models`, `bound_engines`). Без `model_id` поле не добавляется —
+  старые клиенты должны продолжать работать.
+- `PATCH /api/loras/{name}/metadata` — host-only. `update_lora_metadata()`
+  нормализует списки (строка с `,`/`;` или массив), ограничивает
+  `scale_default` диапазоном `MIN_STRENGTH..MAX_STRENGTH`, проверяет имя без
+  path traversal и существование файла.
+- UI: `App.loadLoras()` запрашивает `/api/loras?model_id=...`,
+  `pruneIncompatibleLoras()` снимает активные несовместимые адаптеры при смене
+  модели, `loraCompatBadge()` рисует бейдж, incompatible-чекбоксы и кнопка
+  подключения disabled. Модалка привязки — `#lora-binding-modal`,
+  состояние — `App.state.loraBinding`.
+- `/api/generate` обязан повторно вызвать `check_lora_compatibility()` для
+  каждой LoRA: UI можно обойти, а движок всё равно получит несовместимый
+  адаптер. При ошибке — 400 с причиной.
+- `LORA_SUPPORTED_ENGINES = ("sd_cpp", "quantfunc", "nunchaku", "sdnq")`.
+  OrbitQuant динамические LoRA пока не поддерживает — не добавляй его в этот
+  список без реализации в движке.
+
 ---
 
 ## 7. Архитектурный план реализации системы слоёв (Layer System Plan)
@@ -526,6 +607,22 @@ G:\QuantFunc-WebUI\
       `stdout/stderr.reconfigure(errors="replace")`, в `start.bat` —
       `chcp 65001`, `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`.
     - Не убирай эти настройки и не добавляй `print()` до их выполнения.
+13. **Карточки моделей: не редактируй встроенные манифесты**:
+    - `PATCH /api/models/{id}/card` — только для `is_custom`/`custom_*`.
+      Встроенные карточки защищены; не «упрощай» проверку до существования
+      файла, иначе любой пользователь перепишет официальный манифест.
+    - Сохраняй через временный файл и восстановление бэкапа. Прямая запись
+      JSON оставит битый манифест при ошибке валидации или reload.
+    - `engine_args` синхронизируй с TE/VAE/aux. Иначе UI показывает новый
+      энкодер, а движок грузит старый (или удалённый) файл.
+14. **LoRA должна быть привязана к модели**:
+    - Не возвращай модель-агностичное поведение: при наличии
+      `compatible_models` точная привязка важнее family. Это осознанное
+      требование пользователя, а не баг.
+    - Совместимость проверяется в двух местах: `/api/loras?model_id=` для UI
+      и `/api/generate` для фактического запуска. Не удаляй вторую проверку.
+    - При смене модели снимай активные несовместимые LoRA, иначе следующий
+      запуск упадёт с 400 или, хуже, отправит адаптер не той архитектуры.
 
 ---
 
@@ -550,10 +647,10 @@ G:\QuantFunc-WebUI\
    ```powershell
    python -m pytest G:\QuantFunc-WebUI\tests -q
    ```
-   *Все 44 теста (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
+   *Все 60 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
    test_flux3_nunchaku_support, test_lora_hub_frontend_sync,
-   test_model_files_and_hf_layout и test_queue_presence_history) должны
-   проходить со статусом PASS (100%).*
+   test_model_files_and_hf_layout, test_model_card_and_lora_binding и
+   test_queue_presence_history) должны проходить со статусом PASS (100%).*
    `venv\Scripts\python.exe` не содержит pytest — используй глобальный `python`.
 3. **Проверка JSON-локалей и компиляции Python**:
    ```powershell
@@ -575,6 +672,7 @@ G:\QuantFunc-WebUI\
 ### 2026-10-25
 | Коммит | Описание |
 |---|---|
+| `cf19e39` | `feat(models)`: редактируемые карточки кастомных моделей (host-only, атомарное сохранение с бэкапом), repo-local TE/VAE/aux в API и карточке, скачивание отдельного компонента, модалки редактора и выбора компонента, явная привязка LoRA (`compatible_models`, `engine`, `architecture`, `scale_default`), автопривязка по HF `base_model`, проверка совместимости в UI и `/api/generate`; 60 тестов. |
 | `1033602` | `feat(models)`: безопасное удаление весов только по манифесту с защитой общих файлов, `backend/model_files.py`, удаление кастомных моделей без `rmtree`, настоящие кнопки скачивания/удаления, сворачиваемая панель загрузок, aux-sidecar'ы и `.py`/`fonts` при HF-импорте, self-contained folder-layout без `model_index.json` (Fibo), UTF-8 запуск на Windows; 44 теста. |
 
 ### 2026-10-23

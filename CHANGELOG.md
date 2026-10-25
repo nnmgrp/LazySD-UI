@@ -3,12 +3,89 @@
 Журнал коммитов для людей и ИИ-агентов. Перед началом работы сверяйся с
 `git log --oneline -20`, потому что этот файл обновляется не автоматически.
 
-> **Последний код-коммит:** `1033602` — feat(models): safe weight deletion, download queue UI, folder-layout HF imports (2026-10-25).
+> **Последний код-коммит:** `cf19e39` — feat(models): editable custom cards, component downloads, explicit LoRA binding (2026-10-25).
 > Документация (этот файл и ссылки в MD) идёт отдельным коммитом `docs: ...`, его хеш смотри в `git log -1`.
 
 ---
 
 ## 2026-10-25
+
+### `cf19e39` — feat(models): editable custom cards, component downloads, explicit LoRA binding
+
+Карточки моделей и компоненты:
+- `GET /api/models/{id}/card` отдаёт редактируемый манифест кастомной модели,
+  `PATCH /api/models/{id}/card` сохраняет изменения. Гость получает 403,
+  встроенные манифесты — 404 «защищены»; редактировать можно только
+  `is_custom`/`custom_*` модели.
+- В редакторе доступны имя, описание, семейство, движок, pipeline, шаги, CFG,
+  лицензия, базовая модель, список TE, VAE и aux-файлы. `steps`/`cfg`
+  синхронизируются с `scheduler_presets.default` и `default_cfg`;
+  `engine_args.llm*`, `vae*`, `aux_files` пересобираются из карточки.
+- Пути компонентов проверяются: только относительные, без `..`, абсолютных
+  путей и выхода за пределы репозитория; репозитории нормализуются к
+  `author/repo`. Числовые поля ограничены (`steps` 1–150, `cfg` 0–30).
+- Сохранение атомарное: временный файл, проверка `reload_registry()` и
+  `registry.get(model_id)`, при ошибке — восстановление из бэкапа.
+- `POST /api/models/{id}/component-download` скачивает ровно один
+  repo-local компонент (`role=text_encoder|vae|aux`, для aux — `index`).
+  Endpoint отклоняет traversal/абсолютные пути, возвращает
+  `already_installed` для готового файла и запускает обычную job-прогрессию.
+- `/api/models` и `/api/models/{id}/state` теперь содержат TE с `repo_id`,
+  `path`, `precision`, `size_gb`, `installed`; VAE с `repo_id`, `path`,
+  `installed`; список aux-файлов и `primary_repo_id`.
+- В карточке модели появились сворачиваемые секции
+  «Transformers / Текстовые энкодеры / VAE / Aux» с кнопками скачивания и
+  удаления. Для кастомных моделей доступна кнопка «Редактировать».
+- Редактор умеет проверять выбранный HF-репозиторий: показывает, какие TE,
+  VAE и sidecar-файлы реально есть в дереве, отмечает уже добавленные и
+  предлагает недостающие. Если энкодера в репозитории нет, его можно добавить
+  вручную ссылкой или через поиск с фильтрацией по роли файла.
+
+LoRA — явная привязка вместо модельно-независимых адаптеров:
+- Метаданные LoRA расширены: `architecture`, `compatible_models`, `engine`,
+  `target_modules`, `rank`, `scale_default`, `trigger`, `base`, `repo_id`.
+- `check_lora_compatibility()` сначала проверяет точную привязку
+  `compatible_models`, затем allow-list движков, и только потом — семейство
+  архитектур. Точная привязка перекрывает несовпадение family.
+- При импорте LoRA с HF поле `base_model` автоматически сопоставляется с
+  `sources.primary.repo_id`/`base_repo_id` моделей реестра
+  (`suggest_model_bindings`), поэтому адаптер сразу получает привязку.
+- `GET /api/loras?model_id=...` возвращает `compatibility`
+  (`compatible`, `match_level`, `reason`, `bound_models`, `bound_engines`).
+  `PATCH /api/loras/{name}/metadata` доступен только хосту.
+- UI показывает бейджи «точная / архитектура / семейство / движок» и
+  «несовместима», блокирует чекбоксы и кнопку подключения, а при смене модели
+  снимает активные несовместимые LoRA с предупреждением.
+- `/api/generate` повторно проверяет совместимость и отклоняет запрос с
+  несовместимой LoRA (400), даже если UI был обойдён.
+- OrbitQuant пока не поддерживает динамические LoRA:
+  `LORA_SUPPORTED_ENGINES = (sd_cpp, quantfunc, nunchaku, sdnq)`, для
+  OrbitQuant-моделей все адаптеры помечаются несовместимыми.
+
+Fibo 2.0 OrbitQuant W4A8:
+- Репозиторные TE и VAE теперь видны в карточке: `text_encoder/model.safetensors`
+  (bf16, 3.19 GB) и `vae/diffusion_pytorch_model.safetensors`, плюс два
+  sidecar-файла `transformer/orbitquant_codebooks.safetensors` и
+  `transformer/orbitquant_rotations.safetensors`.
+- Runtime по-прежнему не поддерживается: установлен OrbitQuant 0.14.0, а W4A8
+  требует `orbitquant>=0.15.0`, `BriaFibo2Pipeline`, `fibo2_orbitquant.py`,
+  `manifest.json`, `processor/`, `scheduler/` и `fonts/`. Локальный манифест
+  `custom_hf_fibo_20_edit_turbo_orbitquant_w4a8_hf.json` намеренно не коммитится.
+
+Проверка:
+- `python -m pytest -q` — **60 passed** (44 старых + 16 новых в
+  `tests/test_model_card_and_lora_binding.py`, включая отказ component-download
+  на `../`, `C:/` и `/etc/passwd`); `node --check`, `py_compile` и
+  `git diff --check` чистые.
+- Live на `127.0.0.1:7871`: 24 модели; карточка Fibo показывает 4 секции и
+  5 кнопок скачивания; редактор — 1 TE, 1 VAE, 2 aux и предложения из
+  репозитория; поиск компонента возвращает 12 HF-репозиториев; модалка
+  привязки LoRA — 5 движков и 24 модели; при выборе Fibo три LoRA получают
+  бейдж «несовместима» и disabled-чекбоксы, при возврате на FLUX.3 —
+  снова совместимы.
+- Bump cache-bust: `/css/styles.css?v=20261025_02`, `/js/app.js?v=20261025_02`.
+
+---
 
 ### `1033602` — feat(models): safe weight deletion, download queue UI, folder-layout HF imports
 
