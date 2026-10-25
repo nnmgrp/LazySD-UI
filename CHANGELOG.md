@@ -3,12 +3,59 @@
 Журнал коммитов для людей и ИИ-агентов. Перед началом работы сверяйся с
 `git log --oneline -20`, потому что этот файл обновляется не автоматически.
 
-> **Последний код-коммит:** `cf19e39` — feat(models): editable custom cards, component downloads, explicit LoRA binding (2026-10-25).
+> **Последний код-коммит:** `0657d3e` — fix(models): cached VAE detection + editable built-in cards (2026-10-25).
 > Документация (этот файл и ссылки в MD) идёт отдельным коммитом `docs: ...`, его хеш смотри в `git log -1`.
 
 ---
 
 ## 2026-10-25
+
+### `0657d3e` — fix(models): cached VAE detection + editable built-in cards
+
+VAE в карточках моделей:
+- `backend/model_files.py` получил общие helpers `vae_payload()`,
+  `vae_payload_from_args()`, `vae_download_refs()`, `safe_repo_rel()`.
+  Все три API-ответа (`/api/models`, `/api/models/{id}/state`, карточка)
+  используют один и тот же резолвер вместо трёх копий `_is_vae_installed()`.
+- Установленный VAE теперь ищется не только по `vae_repo`/`vae_remote`, но и
+  в реальных cache-layout'ах: `vae`, `vae_file`, basename в корне репозитория,
+  `vae/<basename>`, плюс отдельный VAE-репозиторий. Поэтому уже скачанные
+  `flux2-vae.safetensors`, `qwen_image_2.1_vae_bf16.safetensors` и
+  `vae/diffusion_pytorch_model.safetensors` показываются как «На диске», а не
+  «Скачать».
+- Если в манифесте VAE не объявлен, но в папке модели есть
+  `vae/*.safetensors` (или `*vae*.safetensors`/`ae.safetensors` в корне),
+  карточка выводит inferred-VAE с `inferred: true`. Секция VAE теперь
+  рендерится у каждой карточки; без объявления и без файла показывается
+  подсказка открыть редактор.
+- `POST /api/models/{id}/component-download` для `role=vae` берёт источник из
+  `vae_repo`/`vae_remote`, но скачивает/копирует файл в локальный путь
+  `vae`/`vae_file` основного репозитория — так же, как `backend/sd_cpp.py`.
+  Если файл уже лежит в source-репозитории, он копируется без сети.
+- Удаление по манифесту учитывает и source-путь VAE, и локальный target,
+  поэтому общий VAE защищается ссылками других моделей.
+
+Редактирование карточек:
+- `GET/PATCH /api/models/{id}/card` теперь работают для **всех** моделей
+  реестра, включая встроенные; `editable: true` возвращается всегда.
+  Гость по-прежнему получает 403. Удаление встроенных моделей не разрешено:
+  кнопка «Удалить» остаётся только у `is_custom`.
+- Редактор получает нормализованный `vae` из backend, включая inferred-VAE,
+  и не перезаписывает абсолютный локальный VAE при сохранении других полей.
+- Атомарное сохранение с бэкапом, `reload_registry()` и проверкой
+  `registry.get(model_id)` сохранено без изменений.
+- Обновлён cache-busting `frontend/index.html` (`app.js?v=20261025_03`),
+  чтобы браузер не показывал старую карточку после обновления.
+
+Проверка:
+- `python -m pytest -q` — **66 passed** (60 старых + 6 новых: VAE в primary
+  repo, VAE в отдельном repo, inferred-VAE, local download target,
+  absolute-path rejection, редактирование built-in карточки).
+- `node --check frontend/js/app.js`, `python -m py_compile`, `git diff --check`
+  чистые.
+- Live на `127.0.0.1:7871`: 24 модели; пять явно объявленных VAE показывают
+  `installed=true`, Fibo остаётся `false`; у всех 24 карточек есть кнопка
+  «Редактировать» и секция VAE.
 
 ### `cf19e39` — feat(models): editable custom cards, component downloads, explicit LoRA binding
 

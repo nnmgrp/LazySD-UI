@@ -369,7 +369,10 @@ G:\QuantFunc-WebUI\
 - Источник истины при удалении — **манифест модели**, а не каталог репозитория.
   Логика живёт в `backend/model_files.py`:
   - `model_file_refs(model)` собирает все `(repo_id, relative_path)` из
-    `transformers`, `text_encoders`, `engine_args.vae*` и `aux_files`.
+    `transformers`, `text_encoders`, `engine_args.vae*` и `aux_files`. Для VAE
+    добавляются оба пути: source (`vae_repo`/`vae_remote`) и локальный target
+    (`primary_repo`/`vae`), иначе скачанный в primary-репозиторий VAE не
+    защищался бы от удаления другой моделью.
   - `collect_delete_targets(model, all_models, cache, variant_id=None)` сначала
     собирает ссылки **всех других** моделей в `protected`. Совпавшие файлы не
     удаляются, а попадают в `skipped_shared`. При удалении одного варианта
@@ -418,10 +421,12 @@ G:\QuantFunc-WebUI\
 
 ### 6.7. Редактируемые карточки и скачивание компонентов
 
-- Редактировать можно **только** кастомные модели (`is_custom` или id
-  `custom_*`). `_find_custom_manifest()` отказывает встроенным манифестам:
-  `GET/PATCH /api/models/{id}/card` возвращает 404 «защищены». Гость получает
-  403 на оба метода.
+- Редактировать можно **все** модели реестра, включая встроенные:
+  `_find_custom_manifest()` больше не отказывает манифестам без `is_custom`,
+  `GET/PATCH /api/models/{id}/card` возвращают `editable: true`. Гость
+  получает 403 на оба метода. Удаление встроенных моделей через UI
+  по-прежнему скрыто (кнопка только у `is_custom`), а защита базовых
+  системных моделей в `delete_custom_model()` не менялась.
 - `PATCH /api/models/{id}/card` принимает поля `name`, `description`, `family`,
   `pipeline`, `engine`, `steps`, `cfg`, `license`, `base_repo_id`, `tags`,
   `text_encoders`, `vae`, `aux_files`. Валидация в
@@ -440,25 +445,46 @@ G:\QuantFunc-WebUI\
   `llm/llm_repo/llm_file`, VAE — `vae/vae_repo/vae_file/vae_remote`, aux —
   `aux_files/aux_repo`. Если список очищен, старые ключи удаляются; иначе
   движок продолжит искать удалённый файл.
+- VAE-резолвер живёт в `backend/model_files.py`:
+  - `vae_payload()` / `vae_payload_from_args()` возвращают `repo_id`, `path`,
+    `installed`, `local_repo_id`, `local_path`, `inferred` и (при найденном
+    файле) `resolved_repo_id`/`resolved_path`;
+  - установленность проверяется по primary-репозиторию и отдельному
+    VAE-репозиторию: `vae_remote`, `vae_file`, `vae`, basename в корне,
+    `vae/<basename>`;
+  - если VAE в манифесте не объявлен, но в папке модели есть
+    `vae/*.safetensors` (или `*vae*.safetensors`/`ae.safetensors` в корне),
+    возвращается inferred-VAE. Не отключай inference: без него старые
+    манифесты снова начнут показывать «не указан VAE», хотя файл уже скачан;
+  - `vae_download_refs()` отделяет source (`vae_repo`/`vae_remote`) от
+    локального target (`vae`/`vae_file` в primary-репозитории).
 - `POST /api/models/{id}/component-download` скачивает ровно один компонент:
   `role=text_encoder` + `id`, `role=vae`, или `role=aux` + `index`. Endpoint
-  повторно санитизирует путь (traversal, абсолютный путь, `:`), проверяет
-  `destination.is_file()` и возвращает `already_installed`, иначе запускает
-  фоновую job с прогрессом. Гость получает 403.
+  повторно санитизирует и source-, и local-путь (traversal, абсолютный путь,
+  `:`), проверяет локальный `destination.is_file()` и возвращает
+  `already_installed`, иначе запускает фоновую job с прогрессом. Для VAE
+  источник берётся из `vae_repo`/`vae_remote`, а файл кладётся в
+  `primary_repo/vae` (или `vae_file`) — как в `backend/sd_cpp.py`; если
+  source-копия уже есть, она копируется без сети. Гость получает 403.
 - `/api/models` и `/api/models/{id}/state` обязаны отдавать TE с `repo_id`,
   `path`, `precision`, `size_gb`, `installed`, VAE с `repo_id`, `path`,
-  `installed`, и полный `aux_files`. Раньше Fibo показывал только
-  transformer, потому что TE/VAE искались лишь в `engine_args.llm*`, а не в
-  repo-local путях манифеста.
+  `installed`, `inferred`, `local_path`, и полный `aux_files`. Раньше Fibo
+  показывал только transformer, потому что TE/VAE искались лишь в
+  `engine_args.llm*`, а не в repo-local путях манифеста.
 - UI: секции карточки — `<details class="model-card-section">`
   (Transformers / TE / VAE / Aux), у компонентов кнопки
-  `App.downloadModelComponent()` и удаления. Модалки —
+  `App.downloadModelComponent()` и удаления. Секция VAE рендерится у каждой
+  карточки, даже если VAE не объявлен (тогда — подсказка открыть редактор).
+  Кнопка «Редактировать» доступна всем, кроме гостя. Модалки —
   `#model-card-editor-modal` и `#component-picker-modal`; состояние лежит в
   `App.state.modelCardEditor` и `App.state.componentPicker`.
 - Выбор компонента: HF не умеет искать репозитории по роли файла. Поэтому
   сначала ищется репозиторий (`/api/hf/search`), затем инспектируется его
   дерево, а найденные файлы фильтруются по TE/VAE/aux. Не обещай фильтр
   «только энкодеры» на уровне поиска репозиториев.
+- При изменении `frontend/js/app.js` обновляй `?v=` у `<script>` в
+  `frontend/index.html`; иначе браузер может показать старую карточку и
+  спрятать новые кнопки/секции.
 
 ### 6.8. Явная привязка LoRA к моделям
 
@@ -607,14 +633,23 @@ G:\QuantFunc-WebUI\
       `stdout/stderr.reconfigure(errors="replace")`, в `start.bat` —
       `chcp 65001`, `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`.
     - Не убирай эти настройки и не добавляй `print()` до их выполнения.
-13. **Карточки моделей: не редактируй встроенные манифесты**:
-    - `PATCH /api/models/{id}/card` — только для `is_custom`/`custom_*`.
-      Встроенные карточки защищены; не «упрощай» проверку до существования
-      файла, иначе любой пользователь перепишет официальный манифест.
+13. **Карточки моделей: встроенные манифесты теперь тоже редактируются**:
+    - `GET/PATCH /api/models/{id}/card` доступны для всех моделей реестра, но
+      только хосту; гость получает 403. Не возвращай старую проверку
+      `is_custom`/`custom_*` — пользователь явно просил сделать редактируемыми
+      все карточки.
+    - Удаление встроенных моделей через UI по-прежнему запрещено (кнопка
+      только у `is_custom`), а `delete_custom_model()` сохраняет защиту
+      базовых системных моделей. Не путай редактирование с удалением.
     - Сохраняй через временный файл и восстановление бэкапа. Прямая запись
       JSON оставит битый манифест при ошибке валидации или reload.
     - `engine_args` синхронизируй с TE/VAE/aux. Иначе UI показывает новый
       энкодер, а движок грузит старый (или удалённый) файл.
+    - VAE ищи через `backend/model_files.py:vae_payload*()`, а не локальной
+      проверкой `vae_repo/vae_remote`: реальные файлы часто лежат в
+      primary-репозитории (`vae`, basename) или в `vae/<basename>`. Для
+      скачивания используй `vae_download_refs()`: source и local target могут
+      быть разными.
 14. **LoRA должна быть привязана к модели**:
     - Не возвращай модель-агностичное поведение: при наличии
       `compatible_models` точная привязка важнее family. Это осознанное
@@ -647,7 +682,7 @@ G:\QuantFunc-WebUI\
    ```powershell
    python -m pytest G:\QuantFunc-WebUI\tests -q
    ```
-   *Все 60 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
+   *Все 66 тестов (включая smoke_test, test_latest_fixes, test_halftone_and_manga,
    test_flux3_nunchaku_support, test_lora_hub_frontend_sync,
    test_model_files_and_hf_layout, test_model_card_and_lora_binding и
    test_queue_presence_history) должны проходить со статусом PASS (100%).*
@@ -672,6 +707,7 @@ G:\QuantFunc-WebUI\
 ### 2026-10-25
 | Коммит | Описание |
 |---|---|
+| `0657d3e` | `fix(models)`: общий VAE-резолвер в `backend/model_files.py`, поиск уже скачанных VAE в primary/отдельном репозитории и `vae`/`vae/<basename>`, inferred-VAE для старых карточек, VAE-секция у каждой карточки, скачивание VAE в локальный target primary-репозитория, редактирование всех карточек (built-in + custom, guest-only ограничение), cache-busting `app.js`; 66 тестов. |
 | `cf19e39` | `feat(models)`: редактируемые карточки кастомных моделей (host-only, атомарное сохранение с бэкапом), repo-local TE/VAE/aux в API и карточке, скачивание отдельного компонента, модалки редактора и выбора компонента, явная привязка LoRA (`compatible_models`, `engine`, `architecture`, `scale_default`), автопривязка по HF `base_model`, проверка совместимости в UI и `/api/generate`; 60 тестов. |
 | `1033602` | `feat(models)`: безопасное удаление весов только по манифесту с защитой общих файлов, `backend/model_files.py`, удаление кастомных моделей без `rmtree`, настоящие кнопки скачивания/удаления, сворачиваемая панель загрузок, aux-sidecar'ы и `.py`/`fonts` при HF-импорте, self-contained folder-layout без `model_index.json` (Fibo), UTF-8 запуск на Windows; 44 теста. |
 
