@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import io
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -519,8 +519,15 @@ def render_halftone_screen(
     grad_type: str = "none",
     grad_angle: float = 45.0,
     grad_strength: float = 0.0,
+    pattern_frame: Optional[dict[str, float]] = None,
 ) -> np.ndarray:
-    """Render a single-channel halftone dot screen (with GenTonik Planets & Satellites, shapes, and distortions)."""
+    """Render a single-channel halftone dot screen (with GenTonik Planets & Satellites, shapes, and distortions).
+
+    ``pattern_frame`` keeps the screen anchored to the whole source when only a
+    region of interest is rendered. All coordinates are expressed in output
+    pixels at the current scale: ``full_width``/``full_height`` describe the
+    complete source and ``offset_x``/``offset_y`` locate this crop inside it.
+    """
     h, w = darkness.shape[:2]
     s = max(1, min(4, int(antialias)))
     pitch = max(2.0, float(cell_size)) * s
@@ -532,10 +539,21 @@ def render_halftone_screen(
     else:
         cov = darkness.astype(np.float32, copy=True)
 
-    # Optional GenTonik gradient modulation across canvas
+    frame_off_x = 0.0
+    frame_off_y = 0.0
+    frame_w = float(sw)
+    frame_h = float(sh)
+    if pattern_frame:
+        frame_off_x = float(pattern_frame.get("offset_x", 0.0)) * s
+        frame_off_y = float(pattern_frame.get("offset_y", 0.0)) * s
+        frame_w = max(1.0, float(pattern_frame.get("full_width", sw)) * s)
+        frame_h = max(1.0, float(pattern_frame.get("full_height", sh)) * s)
+
+    # Optional GenTonik gradient modulation across the full canvas. Cropped
+    # previews must not restart the gradient at the region edge.
     if grad_type in ("linear", "radial", "vignette") and abs(grad_strength) > 1e-3:
-        gy = np.linspace(-0.5, 0.5, sh, dtype=np.float32)[:, None]
-        gx = np.linspace(-0.5, 0.5, sw, dtype=np.float32)[None, :]
+        gy = ((np.arange(sh, dtype=np.float32) + frame_off_y) / frame_h - 0.5)[:, None]
+        gx = ((np.arange(sw, dtype=np.float32) + frame_off_x) / frame_w - 0.5)[None, :]
         if grad_type == "linear":
             grad_rad = np.deg2rad(float(grad_angle))
             g_map = (gx * float(np.cos(grad_rad)) + gy * float(np.sin(grad_rad))) + 0.5
@@ -561,10 +579,11 @@ def render_halftone_screen(
                     noise = cv2.resize(noise, (sw, sh), interpolation=cv2.INTER_NEAREST)
                 cov = np.clip(cov + noise * eff_strength, 0.0, 1.0)
 
-    # Rotated coordinate grid in cell units around image center (matching GLSL & GenTonik)
+    # Rotated coordinate grid in cell units around the full-image center so a
+    # cropped ROI uses exactly the same dot phase as the full render.
     y, x = np.mgrid[0:sh, 0:sw].astype(np.float32)
-    cx = sw * 0.5
-    cy = sh * 0.5
+    cx = frame_w * 0.5 - frame_off_x
+    cy = frame_h * 0.5 - frame_off_y
     dx = x - cx
     dy = y - cy
     rad = np.deg2rad(float(angle))
@@ -770,6 +789,88 @@ def _blend_rgb_layers(base_f: np.ndarray, top_f: np.ndarray, blend_mode: str = "
     return np.clip(res * 255.0, 0.0, 255.0)
 
 
+def _normalize_roi(
+    roi: Union[dict[str, Any], tuple[int, int, int, int], list[int], None],
+    full_w: int,
+    full_h: int,
+) -> tuple[int, int, int, int]:
+    """Return a clamped source-pixel ROI as ``(x, y, width, height)``."""
+    if roi is None:
+        return 0, 0, int(full_w), int(full_h)
+    if isinstance(roi, dict):
+        raw_x = roi.get("x", 0)
+        raw_y = roi.get("y", 0)
+        raw_w = roi.get("width", roi.get("w", full_w))
+        raw_h = roi.get("height", roi.get("h", full_h))
+    elif isinstance(roi, (tuple, list)) and len(roi) >= 4:
+        raw_x, raw_y, raw_w, raw_h = roi[:4]
+    else:
+        raise ValueError(f"Invalid ROI: {roi!r}")
+
+    try:
+        x = int(round(float(raw_x)))
+        y = int(round(float(raw_y)))
+        w = int(round(float(raw_w)))
+        h = int(round(float(raw_h)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid ROI values: {roi!r}") from exc
+
+    if w <= 0 or h <= 0:
+        raise ValueError("ROI width and height must be positive")
+    x = max(0, min(int(full_w) - 1, x))
+    y = max(0, min(int(full_h) - 1, y))
+    w = max(1, min(int(full_w) - x, w))
+    h = max(1, min(int(full_h) - y, h))
+    return x, y, w, h
+
+
+def _crop_mask_to_roi(
+    mask_source: Union[str, Path, bytes, Image.Image, np.ndarray, None],
+    roi: tuple[int, int, int, int],
+    full_w: int,
+    full_h: int,
+) -> Union[Image.Image, np.ndarray, None]:
+    """Crop a full-size mask to the requested ROI before it is resized for rendering."""
+    if mask_source is None or (isinstance(mask_source, str) and mask_source == ""):
+        return None
+    roi_x, roi_y, roi_w, roi_h = roi
+    if roi_x == 0 and roi_y == 0 and roi_w == full_w and roi_h == full_h:
+        return mask_source
+
+    if isinstance(mask_source, np.ndarray):
+        arr = mask_source
+        if arr.ndim >= 2 and arr.shape[1] == full_w and arr.shape[0] == full_h:
+            return arr[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+        if arr.ndim >= 2 and arr.shape[1] == roi_w and arr.shape[0] == roi_h:
+            return arr
+        full_mask = decode_mask_to_float(mask_source, (full_w, full_h))
+        if full_mask is None:
+            return None
+        return full_mask[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+
+    mask_img = load_image_safe(mask_source)
+    if mask_img.size == (roi_w, roi_h):
+        return mask_img
+    if mask_img.size != (full_w, full_h):
+        mask_img = mask_img.resize((full_w, full_h), Image.Resampling.LANCZOS)
+    return mask_img.crop((roi_x, roi_y, roi_x + roi_w, roi_y + roi_h))
+
+
+def _pattern_frame_for_roi(
+    full_w: int,
+    full_h: int,
+    roi: tuple[int, int, int, int],
+    work_scale: float,
+) -> dict[str, float]:
+    roi_x, roi_y, _roi_w, _roi_h = roi
+    return {
+        "full_width": float(full_w) * float(work_scale),
+        "full_height": float(full_h) * float(work_scale),
+        "offset_x": float(roi_x) * float(work_scale),
+        "offset_y": float(roi_y) * float(work_scale),
+    }
+
+
 def process_halftone_image(
     source: Union[str, Path, bytes, Image.Image, tuple[np.ndarray, Optional[np.ndarray]]],
     params: Union[HalftoneParams, dict[str, Any], None] = None,
@@ -778,8 +879,16 @@ def process_halftone_image(
     *,
     mask_source: Union[str, Path, bytes, Image.Image, np.ndarray, None] = None,
     preview_max_side: Optional[int] = None,
+    roi: Union[dict[str, Any], tuple[int, int, int, int], list[int], None] = None,
+    pattern_frame: Optional[dict[str, float]] = None,
+    scale_hint: float = 1.0,
 ) -> Image.Image:
-    """Run the complete Halftone Studio GT pipeline on CPU without mutating the source image."""
+    """Run the complete Halftone Studio GT pipeline on CPU without mutating the source image.
+
+    ``roi`` renders only a source-pixel region while keeping the screen phase
+    anchored to the full image. ``scale_hint`` is used by the layer compositor
+    when its source has already been cropped/resized.
+    """
     if mask is None and mask_source is not None:
         mask = mask_source
     if max_side is None and preview_max_side is not None:
@@ -792,19 +901,47 @@ def process_halftone_image(
     else:
         cfg = HalftoneParams.from_dict({"mode": "manga"})
 
-    rgb_orig, alpha_orig = extract_rgb_alpha(source)
-    orig_h, orig_w = rgb_orig.shape[:2]
+    rgb_source, alpha_source = extract_rgb_alpha(source)
+    full_h, full_w = rgb_source.shape[:2]
+    roi_rect = _normalize_roi(roi, full_w, full_h)
+    roi_x, roi_y, roi_w, roi_h = roi_rect
 
-    if max_side and max(orig_h, orig_w) > int(max_side):
-        scale = float(max_side) / float(max(orig_h, orig_w))
-        work_w = max(16, int(round(orig_w * scale)))
-        work_h = max(16, int(round(orig_h * scale)))
+    if roi_x == 0 and roi_y == 0 and roi_w == full_w and roi_h == full_h:
+        rgb_orig = rgb_source
+        alpha_orig = alpha_source
+    else:
+        rgb_orig = rgb_source[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+        alpha_orig = (
+            alpha_source[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+            if alpha_source is not None
+            else None
+        )
+        mask = _crop_mask_to_roi(mask, roi_rect, full_w, full_h)
+
+    if max_side and max(roi_h, roi_w) > int(max_side):
+        scale = float(max_side) / float(max(roi_h, roi_w))
+        work_w = max(16, int(round(roi_w * scale)))
+        work_h = max(16, int(round(roi_h * scale)))
         rgb = cv2.resize(rgb_orig, (work_w, work_h), interpolation=cv2.INTER_AREA)
         alpha = cv2.resize(alpha_orig, (work_w, work_h), interpolation=cv2.INTER_AREA) if alpha_orig is not None else None
     else:
         rgb = rgb_orig
         alpha = alpha_orig
-        work_h, work_w = orig_h, orig_w
+        work_h, work_w = roi_h, roi_w
+
+    # The CPU engine defines cell_size/pre_blur in source pixels. Scale them to
+    # the current preview resolution so adaptive previews and ROI crops match
+    # the full-resolution result instead of changing the screen pitch.
+    work_scale = float(work_w) / float(max(1, roi_w))
+    effective_scale = max(1e-4, work_scale * max(1e-4, float(scale_hint)))
+    if abs(effective_scale - 1.0) > 1e-4:
+        cfg = replace(
+            cfg,
+            cell_size=float(cfg.cell_size) * effective_scale,
+            pre_blur=float(cfg.pre_blur) * effective_scale,
+        )
+    if pattern_frame is None:
+        pattern_frame = _pattern_frame_for_roi(full_w, full_h, roi_rect, work_scale)
 
     dot_rgb = np.array(parse_hex_color(cfg.dot_color), dtype=np.float32)
     bg_rgb = np.array(parse_hex_color(cfg.bg_color), dtype=np.float32)
@@ -826,6 +963,7 @@ def process_halftone_image(
         grad_type=cfg.grad_type,
         grad_angle=cfg.grad_angle,
         grad_strength=cfg.grad_strength,
+        pattern_frame=pattern_frame,
     )
 
     if cfg.mode == "color":
@@ -971,6 +1109,8 @@ def process_halftone_layers(
     source: Union[str, Path, bytes, Image.Image, tuple[np.ndarray, Optional[np.ndarray]]],
     layers: list[dict[str, Any]],
     max_side: Optional[int] = None,
+    *,
+    roi: Union[dict[str, Any], tuple[int, int, int, int], list[int], None] = None,
 ) -> Image.Image:
     """Composite multiple Halftone Studio GT layers over the source image.
 
@@ -981,20 +1121,35 @@ def process_halftone_layers(
       - params (dict of HalftoneParams)
       - mask (optional data URL / mask source)
     """
-    rgb_orig, alpha_orig = extract_rgb_alpha(source)
-    orig_h, orig_w = rgb_orig.shape[:2]
+    rgb_source, alpha_source = extract_rgb_alpha(source)
+    full_h, full_w = rgb_source.shape[:2]
+    roi_rect = _normalize_roi(roi, full_w, full_h)
+    roi_x, roi_y, roi_w, roi_h = roi_rect
 
-    if max_side and max(orig_h, orig_w) > int(max_side):
-        scale = float(max_side) / float(max(orig_h, orig_w))
-        work_w = max(16, int(round(orig_w * scale)))
-        work_h = max(16, int(round(orig_h * scale)))
+    if roi_x == 0 and roi_y == 0 and roi_w == full_w and roi_h == full_h:
+        rgb_orig = rgb_source
+        alpha_orig = alpha_source
+    else:
+        rgb_orig = rgb_source[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+        alpha_orig = (
+            alpha_source[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
+            if alpha_source is not None
+            else None
+        )
+
+    if max_side and max(roi_h, roi_w) > int(max_side):
+        scale = float(max_side) / float(max(roi_h, roi_w))
+        work_w = max(16, int(round(roi_w * scale)))
+        work_h = max(16, int(round(roi_h * scale)))
         rgb_base = cv2.resize(rgb_orig, (work_w, work_h), interpolation=cv2.INTER_AREA)
         alpha = cv2.resize(alpha_orig, (work_w, work_h), interpolation=cv2.INTER_AREA) if alpha_orig is not None else None
     else:
         rgb_base = rgb_orig.copy()
         alpha = alpha_orig.copy() if alpha_orig is not None else None
-        work_h, work_w = orig_h, orig_w
+        work_h, work_w = roi_h, roi_w
 
+    work_scale = float(work_w) / float(max(1, roi_w))
+    pattern_frame = _pattern_frame_for_roi(full_w, full_h, roi_rect, work_scale)
     comp_f = rgb_base.astype(np.float32)
 
     for layer in layers or []:
@@ -1011,14 +1166,18 @@ def process_halftone_layers(
             continue
         blend_mode = str(layer.get("blend_mode") or layer.get("blendMode") or "normal").strip().lower()
         l_params = HalftoneParams.from_dict(layer.get("params") or {})
-        l_mask = layer.get("mask")
+        l_mask = _crop_mask_to_roi(layer.get("mask"), roi_rect, full_w, full_h)
 
-        # Render this layer from the original source (without mask yet so we can apply blend_mode + mask + opacity cleanly)
+        # Render this layer from the original source (without mask yet so we can apply blend_mode + mask + opacity cleanly).
+        # scale_hint keeps cell_size/pre_blur in source pixels even though the
+        # compositor already cropped and resized the source.
         layer_img = process_halftone_image(
             (rgb_base, None),
             l_params,
             mask=None,
             max_side=None,
+            pattern_frame=pattern_frame,
+            scale_hint=work_scale,
         )
         layer_rgb_f = np.array(layer_img.convert("RGB"), dtype=np.float32)
         blended_f = _blend_rgb_layers(comp_f, layer_rgb_f, blend_mode=blend_mode)

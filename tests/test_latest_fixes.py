@@ -86,7 +86,7 @@ def test_latest_session_fixes():
     assert "ht-sat-controls" in app_js, "ht-sat-controls sync missing in app.js"
     assert "u_opacity" in app_js, "u_opacity missing in app.js"
     assert "u_blend_mode" in app_js, "u_blend_mode missing in app.js"
-    assert "layers: layersPayload" in app_js, "layers payload missing in app.js"
+    assert "layers: buildHalftoneLayersPayload(" in app_js, "layers payload missing in app.js"
     print("  [OK] All latest session fixes verified in index.html, halftone.js, and app.js")
 
 

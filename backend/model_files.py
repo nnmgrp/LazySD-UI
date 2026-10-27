@@ -160,6 +160,7 @@ def vae_payload_from_args(engine_args: dict[str, Any], primary_repo: str, cache)
                     "installed": True,
                     "local_repo_id": primary_repo,
                     "local_path": absolute.as_posix(),
+                    "local_file": absolute.as_posix(),
                     "inferred": False,
                 }
         except OSError:
@@ -177,6 +178,7 @@ def vae_payload_from_args(engine_args: dict[str, Any], primary_repo: str, cache)
             "installed": True,
             "local_repo_id": primary_repo,
             "local_path": inferred,
+            "local_file": (cache.repo_dir_for(primary_repo) / inferred).as_posix(),
             "inferred": True,
         }
 
@@ -201,6 +203,7 @@ def vae_payload_from_args(engine_args: dict[str, Any], primary_repo: str, cache)
                         "installed": True,
                         "local_repo_id": primary_repo or repo,
                         "local_path": local_path,
+                        "local_file": (repo_dir / rel).as_posix(),
                         "inferred": False,
                         "resolved_repo_id": repo,
                         "resolved_path": rel,
@@ -223,10 +226,176 @@ def vae_payload(model, primary_repo: str, cache) -> Optional[dict[str, Any]]:
     return vae_payload_from_args(getattr(model, "engine_args", {}) or {}, primary_repo, cache)
 
 
+def _vae_files_in_repo(repo_id: str, repo_dir: Path) -> list[dict[str, Any]]:
+    """Every VAE-looking file already present in one repository cache."""
+    found: list[dict[str, Any]] = []
+    try:
+        if not repo_dir.is_dir():
+            return found
+    except OSError:
+        return found
+
+    def add(rel: str) -> None:
+        rel = clean_rel(rel)
+        if not rel:
+            return
+        found.append({
+            "repo_id": repo_id,
+            "path": rel,
+            "installed": True,
+            "local_repo_id": repo_id,
+            "local_path": rel,
+            "local_file": (repo_dir / rel).as_posix(),
+            "inferred": True,
+            "resolved_repo_id": repo_id,
+            "resolved_path": rel,
+        })
+
+    vae_dir = repo_dir / "vae"
+    try:
+        if vae_dir.is_dir():
+            for path in sorted(vae_dir.iterdir(), key=lambda p: p.name.lower()):
+                if path.is_file() and path.suffix.lower() in VAE_SUFFIXES:
+                    add(f"vae/{path.name}")
+    except OSError:
+        pass
+
+    try:
+        for path in sorted(repo_dir.iterdir(), key=lambda p: p.name.lower()):
+            if not path.is_file() or path.suffix.lower() not in VAE_SUFFIXES:
+                continue
+            name = path.name.lower()
+            if "vae" in name or name == "ae.safetensors":
+                add(path.name)
+    except OSError:
+        pass
+    return found
+
+
+def vae_payload_list(model, primary_repo: str, cache) -> list[dict[str, Any]]:
+    """Declared VAE first, followed by every other VAE found on disk.
+
+    Model cards use this to show all installed VAEs, not just the manifest one.
+    Extra entries are read-only and marked ``inferred`` so the UI does not offer
+    a delete action that is not backed by a manifest declaration.
+    """
+    engine_args = getattr(model, "engine_args", {}) or {}
+    primary_repo = str(primary_repo or "")
+    declared = vae_payload_from_args(engine_args, primary_repo, cache)
+
+    repos: list[str] = []
+    for repo in (primary_repo, str(engine_args.get("vae_repo") or "")):
+        if repo and repo not in repos:
+            repos.append(repo)
+
+    seen: set[str] = set()
+    entries: list[dict[str, Any]] = []
+    if declared:
+        seen.add(Path(str(declared.get("resolved_path") or declared.get("path") or "")).name.lower())
+        seen.add(Path(str(declared.get("path") or "")).name.lower())
+        entries.append(declared)
+
+    for repo in repos:
+        try:
+            repo_dir = cache.repo_dir_for(repo)
+        except Exception:
+            continue
+        for item in _vae_files_in_repo(repo, repo_dir):
+            name = Path(item["path"]).name.lower()
+            if name in seen:
+                continue
+            seen.add(name)
+            entries.append(item)
+
+    return entries
+
+
 def model_repo_id(model) -> str:
     sources = getattr(model, "sources", None)
     primary = getattr(sources, "primary", None) if sources else None
     return str(getattr(primary, "repo_id", "") or "")
+
+
+def encoder_component_refs(encoder: dict[str, Any], primary_repo: str) -> list[tuple[str, str]]:
+    """Possible cache locations for one text-encoder entry.
+
+    Encoders may live in their own repository or inside the primary model
+    repository (sometimes under ``text_encoders/``). The runtime probes all of
+    these locations, so deletion and shared-file protection must too.
+    """
+    source = encoder.get("source") if isinstance(encoder.get("source"), dict) else {}
+    repo = str(source.get("repo_id") or encoder.get("repo") or primary_repo or "")
+    local_name = clean_rel(encoder.get("path") or encoder.get("file"))
+    remote_name = clean_rel(source.get("file_path") or local_name)
+
+    refs: list[tuple[str, str]] = []
+    for candidate_repo in (repo, primary_repo):
+        if not candidate_repo:
+            continue
+        for path in (local_name, remote_name):
+            if not path:
+                continue
+            for rel in (path, f"text_encoders/{path}"):
+                key = (str(candidate_repo), rel)
+                if key not in refs:
+                    refs.append(key)
+    return refs
+
+
+def vae_component_refs(
+    engine_args: dict[str, Any],
+    primary_repo: str,
+    cache=None,
+) -> list[tuple[str, str]]:
+    """Possible cache locations for the VAE declared by a model card.
+
+    Older manifests may not declare a VAE but still have a repo-local
+    ``vae/*`` file that the UI inferred. When ``cache`` is provided, that
+    inferred file is returned as a deletion target too.
+    """
+    args = engine_args or {}
+    primary_repo = str(primary_repo or "")
+    declared = _vae_declared_paths(args)
+    if not declared:
+        if cache is not None and primary_repo:
+            inferred = _infer_repo_vae(cache.repo_dir_for(primary_repo))
+            if inferred:
+                return [(primary_repo, inferred)]
+        return []
+
+    source_repo = str(args.get("vae_repo") or primary_repo or "")
+    local_path = _vae_local_path(args, declared[0])
+    refs: list[tuple[str, str]] = []
+    for repo in (source_repo, primary_repo):
+        if not repo:
+            continue
+        for rel in _vae_candidate_paths(declared):
+            key = (repo, rel)
+            if key not in refs:
+                refs.append(key)
+    if primary_repo and local_path:
+        key = (primary_repo, local_path)
+        if key not in refs:
+            refs.append(key)
+    return refs
+
+
+def aux_component_refs(engine_args: dict[str, Any], primary_repo: str, index: int = 0) -> list[tuple[str, str]]:
+    """Cache locations for one Aux/sidecar entry (``index`` is zero-based)."""
+    args = engine_args or {}
+    items = args.get("aux_files") or []
+    if not isinstance(items, list) or index < 0 or index >= len(items):
+        return []
+    item = items[index]
+    if isinstance(item, dict):
+        repo = str(item.get("repo_id") or primary_repo or "")
+        path = clean_rel(item.get("path"))
+    else:
+        repo = str(primary_repo or "")
+        path = clean_rel(item)
+    if repo and path:
+        return [(repo, path)]
+    return []
 
 
 def model_file_refs(model) -> set[tuple[str, str]]:
@@ -241,11 +410,7 @@ def model_file_refs(model) -> set[tuple[str, str]]:
             refs.add((str(repo), path))
 
     for encoder in getattr(model, "text_encoders", []) or []:
-        source = encoder.get("source") or {}
-        repo = source.get("repo_id") or encoder.get("repo") or primary_repo
-        path = clean_rel(encoder.get("path") or encoder.get("file"))
-        if repo and path:
-            refs.add((str(repo), path))
+        refs.update(encoder_component_refs(encoder, primary_repo))
 
     engine_args = getattr(model, "engine_args", {}) or {}
     vae_repo = engine_args.get("vae_repo") or primary_repo
@@ -268,6 +433,37 @@ def model_file_refs(model) -> set[tuple[str, str]]:
             refs.add((str(repo), path))
 
     return refs
+
+
+def split_shared_refs(
+    model,
+    all_models: list[Any],
+    refs: list[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split component refs into safe-to-delete and shared-with-other-models.
+
+    ``model`` is the card whose component is being removed. A file referenced by
+    any other registered model is never deleted unless the caller explicitly
+    opts in after showing the warning.
+    """
+    model_id = getattr(model, "id", None)
+    protected: set[tuple[str, str]] = set()
+    for other in all_models:
+        if getattr(other, "id", None) != model_id:
+            protected.update(model_file_refs(other))
+
+    safe: list[tuple[str, str]] = []
+    shared: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        if ref in protected:
+            shared.append(ref)
+        else:
+            safe.append(ref)
+    return safe, shared
 
 
 def collect_delete_targets(

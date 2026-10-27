@@ -990,12 +990,51 @@ def _normalize_aux_files(items: Any, primary_repo: str) -> list[dict[str, Any]]:
     return entries
 
 
+def _primary_weight_path(manifest: dict[str, Any]) -> str:
+    """Return the first transformer path declared by a model card."""
+    for variant in manifest.get("transformers") or []:
+        if isinstance(variant, dict) and variant.get("path"):
+            return str(variant["path"])
+    return ""
+
+
+def _reconcile_engine_args(manifest: dict[str, Any], engine: str) -> None:
+    """Point engine_args at the card's primary weights after an engine switch.
+
+    The registry uses one shared transformer list, but each runtime reads a
+    different manifest field. Keeping this mapping in sync is what lets a card
+    migrate between SD.CPP, SDNQ, Nunchaku, OrbitQuant, and QuantFunc.
+    """
+    engine_args = manifest.setdefault("engine_args", {})
+    if not isinstance(engine_args, dict):
+        engine_args = {}
+        manifest["engine_args"] = engine_args
+
+    weight = _primary_weight_path(manifest)
+    family = str(manifest.get("family") or "").strip().lower()
+
+    if engine in ("sdnq", "nunchaku", "orbitquant"):
+        engine_args.pop("checkpoint", None)
+        if weight:
+            engine_args["diffusion_model"] = weight
+        if not manifest.get("base_models"):
+            manifest["base_models"] = {"50x-above": ".", "50x-below": "."}
+    elif engine == "sd_cpp" and weight:
+        if family == "sdxl":
+            engine_args["checkpoint"] = weight
+            engine_args.pop("diffusion_model", None)
+        else:
+            engine_args["diffusion_model"] = weight
+            engine_args.pop("checkpoint", None)
+
+
 def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
     """Validate editable card fields and keep engine_args in sync."""
     if not isinstance(updates, dict):
         raise ValueError("Некорректные данные карточки")
 
     primary_repo = _primary_repo(manifest)
+    engine_changed = False
 
     if "name" in updates:
         name = str(updates.get("name") or "").strip()
@@ -1024,8 +1063,7 @@ def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> di
             raise ValueError(f"Неизвестный движок: {engine}")
         manifest["engine"] = engine
         manifest["engine_version"] = engine
-        if engine in ("sdnq", "nunchaku", "orbitquant") and not manifest.get("base_models"):
-            manifest["base_models"] = {"50x-above": ".", "50x-below": "."}
+        engine_changed = True
 
     if "license" in updates:
         manifest["license"] = str(updates.get("license") or "").strip()[:160]
@@ -1063,6 +1101,10 @@ def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> di
     if not isinstance(engine_args, dict):
         engine_args = {}
         manifest["engine_args"] = engine_args
+
+    if engine_changed:
+        _reconcile_engine_args(manifest, engine)
+        engine_args = manifest["engine_args"]
 
     if "text_encoders" in updates:
         encoders = _normalize_text_encoders(updates.get("text_encoders"), primary_repo)
@@ -1157,7 +1199,11 @@ def update_custom_model_card(model_id: str, updates: dict[str, Any]) -> dict[str
 
 
 def delete_custom_model(model_id: str, delete_files: bool = False) -> bool:
-    """Delete a custom or imported model manifest and optionally downloaded files."""
+    """Delete any model manifest and optionally its downloaded files.
+
+    Built-in registry cards are deletable too: a fresh checkout ships useful
+    defaults, but users must be able to remove cards they do not need.
+    """
     registry_dir = Path(__file__).parent / "registry" / "models"
 
     target_json: Optional[Path] = None
@@ -1191,15 +1237,6 @@ def delete_custom_model(model_id: str, delete_files: bool = False) -> bool:
                 target_data = json.load(jf)
         except Exception:
             target_data = {}
-
-    is_custom = target_data.get("is_custom", False) or model_id.startswith("custom_")
-    # Base core system models protection
-    protected_system_models = {
-        "flux_klein_9b", "flux_klein_4b", "z_image_turbo", "qwen_image_2_1",
-        "flux_schnell_gguf", "sdxl_turbo_gguf", "qwen_image_2_1_gguf", "qwen_image_2_1_turbo_sdnq",
-    }
-    if model_id in protected_system_models and not is_custom:
-        raise ValueError("Нельзя удалять базовые системные модели. Используйте скрытие модели.")
 
     # Optionally delete downloaded files. Never remove a repository directory:
     # another model may use the same repo for its encoder, VAE or transformer.

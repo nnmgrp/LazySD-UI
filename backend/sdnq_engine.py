@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -328,6 +329,50 @@ def install_sdnq(force: bool = False) -> Path:
 
     env = find_sdnq_env(force_refresh=True)
     return Path(env.get("sdnq_src") or target_dir)
+
+
+def uninstall_sdnq() -> dict:
+    """Remove the downloaded SDNQ source and uninstall its package where possible.
+
+    SDNQ may be provided either by the project-local ``engine_dir/sdnq`` source
+    tree or by a package inside an existing Python environment. The managed local
+    tree is always removed; ``pip uninstall sdnq`` is attempted for the detected
+    interpreter so an external installation disappears from the status too.
+    """
+    global _ENV_CACHE
+    env = find_sdnq_env(force_refresh=True)
+    removed: list[str] = []
+
+    target_dir = get_local_sdnq_dir()
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+        removed.append(str(target_dir))
+
+    py_exe = env.get("python_exe")
+    if py_exe and Path(py_exe).is_file():
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        try:
+            proc = subprocess.run(
+                [str(py_exe), "-m", "pip", "uninstall", "-y", "sdnq"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                creationflags=flags,
+            )
+            if proc.returncode == 0:
+                removed.append(f"pip:sdnq ({py_exe})")
+        except Exception as e:
+            logger.warning("SDNQ pip uninstall failed: %s", e)
+
+    with _ENV_LOCK:
+        _ENV_CACHE = None
+    return {
+        "engine": "sdnq",
+        "removed": bool(removed),
+        "removed_items": removed,
+        "path": str(target_dir),
+        "message": "SDNQ удалён" if removed else "SDNQ уже не установлен",
+    }
 
 
 def convert_qwen21_vae_state_dict(sd: dict) -> dict:

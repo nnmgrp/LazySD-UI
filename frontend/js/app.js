@@ -17,6 +17,15 @@
      GET  /locale/<lang>.json      → translations
    ============================================================ */
 
+function localizedDisabledReason(reason, fallbackKey = "models.disabled_notice") {
+  const raw = String(reason || "").trim();
+  if (!raw) return t(fallbackKey);
+  if (raw.startsWith("Временно не поддерживается") || raw.includes("сырые веса upstream")) {
+    return t("models.disabled_reason_raw");
+  }
+  return raw;
+}
+
 function escapeHtml(str) {
   if (!str) return "";
   return String(str)
@@ -269,7 +278,7 @@ const App = {
 
   // ---------- Config & Identity ----------
   updateAccountRoleUI() {
-    const acc = this.state.account || { role: "host", id: "host", username: "Хост", is_guest: false };
+    const acc = this.state.account || { role: "host", id: "host", username: t("common.host"), is_guest: false };
     const isGuest = Boolean(acc.is_guest);
 
     if (isGuest) {
@@ -277,27 +286,27 @@ const App = {
       const badge = document.getElementById("user-role-badge");
       if (badge) {
         badge.className = "user-role-badge guest";
-        badge.title = "Гостевой режим: генерация и просмотр своих работ";
+        badge.title = t("settings.account.guest_mode_title");
       }
       const icon = document.getElementById("user-role-icon");
       if (icon) icon.textContent = "👤";
       const title = document.getElementById("user-role-title");
-      if (title) title.textContent = "Гость: " + (acc.username || "Друг");
+      if (title) title.textContent = t("common.guest") + ": " + (acc.username || t("settings.guest.default_name"));
       const bannerName = document.getElementById("guest-username-display");
-      if (bannerName) bannerName.textContent = acc.username || "Гость";
+      if (bannerName) bannerName.textContent = acc.username || t("common.guest");
       const guestProfileUser = document.getElementById("guest-profile-username");
-      if (guestProfileUser) guestProfileUser.textContent = acc.username || "Гость";
+      if (guestProfileUser) guestProfileUser.textContent = acc.username || t("common.guest");
     } else {
       document.body.classList.remove("role-guest");
       const badge = document.getElementById("user-role-badge");
       if (badge) {
         badge.className = "user-role-badge host";
-        badge.title = "Пользовательский режим (Хост / Администратор)";
+        badge.title = t("settings.account.host_mode_title");
       }
       const icon = document.getElementById("user-role-icon");
       if (icon) icon.textContent = "👑";
       const title = document.getElementById("user-role-title");
-      if (title) title.textContent = "Хост";
+      if (title) title.textContent = t("common.host");
 
       // Host can view and manage guest accounts
       this.loadGuestAccounts();
@@ -314,15 +323,15 @@ const App = {
     const input = document.getElementById("guest-input-new-password");
     const pwd = (input?.value || "").trim();
     if (!pwd || pwd.length < 3) {
-      this.toast("warning", "Пароль должен содержать не менее 3 символов");
+      this.toast("warning", t("settings.guest.password_short"));
       return;
     }
     try {
       await this.apiPost("/api/account/change-password", { new_password: pwd });
       if (input) input.value = "";
-      this.toast("success", "Ваш пароль успешно сохранён! ✓");
+      this.toast("success", t("settings.guest.password_saved"));
     } catch (e) {
-      this.toast("error", "Не удалось сменить пароль: " + e.message);
+      this.toast("error", t("settings.guest.password_failed") + e.message);
     }
   },
 
@@ -330,11 +339,12 @@ const App = {
     try {
       const config = await this.apiGet("/api/config");
       this.state.config = config;
-      this.state.account = config.account || { role: "host", id: "host", username: "Хост", is_guest: false };
+      this.state.account = config.account || { role: "host", id: "host", username: t("common.host"), is_guest: false };
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
       this.state.models = this.sortModelsList(config.models || []);
+      this.renderPaths(config);
       if (config.settings?.qwen_vae_type) {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
@@ -358,11 +368,12 @@ const App = {
     try {
       const config = await this.apiGet("/api/config");
       this.state.config = config;
-      this.state.account = config.account || { role: "host", id: "host", username: "Хост", is_guest: false };
+      this.state.account = config.account || { role: "host", id: "host", username: t("common.host"), is_guest: false };
       this.state.settings = config.settings;
       this.state.gpuInfo = config.gpu;
       this.state.engineStatus = config.engine_status;
       this.state.models = this.sortModelsList(config.models || []);
+      this.renderPaths(config);
       if (config.settings?.qwen_vae_type) {
         this.state.selectedVae = config.settings.qwen_vae_type;
       }
@@ -448,10 +459,12 @@ const App = {
       return;
     }
     listEl.innerHTML = users.map(user => {
-      const role = user.is_guest ? "Гость" : "Хост";
+      const role = user.is_guest ? t("common.guest") : t("common.host");
+      const displayName = !user.is_guest && user.username === "Хост" ? t("common.host") : user.username;
+      const roleBadge = role && role !== displayName ? ` <small>${escapeHtml(role)}</small>` : "";
       const seen = Number(user.last_seen_ago || 0);
-      const seenText = seen < 5 ? "сейчас" : `${Math.round(seen)} сек. назад`;
-      return `<span class="presence-user-chip" title="${escapeHtml(seenText)}">${user.is_guest ? "👤" : "👑"} ${escapeHtml(user.username)} <small>${escapeHtml(role)}</small></span>`;
+      const seenText = seen < 5 ? t("presence.now") : t("presence.seconds_ago", { n: Math.round(seen) });
+      return `<span class="presence-user-chip" title="${escapeHtml(seenText)}">${user.is_guest ? "👤" : "👑"} ${escapeHtml(displayName)}${roleBadge}</span>`;
     }).join("");
   },
 
@@ -480,8 +493,8 @@ const App = {
       const qf17 = engines.quantfunc_0_17 || {};
       const isInst = qf17.installed ?? (this.state.engineStatus?.status === "ok");
       qf17El.innerHTML = isInst
-        ? '<span class="state-badge installed">✓ installed (v0.0.17)</span>'
-        : '<span class="state-badge missing">✗ missing</span>';
+        ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (v0.0.17)</span>`
+        : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
     }
 
     const qf12El = document.getElementById("setting-engine-qf12-status");
@@ -489,8 +502,8 @@ const App = {
       const qf12 = engines.quantfunc_0_12 || {};
       const isInst = qf12.installed ?? (config.installed_engines?.includes("0.0.12"));
       qf12El.innerHTML = isInst
-        ? '<span class="state-badge installed">✓ installed (v0.0.12)</span>'
-        : '<span class="state-badge missing">✗ missing</span>';
+        ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (v0.0.12)</span>`
+        : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
     }
 
     const sdCppEl = document.getElementById("setting-engine-sdcpp-status");
@@ -499,8 +512,8 @@ const App = {
       const isInst = sd.installed ?? config.sd_cpp_installed;
       const ver = sd.version || config.sd_cpp_version || 'ready';
       sdCppEl.innerHTML = isInst
-        ? `<span class="state-badge installed">✓ installed (${ver})</span>`
-        : '<span class="state-badge missing">✗ missing</span>';
+        ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (${escapeHtml(ver)})</span>`
+        : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
     }
 
     const sdnqEl = document.getElementById("setting-engine-sdnq-status");
@@ -509,8 +522,8 @@ const App = {
       const isInst = sdnq.installed ?? config.sdnq_installed;
       const ver = sdnq.version || config.sdnq_version || 'ready';
       sdnqEl.innerHTML = isInst
-        ? `<span class="state-badge installed">✓ installed (${ver})</span>`
-        : '<span class="state-badge missing">✗ missing</span>';
+        ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (${escapeHtml(ver)})</span>`
+        : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
     }
 
     const qfToggleEl = document.getElementById("setting-enable-quantfunc");
@@ -521,8 +534,8 @@ const App = {
     }
     if (qfBadgeEl) {
       qfBadgeEl.innerHTML = qfEnabled
-        ? '<span class="state-badge installed">✓ Включено</span>'
-        : '<span class="state-badge missing">Отключено</span>';
+        ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.enabled"))}</span>`
+        : `<span class="state-badge missing">${escapeHtml(t("common.disabled"))}</span>`;
     }
   },
 
@@ -534,12 +547,37 @@ const App = {
 
     if (this.state.gpuInfo && this.state.gpuInfo.name) {
       const gpu = this.state.gpuInfo;
-      nameEl.textContent = `${gpu.name} · ${gpu.tier} · ${Math.round(gpu.vram_mb / 1024)} GB`;
+      const shortName = String(gpu.name).replace(/^NVIDIA\s+/i, "").replace(/^GeForce\s+/i, "");
+      nameEl.textContent = `${shortName} · ${Math.round(gpu.vram_mb / 1024)} GB`;
       dotEl.classList.remove("offline");
-      dotEl.title = `SM ${gpu.sm} · Driver ${gpu.driver_version}`;
+      dotEl.title = `${gpu.tier} · SM ${gpu.sm} · Driver ${gpu.driver_version}`;
     } else {
       nameEl.textContent = t("gpu.not_detected");
       dotEl.classList.add("offline");
+    }
+  },
+
+  renderPaths(config) {
+    const st = config?.settings || {};
+    const modelsEl = document.getElementById("setting-models-dir");
+    const outputsEl = document.getElementById("setting-output-dir");
+    if (modelsEl && st.models_dir) modelsEl.value = st.models_dir;
+    if (outputsEl && st.output_dir) outputsEl.value = st.output_dir;
+  },
+
+  async savePaths() {
+    const models = (document.getElementById("setting-models-dir")?.value || "").trim();
+    const outputs = (document.getElementById("setting-output-dir")?.value || "").trim();
+    if (!models || !outputs) {
+      this.toast("warning", t("settings.paths.save_failed") + t("controls.custom_path"));
+      return;
+    }
+    try {
+      await this.apiPatch("/api/settings", { models_dir: models, output_dir: outputs });
+      this.toast("success", t("settings.paths.saved"));
+      await this.refreshConfig();
+    } catch (e) {
+      this.toast("error", t("settings.paths.save_failed") + e.message);
     }
   },
 
@@ -853,7 +891,7 @@ const App = {
 
       let statusBadge = "";
       if (isDisabled) {
-        statusBadge = `<span class="badge-unsupported">⚠️ Не поддерживается</span>`;
+        statusBadge = `<span class="badge-unsupported">${escapeHtml(t("models.unsupported"))}</span>`;
       } else if (isInstalled) {
         statusBadge = `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`;
       } else {
@@ -866,10 +904,10 @@ const App = {
 
       let visBadges = "";
       if (model.hidden_from_host) {
-        visBadges += `<span class="model-badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="Скрыта из общего списка">🙈 Скрыта</span>`;
+        visBadges += `<span class="model-badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="${escapeHtml(t("models.vis_hidden"))}">🙈 ${escapeHtml(t("models.vis_hidden"))}</span>`;
       }
       if (model.hidden_for_guests) {
-        visBadges += `<span class="model-badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);" title="Скрыта от гостей">🔒 Только хост</span>`;
+        visBadges += `<span class="model-badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);" title="${escapeHtml(t("models.vis_host_only"))}">🔒 ${escapeHtml(t("models.vis_host_only"))}</span>`;
       }
 
       const vramMin = model.requirements?.vram_min_gb ? `${model.requirements.vram_min_gb} GB` : "8 GB";
@@ -878,15 +916,16 @@ const App = {
       let actionBtnHtml = "";
       let deleteBtnHtml = "";
       let visBtnHtml = "";
-      if (!this.state.isGuest) {
-        visBtnHtml = `<button class="card-action-btn secondary" style="width: auto; padding: 0 10px; font-size: 11px; height: 32px;" onclick="App.openModelVisibilityModal('${escapeHtml(model.id)}', event)" title="Видимость модели">👁️ Видимость</button>`;
+      const canManageModels = !this.state.account?.is_guest;
+      if (canManageModels) {
+        visBtnHtml = `<button class="card-action-btn secondary" style="width: auto; padding: 0 10px; font-size: 11px; height: 32px;" onclick="App.openModelVisibilityModal('${escapeHtml(model.id)}', event)" title="${escapeHtml(t("models.visibility"))}">👁️ ${escapeHtml(t("models.visibility"))}</button>`;
       }
-      if (model.is_custom && !this.state.isGuest) {
-        deleteBtnHtml = `<button class="delete-custom-btn" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)" title="${t('custom_model.delete') || 'Delete'}">🗑 ${t('custom_model.delete') || 'Delete'}</button>`;
+      if (canManageModels) {
+        deleteBtnHtml = `<button class="delete-custom-btn" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)" title="${escapeHtml(t("models.delete_hint") || "Удалить карточку и скачанные веса")}">🗑 ${escapeHtml(t("common.delete") || "Удалить")}</button>`;
       }
 
       if (isDisabled) {
-        actionBtnHtml = `<button class="card-action-btn disabled" disabled title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ Отключено (веса с дефектами)</button>`;
+        actionBtnHtml = `<button class="card-action-btn disabled" disabled title="${escapeHtml(localizedDisabledReason(model.disabled_reason, "models.disabled_title"))}">${escapeHtml(t("models.disabled_btn"))}</button>`;
       } else if (isSelected) {
         actionBtnHtml = `<button class="card-action-btn active" disabled>✓ ${t("models.active_model")}</button>`;
       } else if (isInstalled) {
@@ -901,7 +940,7 @@ const App = {
       const teInfo = teCount > 0 ? `<span>📝 ${teCount} ${t("models.encoders_count") || "encoders"}</span>` : "";
 
       const noticeHtml = isDisabled
-        ? `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 11px; color: #f87171;">⚠️ ${escapeHtml(model.disabled_reason || "Отключено из-за дефектов весов upstream. Включить можно в Настройках.")}</div>`
+        ? `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 11px; color: #f87171;">⚠️ ${escapeHtml(localizedDisabledReason(model.disabled_reason))}</div>`
         : "";
 
       card.innerHTML = `
@@ -946,7 +985,7 @@ const App = {
         card.style.cursor = "not-allowed";
         card.addEventListener("click", (e) => {
           if (e.target.tagName === "BUTTON") return;
-          this.toast("warning", model.disabled_reason || "Модели QuantFunc временно отключены.");
+          this.toast("warning", localizedDisabledReason(model.disabled_reason));
         });
       }
 
@@ -957,7 +996,7 @@ const App = {
   async selectModelFromModal(modelId) {
     const model = this.state.models.find(m => m.id === modelId);
     if (model && model.disabled) {
-      this.toast("warning", model.disabled_reason || "Модели QuantFunc временно отключены. Включите их в Настройках.");
+      this.toast("warning", localizedDisabledReason(model.disabled_reason));
       return;
     }
 
@@ -1061,7 +1100,7 @@ const App = {
 
       let installedBadge = "";
       if (isDisabled) {
-        installedBadge = `<span class="badge-unsupported">⚠️ Не поддерживается</span>`;
+        installedBadge = `<span class="badge-unsupported">⚠️ ${escapeHtml(t("models.unsupported"))}</span>`;
       } else if (model.installed) {
         installedBadge = `<span class="badge-installed">✓ ${t("models.status_ready")}</span>`;
       } else {
@@ -1079,15 +1118,15 @@ const App = {
         for (const v of model.transformers) {
           let variantAction = "";
           if (isDisabled) {
-            variantAction = `<button type="button" class="btn-download" disabled title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ <span>Отключено</span></button>`;
+            variantAction = `<button type="button" class="btn-download" disabled title="${escapeHtml(localizedDisabledReason(model.disabled_reason, "common.disabled"))}">⛔ <span>${escapeHtml(t("common.disabled"))}</span></button>`;
           } else if (v.installed) {
             variantAction = `
               <div class="variant-actions">
-                <span class="variant-state installed" title="Файл варианта найден в кэше">${ICON_CHECK}<span>На диске</span></span>
-                <button type="button" class="btn-delete-files" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.deleteModelFiles(this.dataset.modelId, this.dataset.variantId, this)" title="Удалить веса этого варианта" aria-label="Удалить веса варианта ${escapeHtml(v.id)}">${ICON_TRASH}<span>Удалить</span></button>
+                <span class="variant-state installed" title="${escapeHtml(t("models.component_on_disk"))}">${ICON_CHECK}<span>${escapeHtml(t("models.component_on_disk"))}</span></span>
+                <button type="button" class="btn-delete-files" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.deleteModelFiles(this.dataset.modelId, this.dataset.variantId, this)" title="${escapeHtml(t("models.component_delete"))}" aria-label="${escapeHtml(t("models.component_delete"))} ${escapeHtml(v.id)}">${ICON_TRASH}<span>${escapeHtml(t("models.component_delete"))}</span></button>
               </div>`;
           } else {
-            variantAction = `<button type="button" class="btn-download" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)" title="Скачать веса варианта" aria-label="Скачать веса варианта ${escapeHtml(v.id)}">${ICON_DOWNLOAD}<span>Скачать</span></button>`;
+            variantAction = `<button type="button" class="btn-download" data-model-id="${escapeHtml(model.id)}" data-variant-id="${escapeHtml(v.id)}" onclick="App.downloadModelVariant(this.dataset.modelId, this.dataset.variantId, this)" title="${escapeHtml(t("models.component_download"))}" aria-label="${escapeHtml(t("models.component_download"))} ${escapeHtml(v.id)}">${ICON_DOWNLOAD}<span>${escapeHtml(t("models.component_download"))}</span></button>`;
           }
           variantsHtml += `
             <div class="variant-item">
@@ -1106,25 +1145,34 @@ const App = {
       const isSelected = model.id === this.state.selectedModel;
       let selectBtnHtml = "";
       if (isDisabled) {
-        selectBtnHtml = `<button class="card-action-btn disabled" style="margin-top: 12px; width: auto;" disabled title="${escapeHtml(model.disabled_reason || 'Отключено')}">⛔ Модель отключена (веса с дефектами)</button>`;
+        selectBtnHtml = `<button class="card-action-btn disabled" style="margin-top: 12px; width: auto;" disabled title="${escapeHtml(localizedDisabledReason(model.disabled_reason, "common.disabled"))}">⛔ ${escapeHtml(t("common.disabled"))}</button>`;
       } else if (isSelected) {
         selectBtnHtml = `<button class="card-action-btn active" style="margin-top: 12px; width: auto;" disabled>✓ ${t("models.active_model")}</button>`;
       } else {
         selectBtnHtml = `<button class="card-action-btn primary" style="margin-top: 12px; width: auto;" onclick="App.selectModelFromModal('${escapeHtml(model.id)}')">⚡ ${t("models.select_model")}</button>`;
       }
 
-      const deleteCustomBtn = model.is_custom
-        ? `<button class="delete-custom-btn" style="margin-top: 12px; margin-left: 8px;" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)">🗑 Удалить</button>`
-        : "";
-
       const canEditCard = !this.state.account?.is_guest;
-      const editCardBtn = canEditCard
-        ? `<button class="history-action-btn" style="width: auto; margin-top: 12px; margin-left: 8px;" onclick="App.openModelCardEditor('${escapeHtml(model.id)}')" title="Редактировать карточку, энкодер и VAE">✎ Редактировать</button>`
+      const deleteModelBtn = canEditCard
+        ? `<button class="delete-custom-btn" style="margin-top: 12px; margin-left: 8px;" onclick="App.deleteCustomModel('${escapeHtml(model.id)}', event)" title="${escapeHtml(t('models.delete_hint') || 'Удалить карточку и скачанные веса')}">🗑 ${escapeHtml(t("common.delete") || "Удалить")}</button>`
         : "";
 
-      const componentAction = (role, index, teId, installed, label) => installed
-        ? `<span class="variant-state installed" title="Файл найден в кэше">${ICON_CHECK}<span>На диске</span></span>`
-        : `<button type="button" class="btn-download" data-model-id="${escapeHtml(model.id)}" data-role="${role}" data-index="${index}" data-te-id="${escapeHtml(teId || "")}" onclick="App.downloadModelComponent(this.dataset.modelId, this.dataset.role, this.dataset.index, this.dataset.teId, this)" title="Скачать ${escapeHtml(label)}" aria-label="Скачать ${escapeHtml(label)}">${ICON_DOWNLOAD}<span>Скачать</span></button>`;
+      const editCardBtn = canEditCard
+        ? `<button class="history-action-btn" style="width: auto; margin-top: 12px; margin-left: 8px;" onclick="App.openModelCardEditor('${escapeHtml(model.id)}')" title="${escapeHtml(t("models.edit_card_title"))}">✎ ${escapeHtml(t("models.edit_card"))}</button>`
+        : "";
+
+      const roleLabelFor = role => role === "text_encoder"
+        ? t("models.component_role_te")
+        : role === "vae" ? t("models.component_role_vae") : t("models.component_role_aux");
+      const componentAction = (role, index, teId, installed, name) => {
+        const actionLabel = name || roleLabelFor(role);
+        return installed
+          ? `<div class="variant-actions">
+             <span class="variant-state installed" title="${escapeHtml(t("models.component_on_disk"))}">${ICON_CHECK}<span>${escapeHtml(t("models.component_on_disk"))}</span></span>
+             <button type="button" class="btn-delete-files" onclick="App.deleteModelComponent('${escapeHtml(model.id)}', '${role}', ${index}, '${escapeHtml(teId || "")}', '${escapeHtml(actionLabel)}', this)" title="${escapeHtml(t("models.component_delete"))} ${escapeHtml(actionLabel)}" aria-label="${escapeHtml(t("models.component_delete"))} ${escapeHtml(actionLabel)}">${ICON_TRASH}<span>${escapeHtml(t("models.component_delete"))}</span></button>
+           </div>`
+          : `<button type="button" class="btn-download" data-model-id="${escapeHtml(model.id)}" data-role="${role}" data-index="${index}" data-te-id="${escapeHtml(teId || "")}" onclick="App.downloadModelComponent(this.dataset.modelId, this.dataset.role, this.dataset.index, this.dataset.teId, this)" title="${escapeHtml(t("models.component_download"))} ${escapeHtml(actionLabel)}" aria-label="${escapeHtml(t("models.component_download"))} ${escapeHtml(actionLabel)}">${ICON_DOWNLOAD}<span>${escapeHtml(t("models.component_download"))}</span></button>`;
+      };
 
       const teList = Array.isArray(model.text_encoders) ? model.text_encoders : [];
       const teMissing = teList.some(te => !te.installed);
@@ -1134,32 +1182,49 @@ const App = {
         return `
           <div class="component-item">
             <div class="component-info">
-              <span class="component-name">${escapeHtml(te.name || te.file || te.id || "Text encoder")}</span>
+              <span class="component-name">${escapeHtml(te.name || te.file || te.id || t("controls.text_encoder"))}</span>
               <span class="component-sub" title="${escapeHtml(tech)}">${escapeHtml(tech)}</span>
             </div>
-            <div class="component-actions">${componentAction("text_encoder", idx, te.id, te.installed, "текстовый энкодер")}</div>
+            <div class="component-actions">${componentAction("text_encoder", idx, te.id, te.installed, te.name || te.file || te.path || te.id)}</div>
           </div>`;
       }).join("");
+      const teSectionTitle = t("models.te_section", { count: teList.length }) +
+        (teMissing ? ` <span class="section-warning">${escapeHtml(t("models.te_missing"))}</span>` : "");
       const teSection = (teList.length || model.is_custom)
-        ? `<details class="model-card-section" ${teMissing ? "open" : ""}>
-             <summary class="model-card-section-title">Текстовые энкодеры (${teList.length})${teMissing ? ` <span class="section-warning">нужно скачать</span>` : ""}</summary>
-             <div class="model-variants-list">${teRows || `<div class="component-empty">В карточке не указан энкодер. Откройте редактор и добавьте его из репозитория или по ссылке.</div>`}</div>
+        ? `<details class="model-card-section">
+             <summary class="model-card-section-title">${teSectionTitle}</summary>
+             <div class="model-variants-list">${teRows || `<div class="component-empty">${escapeHtml(t("models.te_empty"))}</div>`}</div>
            </details>`
         : "";
 
-      const vaeInfo = model.vae;
-      const vaeMissing = Boolean(vaeInfo && !vaeInfo.installed);
-      const vaeRow = vaeInfo
-        ? `<div class="component-item">
-             <div class="component-info">
-               <span class="component-name">VAE</span>
-               <span class="component-sub" title="${escapeHtml([vaeInfo.repo_id, vaeInfo.path].filter(Boolean).join(" · "))}">${escapeHtml([vaeInfo.repo_id, vaeInfo.path].filter(Boolean).join(" · "))}</span>
-             </div>
-             <div class="component-actions">${componentAction("vae", 0, "", vaeInfo.installed, "VAE")}</div>
-           </div>`
-        : `<div class="component-empty">В карточке не указан VAE.${canEditCard ? " Откройте редактор и добавьте его." : ""}</div>`;
-      const vaeSection = `<details class="model-card-section" ${vaeMissing ? "open" : ""}>
-             <summary class="model-card-section-title">VAE${vaeMissing ? ` <span class="section-warning">нужно скачать</span>` : ""}</summary>
+      const vaeList = (Array.isArray(model.vae_files) && model.vae_files.length)
+        ? model.vae_files
+        : (model.vae ? [model.vae] : []);
+      const vaeMissing = vaeList.some(vae => !vae.installed);
+      const vaeRows = vaeList.map((vae, idx) => {
+        const tech = [vae.repo_id, vae.path].filter(Boolean).join(" · ");
+        const fileName = String(vae.path || "").split("/").pop() || "VAE";
+        const actions = (vae.installed && vae.inferred)
+          ? `<div class="variant-actions"><span class="variant-state installed" title="${escapeHtml(t("models.component_on_disk"))}">${ICON_CHECK}<span>${escapeHtml(t("models.component_on_disk"))}</span></span></div>`
+          : componentAction("vae", idx, "", vae.installed, "");
+        return `
+          <div class="component-item">
+            <div class="component-info">
+              <span class="component-name">${escapeHtml(idx === 0 ? "VAE" : fileName)}</span>
+              <span class="component-sub" title="${escapeHtml(tech)}">${escapeHtml(tech)}</span>
+            </div>
+            <div class="component-actions">${actions}</div>
+          </div>`;
+      }).join("");
+      const vaeRow = vaeList.length
+        ? vaeRows
+        : `<div class="component-empty">${escapeHtml(t("models.vae_empty"))}${canEditCard ? ` ${escapeHtml(t("models.edit_card"))}.` : ""}</div>`;
+      const vaeSectionTitle = t("models.vae_section") +
+        (vaeList.length > 1 ? ` (${vaeList.length})` : "") +
+        (vaeMissing ? ` <span class="section-warning">${escapeHtml(t("models.te_missing"))}</span>` : "");
+      const vaeSection = `<details class="model-card-section">
+             <summary class="model-card-section-title">${vaeSectionTitle}</summary>
+             <div class="model-card-section-hint">${escapeHtml(t("models.card_editor.vae_priority_hint"))}</div>
              <div class="model-variants-list">${vaeRow}</div>
            </details>`;
 
@@ -1169,21 +1234,21 @@ const App = {
         return `
           <div class="component-item">
             <div class="component-info">
-              <span class="component-name">${escapeHtml(String(aux.path || "").split("/").pop() || "Aux file")}</span>
+              <span class="component-name">${escapeHtml(String(aux.path || "").split("/").pop() || t("models.component_role_aux"))}</span>
               <span class="component-sub" title="${escapeHtml(tech)}">${escapeHtml(tech)}</span>
             </div>
-            <div class="component-actions">${componentAction("aux", idx, "", aux.installed, "sidecar")}</div>
+            <div class="component-actions">${componentAction("aux", idx, "", aux.installed, String(aux.path || "").split("/").pop())}</div>
           </div>`;
       }).join("");
       const auxSection = auxList.length
         ? `<details class="model-card-section">
-             <summary class="model-card-section-title">Aux / sidecars (${auxList.length})</summary>
+             <summary class="model-card-section-title">${escapeHtml(t("models.aux_section", { count: auxList.length }))}</summary>
              <div class="model-variants-list">${auxRows}</div>
            </details>`
         : "";
 
       const noticeHtml = isDisabled
-        ? `<div style="margin-top: 10px; padding: 8px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 12px; color: #f87171;">⚠️ ${escapeHtml(model.disabled_reason || "Отключено из-за дефектов весов upstream. Включить можно в Настройках.")}</div>`
+        ? `<div style="margin-top: 10px; padding: 8px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; font-size: 12px; color: #f87171;">⚠️ ${escapeHtml(localizedDisabledReason(model.disabled_reason, "models.disabled_upstream_hint"))}</div>`
         : "";
 
       card.innerHTML = `
@@ -1205,7 +1270,7 @@ const App = {
             <span>💻 Min SM: ${model.requirements?.gpu_min_sm || 75}+</span>
             ${vramStr ? `<span>📼 ${vramStr}</span>` : ""}
           </div>
-          <details class="model-card-section" open>
+          <details class="model-card-section">
             <summary class="model-card-section-title">Transformers (${model.transformers?.length || 0})</summary>
             <div class="model-variants-list">${variantsHtml}</div>
           </details>
@@ -1215,7 +1280,7 @@ const App = {
           <div style="margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
             ${selectBtnHtml}
             ${editCardBtn}
-            ${deleteCustomBtn}
+            ${deleteModelBtn}
           </div>
         </div>
       `;
@@ -1228,7 +1293,7 @@ const App = {
 
   async renderEncodersTab(listEl) {
     if (!listEl) return;
-    listEl.innerHTML = `<div class="placeholder-text">Загрузка энкодеров...</div>`;
+    listEl.innerHTML = `<div class="placeholder-text">${escapeHtml(t("models.encoders_loading"))}</div>`;
 
     try {
       if (!Array.isArray(this.state.encoders)) {
@@ -1244,7 +1309,7 @@ const App = {
       });
 
       if (!encoders.length) {
-        listEl.innerHTML = `<div class="placeholder-text" style="padding: 40px 0;">Энкодеры не найдены</div>`;
+        listEl.innerHTML = `<div class="placeholder-text" style="padding: 40px 0;">${escapeHtml(t("models.encoders_empty"))}</div>`;
         return;
       }
 
@@ -1257,8 +1322,8 @@ const App = {
         card.className = "encoder-card";
 
         const statusBadge = enc.installed
-          ? `<span class="badge-installed">✓ Установлен</span>`
-          : `<span class="badge-missing">⬇ Не скачан</span>`;
+          ? `<span class="badge-installed">${escapeHtml(t("models.encoder_installed"))}</span>`
+          : `<span class="badge-missing">${escapeHtml(t("models.encoder_missing"))}</span>`;
         const sizeText = Number.isFinite(Number(enc.size_gb)) && Number(enc.size_gb) > 0
           ? `${Number(enc.size_gb).toFixed(1)} GB`
           : "";
@@ -1267,9 +1332,13 @@ const App = {
               `<span class="encoder-used-tag">${escapeHtml(model.name || model.id || "")}</span>`
             ).join("")}</div>`
           : "";
+        const encoderPayload = `data-repo-id="${escapeHtml(enc.repo_id)}" data-file-path="${escapeHtml(enc.file_path || enc.file)}" data-file="${escapeHtml(enc.file || "")}" data-te-id="${escapeHtml(enc.id)}" data-used-by="${escapeHtml(String((enc.used_by || []).length))}"`;
         const actionBtn = enc.installed
-          ? `<button type="button" class="card-action-btn active" style="width: 100%;" disabled>${ICON_CHECK} Установлен в кэш</button>`
-          : `<button type="button" class="btn-download encoder-download-btn" data-repo-id="${escapeHtml(enc.repo_id)}" data-file-path="${escapeHtml(enc.file_path || enc.file)}" data-te-id="${escapeHtml(enc.id)}" onclick="App.downloadSharedEncoder(this.dataset.repoId, this.dataset.filePath, this.dataset.teId, this)">${ICON_DOWNLOAD}<span>Скачать энкодер${sizeText ? ` (${sizeText})` : ""}</span></button>`;
+          ? `<div class="variant-actions">
+               <span class="card-action-btn active" style="width: auto;" >${ICON_CHECK} ${escapeHtml(t("models.encoder_cached"))}</span>
+               <button type="button" class="btn-delete-files encoder-delete-btn" ${encoderPayload} onclick="App.deleteSharedEncoder(this)" title="${escapeHtml(t("models.encoder_delete_title"))}">${ICON_TRASH}<span>${escapeHtml(t("models.component_delete"))}</span></button>
+             </div>`
+          : `<button type="button" class="btn-download encoder-download-btn" data-repo-id="${escapeHtml(enc.repo_id)}" data-file-path="${escapeHtml(enc.file_path || enc.file)}" data-te-id="${escapeHtml(enc.id)}" onclick="App.downloadSharedEncoder(this.dataset.repoId, this.dataset.filePath, this.dataset.teId, this)">${ICON_DOWNLOAD}<span>${escapeHtml(t("models.encoder_download"))}${sizeText ? ` (${sizeText})` : ""}</span></button>`;
 
         card.innerHTML = `
           <div>
@@ -1278,9 +1347,9 @@ const App = {
               ${statusBadge}
             </div>
             <div class="encoder-meta">
-              <span>📁 Файл: <code>${escapeHtml(enc.file || "")}</code></span>
-              <span>🌐 Репозиторий: <code>${escapeHtml(enc.repo_id || "")}</code></span>
-              <span>⚙ Формат: <code>${escapeHtml(enc.precision || "int4")}</code>${sizeText ? ` · ${sizeText}` : ""}</span>
+              <span>📁 ${escapeHtml(t("models.encoder_file"))}: <code>${escapeHtml(enc.file || "")}</code></span>
+              <span>🌐 ${escapeHtml(t("models.encoder_repo"))}: <code>${escapeHtml(enc.repo_id || "")}</code></span>
+              <span>⚙ ${escapeHtml(t("models.encoder_format"))}: <code>${escapeHtml(enc.precision || "int4")}</code>${sizeText ? ` · ${sizeText}` : ""}</span>
             </div>
             ${usedBy}
           </div>
@@ -1293,7 +1362,7 @@ const App = {
 
       listEl.appendChild(grid);
     } catch (err) {
-      listEl.innerHTML = `<div class="placeholder-text" style="color: #f87171;">Ошибка: ${escapeHtml(err.message)}</div>`;
+      listEl.innerHTML = `<div class="placeholder-text" style="color: #f87171;">${escapeHtml(t("status.error"))}: ${escapeHtml(err.message)}</div>`;
     }
   },
 
@@ -1318,6 +1387,99 @@ const App = {
       }
     } catch (err) {
       this.toast("error", "Ошибка скачивания: " + err.message);
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.classList.remove("is-loading");
+      }
+    }
+  },
+
+  async deleteSharedEncoder(btnEl) {
+    const repoId = btnEl?.dataset.repoId || "";
+    const filePath = btnEl?.dataset.filePath || "";
+    const fileName = btnEl?.dataset.file || "";
+    const teId = btnEl?.dataset.teId || "";
+    const usedBy = Number(btnEl?.dataset.usedBy || 0);
+    if (!repoId || (!filePath && !fileName)) return;
+    const confirmed = confirm(
+      t("models.encoder_delete_confirm", { name: fileName || filePath }) +
+      (usedBy > 1 ? `\n\n${t("models.encoder_used_by", { count: usedBy })}` : "")
+    );
+    if (!confirmed) return;
+
+    const payload = { repo_id: repoId, file_path: filePath, file: fileName, id: teId };
+    try {
+      let result = await this.apiPost("/api/encoders/delete", payload);
+      if (result.status === "shared") {
+        const forced = confirm(
+          t("models.encoder_shared_confirm", { files: (result.shared || []).join("\n") })
+        );
+        if (!forced) return;
+        result = await this.apiPost("/api/encoders/delete", { ...payload, force: true });
+      }
+      if (result.status === "ok") {
+        const freedMb = Number(result.freed_mb || 0);
+        const freedText = freedMb >= 1024 ? `${(freedMb / 1024).toFixed(2)} GB` : `${freedMb.toFixed(1)} MB`;
+        this.toast("success", `${t("models.encoder_deleted")} (${freedText})`);
+      } else {
+        this.toast("info", t("models.encoder_not_found"));
+      }
+      this.state.encoders = null;
+      await this.renderModelsTab();
+      await this.refreshConfig();
+    } catch (err) {
+      this.toast("error", t("models.encoder_delete_failed") + err.message);
+    }
+  },
+
+  async deleteModelComponent(modelId, role, index, componentId, label, btnEl) {
+    const roleLabel = role === "text_encoder"
+      ? t("models.component_role_te")
+      : role === "vae" ? "VAE" : t("models.component_role_aux");
+    const cleanName = String(label || "").trim();
+    const nameSuffix = cleanName && cleanName.toLowerCase() !== roleLabel.toLowerCase()
+      ? ` «${cleanName}»`
+      : "";
+    const confirmed = confirm(
+      t("models.component_delete_confirm", {
+        role: roleLabel,
+        name: nameSuffix,
+      })
+    );
+    if (!confirmed) return;
+
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.classList.add("is-loading");
+    }
+    const payload = { role, index: Number(index || 0), id: componentId || null };
+    try {
+      let result = await this.apiPost(`/api/models/${encodeURIComponent(modelId)}/component-delete`, payload);
+      if (result.status === "shared") {
+        const forced = confirm(
+          t("models.component_shared_confirm", { files: (result.shared || []).join("\n") })
+        );
+        if (!forced) {
+          if (btnEl) { btnEl.disabled = false; btnEl.classList.remove("is-loading"); }
+          return;
+        }
+        result = await this.apiPost(`/api/models/${encodeURIComponent(modelId)}/component-delete`, { ...payload, force: true });
+      }
+      if (result.status === "ok") {
+        const freedMb = Number(result.freed_mb || 0);
+        const freedText = freedMb >= 1024 ? `${(freedMb / 1024).toFixed(2)} GB` : `${freedMb.toFixed(1)} MB`;
+        this.toast("success", `${t("models.component_deleted")} (${freedText})`);
+      } else {
+        this.toast("info", t("models.component_not_found"));
+      }
+      await this.refreshConfig();
+      if (this.state.selectedModel === modelId) {
+        await this.onModelChange(this.state.selectedVariant || null);
+      } else {
+        await this.renderModelsTab();
+      }
+    } catch (err) {
+      this.toast("error", t("models.component_delete_failed") + err.message);
       if (btnEl) {
         btnEl.disabled = false;
         btnEl.classList.remove("is-loading");
@@ -1364,7 +1526,7 @@ const App = {
   async downloadModelVariant(modelId, variantId, btnEl) {
     const model = this.state.models.find(m => m.id === modelId);
     if (model && model.disabled) {
-      this.toast("warning", model.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
+      this.toast("warning", localizedDisabledReason(model.disabled_reason));
       return;
     }
 
@@ -1631,18 +1793,10 @@ const App = {
       btn.addEventListener("click", () => window.setLocale(btn.dataset.lang));
     });
 
-    // Collapsible downloads panel: remember the user's open/closed choice.
+    // Collapsible downloads panel: starts collapsed; open state is not persisted.
     const downloadsPanel = document.getElementById("downloads-panel");
     if (downloadsPanel && downloadsPanel.tagName === "DETAILS") {
-      try {
-        const saved = window.localStorage.getItem("qf-downloads-open");
-        if (saved !== null) downloadsPanel.open = saved === "1";
-      } catch (e) { /* localStorage can be unavailable */ }
-      downloadsPanel.addEventListener("toggle", () => {
-        try {
-          window.localStorage.setItem("qf-downloads-open", downloadsPanel.open ? "1" : "0");
-        } catch (e) { /* ignore */ }
-      });
+      downloadsPanel.open = false;
     }
     this.renderDownloads();
 
@@ -1912,10 +2066,37 @@ const App = {
     const customVaeInput = document.getElementById("custom-vae-input");
     const vaeLink = document.getElementById("toggle-custom-vae-link");
     if (vaeGroup && vaeSelect) {
-      if (activeModelObj && (activeModelObj.family === "qwen" || activeModelObj.id.includes("qwen"))) {
+      const vaeList = (Array.isArray(activeModelObj?.vae_files) && activeModelObj.vae_files.length)
+        ? activeModelObj.vae_files
+        : (activeModelObj?.vae ? [activeModelObj.vae] : []);
+      const isQwen = Boolean(activeModelObj && (activeModelObj.family === "qwen" || activeModelObj.id.includes("qwen")));
+      const vaeFiles = vaeList.filter(vae => vae.installed && vae.local_file);
+      if (isQwen || vaeList.length) {
         vaeGroup.style.display = "flex";
-        const curVae = this.state.selectedVae || this.state.settings?.qwen_vae_type || "texture_fix";
-        vaeSelect.value = curVae;
+        vaeSelect.innerHTML = "";
+        const autoOpt = document.createElement("option");
+        autoOpt.value = "auto";
+        autoOpt.textContent = t("controls.vae_auto") || "Auto (model default)";
+        vaeSelect.appendChild(autoOpt);
+        if (isQwen) {
+          for (const value of ["texture_fix", "official"]) {
+            const opt = document.createElement("option");
+            opt.value = value;
+            opt.textContent = t(`controls.vae_${value}`) || value;
+            vaeSelect.appendChild(opt);
+          }
+        }
+        for (const vae of vaeFiles) {
+          const fileName = String(vae.path || "").split("/").pop() || "VAE";
+          const opt = document.createElement("option");
+          opt.value = `file:${vae.local_file}`;
+          opt.textContent = `${fileName} · ${vae.repo_id || ""}`.trim();
+          opt.title = vae.local_file;
+          vaeSelect.appendChild(opt);
+        }
+        const desired = this.state.selectedVae
+          || (isQwen ? (this.state.settings?.qwen_vae_type || "texture_fix") : "auto");
+        vaeSelect.value = [...vaeSelect.options].some(opt => opt.value === desired) ? desired : "auto";
         if (!customVaeInput || !customVaeInput.value.trim()) {
           vaeSelect.style.display = "block";
           if (customVaeInput) customVaeInput.style.display = "none";
@@ -2045,8 +2226,9 @@ const App = {
   },
 
   async onVaeChange() {
-    const val = document.getElementById("vae-select")?.value || "texture_fix";
-    this.state.selectedVae = val;
+    const val = document.getElementById("vae-select")?.value || "auto";
+    this.state.selectedVae = val === "auto" ? "" : val;
+    if (val === "auto" || val.startsWith("file:")) return;
     try {
       await this.apiPatch("/api/settings", { qwen_vae_type: val });
     } catch (e) {
@@ -2086,7 +2268,7 @@ const App = {
     if (!this.state.selectedModel) return false;
     const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
     if (activeModel && activeModel.disabled) {
-      this.toast("error", activeModel.disabled_reason || "Модель отключена");
+      this.toast("error", localizedDisabledReason(activeModel.disabled_reason, "models.disabled_title"));
       return false;
     }
     try {
@@ -2154,7 +2336,7 @@ const App = {
       countEl.hidden = activeCount === 0;
     }
     if (!entries.length) {
-      list.innerHTML = `<div class="downloads-empty">Нет активных загрузок</div>`;
+      list.innerHTML = `<div class="downloads-empty">${escapeHtml(t("models.downloads.empty"))}</div>`;
       return;
     }
     const statusLabels = {
@@ -2283,7 +2465,7 @@ const App = {
 
     const activeModel = this.state.models.find(m => m.id === this.state.selectedModel);
     if (activeModel && activeModel.disabled) {
-      this.toast("error", activeModel.disabled_reason || "Модели QuantFunc временно отключены из-за дефектов весов. Включите их в Настройках.");
+      this.toast("error", localizedDisabledReason(activeModel.disabled_reason));
       return;
     }
 
@@ -2394,8 +2576,12 @@ const App = {
         params.custom_vae_path = customVaeVal;
       } else {
         const vaeSelect = document.getElementById("vae-select");
-        if (vaeSelect && vaeSelect.value) {
-          params.vae = vaeSelect.value;
+        if (vaeSelect && vaeSelect.value && vaeSelect.value !== "auto") {
+          if (vaeSelect.value.startsWith("file:")) {
+            params.custom_vae_path = vaeSelect.value.slice(5);
+          } else {
+            params.vae = vaeSelect.value;
+          }
         }
       }
     }
@@ -2822,7 +3008,7 @@ const App = {
 
       const promptDisplay = item.prompt ? item.prompt : item.name;
       const isHostItem = ["host", "host_remote"].includes(item.owner_id || "host");
-      const authorBadge = isHostItem ? "👑 Хост" : `👤 ${escapeHtml(item.owner_name || "Гость")}`;
+      const authorBadge = isHostItem ? `👑 ${t("common.host")}` : `👤 ${escapeHtml(item.owner_name || t("common.guest"))}`;
       const sharedBadge = item.shared ? `<span class="history-shared-badge" title="Видна всем пользователям">🌐 Общая</span>` : "";
 
       card.innerHTML = `
@@ -2892,7 +3078,7 @@ const App = {
     if (timeEl) timeEl.textContent = item.generation_time_sec ? `${item.generation_time_sec}s` : "—";
 
     const isHostItem = ["host", "host_remote"].includes(item.owner_id || "host");
-    const authorName = isHostItem ? "👑 Хост" : `👤 ${item.owner_name || "Гость"}`;
+    const authorName = isHostItem ? `👑 ${t("common.host")}` : `👤 ${item.owner_name || t("common.guest")}`;
     if (authorEl) authorEl.textContent = authorName;
     if (sharedStatusEl) {
       sharedStatusEl.textContent = item.shared ? "🌐 Доступна всем" : "🔒 Личная (только для автора)";
@@ -3001,27 +3187,27 @@ const App = {
     try {
       await this.apiPatch("/api/settings", { huggingface_token: token });
       if (this.state.settings) this.state.settings.huggingface_token = token;
-      this.toast("success", "Токен Hugging Face сохранён ✓");
+      this.toast("success", t("settings.network.token_saved"));
     } catch (e) {
-      this.toast("error", "Ошибка сохранения токена: " + e.message);
+      this.toast("error", t("settings.network.token_error") + e.message);
     }
   },
 
   async testHfToken() {
     const token = document.getElementById("setting-hf-token")?.value?.trim();
     const btn = document.getElementById("btn-test-hf-token");
-    if (btn) btn.textContent = "⏳ Проверка...";
+    if (btn) btn.textContent = t("settings.network.testing");
     try {
       const res = await this.apiPost("/api/hf/test-token", { token: token || undefined });
       if (res.valid) {
-        this.toast("success", res.message || "Токен действителен ✓");
+        this.toast("success", res.message || t("settings.network.token_valid"));
       } else {
-        this.toast("error", res.message || "Неверный токен Hugging Face");
+        this.toast("error", res.message || t("settings.network.token_invalid"));
       }
     } catch (e) {
-      this.toast("error", "Ошибка проверки: " + e.message);
+      this.toast("error", t("settings.network.test_error") + e.message);
     } finally {
-      if (btn) btn.textContent = "🔍 Проверить";
+      if (btn) btn.textContent = t("settings.network.test");
     }
   },
 
@@ -3045,7 +3231,7 @@ const App = {
     if (!accounts || !accounts.length) {
       list.innerHTML = `
         <div style="color: var(--text-dim); font-size: 12.5px; padding: 12px; text-align: center; background: var(--bg-card); border-radius: 8px; border: 1px dashed var(--border);">
-          Нет созданных гостевых аккаунтов. Нажмите «+ Новый гость», чтобы пригласить друга с постоянным паролем и изолированной историей.
+          ${escapeHtml(t("settings.accounts.empty"))}
         </div>
       `;
       return;
@@ -3059,7 +3245,7 @@ const App = {
       const createdDate = acc.created_at ? new Date(acc.created_at * 1000).toLocaleDateString() : "";
       const pwdDisplay = acc.initial_password
         ? `<span style="font-family: monospace; color: #a78bfa;">${escapeHtml(acc.initial_password)}</span>`
-        : `<span style="color: var(--text-dim); font-size: 11px;">(изменён гостем)</span>`;
+        : `<span style="color: var(--text-dim); font-size: 11px;">${escapeHtml(t("settings.accounts.password_changed"))}</span>`;
 
       card.innerHTML = `
         <div class="guest-account-info">
@@ -3068,14 +3254,14 @@ const App = {
             <small style="color: var(--text-dim); font-weight: normal; font-size: 11px;">(${createdDate})</small>
           </div>
           <div class="guest-account-token" style="display: flex; gap: 12px; font-size: 11px;">
-            <span>Пароль: ${pwdDisplay}</span>
-            <span style="color: var(--text-dim);">Токен: ${escapeHtml((acc.token || '').slice(0, 10))}...</span>
+            <span>${escapeHtml(t("settings.accounts.password_label"))} ${pwdDisplay}</span>
+            <span style="color: var(--text-dim);">${escapeHtml(t("settings.accounts.token_label"))} ${escapeHtml((acc.token || '').slice(0, 10))}...</span>
           </div>
         </div>
         <div class="guest-account-actions">
-          <button type="button" class="setting-btn" onclick="App.copyGuestCredentials('${escapeHtml(acc.username)}', '${escapeHtml(acc.initial_password || '')}')" title="Скопировать ссылку, логин и пароль">📋 Данные</button>
-          <button type="button" class="setting-btn" onclick="App.showCreateGuestModal('${acc.id}', '${escapeHtml(acc.username)}', '${escapeHtml(acc.initial_password || '')}')" title="Редактировать имя или пароль">✏️</button>
-          <button type="button" class="setting-btn danger" onclick="App.deleteGuestAccount('${acc.id}')" title="Удалить аккаунт">🗑️</button>
+          <button type="button" class="setting-btn" onclick="App.copyGuestCredentials('${escapeHtml(acc.username)}', '${escapeHtml(acc.initial_password || '')}')" title="${escapeHtml(t("settings.accounts.copy_data_title"))}">${escapeHtml(t("settings.accounts.copy_data"))}</button>
+          <button type="button" class="setting-btn" onclick="App.showCreateGuestModal('${acc.id}', '${escapeHtml(acc.username)}', '${escapeHtml(acc.initial_password || '')}')" title="${escapeHtml(t("settings.accounts.edit_title"))}">✏️</button>
+          <button type="button" class="setting-btn danger" onclick="App.deleteGuestAccount('${acc.id}')" title="${escapeHtml(t("settings.accounts.delete_title"))}">🗑️</button>
         </div>
       `;
       list.appendChild(card);
@@ -3102,12 +3288,12 @@ const App = {
     if (!modal) return;
 
     if (accountId) {
-      if (title) title.textContent = "Редактировать гостевой аккаунт";
+      if (title) title.textContent = t("settings.accounts.edit_modal_title");
       if (idInput) idInput.value = accountId;
       if (nameInput) nameInput.value = currentName || "";
       if (pwdInput) pwdInput.value = currentPassword || "";
     } else {
-      if (title) title.textContent = "Новый гостевой аккаунт";
+      if (title) title.textContent = t("settings.accounts.new_modal_title");
       if (idInput) idInput.value = "";
       if (nameInput) nameInput.value = "";
       this.generateRandomGuestPassword();
@@ -3129,17 +3315,17 @@ const App = {
     const password = (pwdInput?.value || "").trim();
 
     if (!username) {
-      this.toast("error", "Укажите имя гостя");
+      this.toast("error", t("settings.accounts.name_required"));
       return;
     }
     const editId = idInput?.value;
     try {
       if (editId) {
         await this.apiPatch(`/api/accounts/${encodeURIComponent(editId)}`, { username, password });
-        this.toast("success", "Аккаунт обновлён ✓");
+        this.toast("success", t("settings.accounts.updated"));
       } else {
         const res = await this.apiPost("/api/accounts", { username, password });
-        this.toast("success", `Аккаунт '${username}' создан ✓`);
+        this.toast("success", t("settings.accounts.created", { name: username }));
         if (res && res.account) {
           this.copyGuestCredentials(username, password || res.account.initial_password);
         }
@@ -3152,13 +3338,13 @@ const App = {
   },
 
   async deleteGuestAccount(accountId) {
-    if (!confirm("Удалить этот гостевой аккаунт? Его ссылка и пароль перестанут работать.")) return;
+    if (!confirm(t("settings.accounts.delete_confirm"))) return;
     try {
       await this.apiDelete(`/api/accounts/${encodeURIComponent(accountId)}`);
-      this.toast("success", "Аккаунт удалён ✓");
+      this.toast("success", t("settings.accounts.deleted"));
       await this.loadGuestAccounts();
     } catch (e) {
-      this.toast("error", "Не удалось удалить аккаунт: " + e.message);
+      this.toast("error", t("settings.accounts.delete_failed") + e.message);
     }
   },
 
@@ -3177,20 +3363,20 @@ const App = {
       tunnelUrl = tunnelUrl.split("?")[0].replace(/\/+$/, "");
     }
 
-    const pwdText = password ? password : "(сохранённый вами пароль)";
-    const text = `⚡ LazySD UI — Доступ к генератору\nСсылка: ${tunnelUrl}\nЛогин: ${username}\nПароль: ${pwdText}`;
+    const pwdText = password ? password : t("settings.accounts.saved_password");
+    const text = t("settings.accounts.credentials_text", { url: tunnelUrl, username, password: pwdText });
 
     navigator.clipboard.writeText(text)
-      .then(() => this.toast("success", "Данные доступа (ссылка, логин, пароль) скопированы в буфер! 📋"))
+      .then(() => this.toast("success", t("settings.accounts.credentials_copied")))
       .catch(() => {
-        prompt("Скопируйте данные для гостя:", text);
+        prompt(t("settings.accounts.credentials_prompt"), text);
       });
   },
 
   copyGuestLink() {
     const url = window.location.origin;
     navigator.clipboard.writeText(url)
-      .then(() => this.toast("success", "Ссылка на вход скопирована в буфер обмена! 📋"))
+      .then(() => this.toast("success", t("settings.accounts.link_copied")))
       .catch(() => this.toast("info", `Ссылка: ${url}`));
   },
 
@@ -3328,11 +3514,11 @@ const App = {
       });
       if (res.status === "ok") {
         const label = filename
-          ? `Файл «${filename}» открыт в проводнике`
-          : `Папка открыта: ${res.folder || res.path || ""}`;
+          ? t("models.file_opened", { name: filename })
+          : t("models.folder_opened", { path: res.folder || res.path || "" });
         this.toast("success", "📂 " + label);
       } else if (res.status === "remote") {
-        this.toast("info", "Удалённая сессия: открытие проводника на сервере недоступно. Переход в Историю...");
+        this.toast("info", t("models.remote_folder"));
         this.switchTab("history");
       } else {
         this.toast("error", res.message || "Не удалось открыть папку");
@@ -3629,6 +3815,20 @@ const App = {
       }
     }
 
+    const mainVaeGroup = document.getElementById("vae-group");
+    const mainVaeSel = document.getElementById("vae-select");
+    const dockVaeRow = document.getElementById("dock-vae-quick-field");
+    const dockVaeSel = document.getElementById("dock-vae-quick-select");
+    if (mainVaeGroup && mainVaeSel && dockVaeRow && dockVaeSel) {
+      const visible = mainVaeGroup.style.display !== "none";
+      dockVaeRow.style.display = visible ? "flex" : "none";
+      if (visible) {
+        dockVaeSel.innerHTML = mainVaeSel.innerHTML;
+        dockVaeSel.value = mainVaeSel.value;
+        dockVaeSel.disabled = mainVaeSel.disabled;
+      }
+    }
+
     const dockSampler = document.getElementById("dock-sampler-quick");
     if (dockSampler) dockSampler.value = samplerVal;
     const dockSteps = document.getElementById("dock-steps-quick");
@@ -3719,6 +3919,15 @@ const App = {
     }
   },
 
+  onDockVaeSelect(vaeValue) {
+    const mainVaeSel = document.getElementById("vae-select");
+    if (mainVaeSel) {
+      mainVaeSel.value = vaeValue;
+      this.onVaeChange();
+      this.updateDockPills();
+    }
+  },
+
   selectResolutionChip(resValue) {
     const resSel = document.getElementById("resolution-select");
     if (resSel) {
@@ -3784,9 +3993,9 @@ const App = {
       if (presets.length === 0) {
         dockList.innerHTML = `
           <div style="padding: 16px; text-align: center; color: var(--text-dim); font-size: 12px;">
-            У вас пока нет сохранённых шаблонов.
+            ${escapeHtml(t("templates.empty_dock"))}
             <div style="margin-top: 10px;">
-              <button type="button" class="generate-btn" style="height: 30px; padding: 0 14px; font-size: 11.5px;" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();">💾 Сохранить текущие настройки в шаблон</button>
+              <button type="button" class="generate-btn" style="height: 30px; padding: 0 14px; font-size: 11.5px;" onclick="App.openSavePresetModal(); App.closeAllDockPopovers();">${escapeHtml(t("templates.save_current_dock"))}</button>
             </div>
           </div>
         `;
@@ -3795,10 +4004,10 @@ const App = {
         const row = document.createElement("div");
         row.className = "dock-preset-item";
         const editBtn = p.can_edit
-          ? `<button class="history-action-btn" style="padding: 2px 6px; font-size: 11px; height: 22px; width: auto;" onclick="App.openEditPresetModal('${escapeHtml(p.id)}', event)" title="Редактировать шаблон">✏️</button>`
+          ? `<button class="history-action-btn" style="padding: 2px 6px; font-size: 11px; height: 22px; width: auto;" onclick="App.openEditPresetModal('${escapeHtml(p.id)}', event)" title="${escapeHtml(t("templates.edit_title"))}">✏️</button>`
           : "";
         const delBtn = p.can_delete
-          ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)" title="Удалить шаблон">🗑</button>`
+          ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)" title="${escapeHtml(t("templates.delete_title"))}">🗑</button>`
           : "";
         row.innerHTML = `
           <div class="dock-preset-info">
@@ -3830,16 +4039,16 @@ const App = {
         const card = document.createElement("div");
         card.className = "model-card";
         const ownerBadge = p.owner_id === "host"
-          ? `<span class="badge-installed">👑 Шаблон хоста</span>`
-          : `<span class="badge-custom">👤 ${escapeHtml(p.owner_name || "Гость")}</span>`;
+          ? `<span class="badge-installed">${escapeHtml(t("templates.host_badge"))}</span>`
+          : `<span class="badge-custom">👤 ${escapeHtml(p.owner_name || t("common.guest"))}</span>`;
         const privBadge = p.is_private
-          ? `<span class="badge-custom" style="background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #f87171;">🔒 Скрытый</span>`
+          ? `<span class="badge-custom" style="background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #f87171;">${escapeHtml(t("templates.private_badge"))}</span>`
           : "";
         const editBtn = p.can_edit
-          ? `<button class="card-action-btn" style="width: auto;" onclick="App.openEditPresetModal('${escapeHtml(p.id)}')">✏️ Изменить</button>`
+          ? `<button class="card-action-btn" style="width: auto;" onclick="App.openEditPresetModal('${escapeHtml(p.id)}')">${escapeHtml(t("templates.edit"))}</button>`
           : "";
         const delBtn = p.can_delete
-          ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)">🗑 Удалить</button>`
+          ? `<button class="delete-custom-btn" onclick="App.deletePreset('${escapeHtml(p.id)}', event)">${escapeHtml(t("templates.delete_btn"))}</button>`
           : "";
         card.innerHTML = `
           <div>
@@ -3853,13 +4062,13 @@ const App = {
             <p class="model-card-description" style="margin-top: 8px;">${escapeHtml(p.description || "")}</p>
             <div class="model-card-reqs" style="margin-top: 10px;">
               <span>📐 ${escapeHtml(p.resolution || "1024x1024")}</span>
-              <span>⏱ ${p.steps || 20} steps</span>
+              <span>⏱ ${escapeHtml(t("templates.steps", { count: p.steps || 20 }))}</span>
               <span>🎛️ CFG ${p.cfg ?? 3.5}</span>
               <span>🖼️ ${escapeHtml(p.ref_mode || "control_ref")}</span>
             </div>
             ${p.prompt ? `<div style="margin-top: 10px; padding: 8px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; color: var(--text-muted); max-height: 64px; overflow: hidden;">${escapeHtml(p.prompt)}</div>` : ""}
             <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-              <button class="card-action-btn primary" style="width: auto;" onclick="App.applyPreset('${escapeHtml(p.id)}')">⚡ Применить шаблон</button>
+              <button class="card-action-btn primary" style="width: auto;" onclick="App.applyPreset('${escapeHtml(p.id)}')">${escapeHtml(t("templates.apply_btn"))}</button>
               ${editBtn}
               ${delBtn}
             </div>
@@ -4093,7 +4302,7 @@ const App = {
 
   async deletePreset(presetId, event) {
     if (event) event.stopPropagation();
-    if (!confirm("Удалить этот шаблон?")) return;
+    if (!confirm(t("templates.confirm_delete"))) return;
     try {
       const res = await fetch(`/api/presets/${encodeURIComponent(presetId)}`, { method: "DELETE" });
       if (!res.ok) {
@@ -4158,7 +4367,7 @@ const App = {
     const vaeSel = document.getElementById("custom-vae-file-select");
 
     if (modelSel) {
-      modelSel.innerHTML = `<option value="">— Выберите файл из models/custom/ —</option><option value="__custom__">Указать полный путь на ПК...</option>`;
+      modelSel.innerHTML = `<option value="">${escapeHtml(t("custom_model.select_model_file"))}</option><option value="__custom__">${escapeHtml(t("custom_model.custom_path"))}</option>`;
       for (const f of files) {
         const opt = document.createElement("option");
         opt.value = f.rel_path;
@@ -4169,7 +4378,7 @@ const App = {
     }
 
     if (teSel) {
-      teSel.innerHTML = `<option value="">— Auto / Встроен в модель —</option><option value="__custom__">Указать полный путь на ПК...</option>`;
+      teSel.innerHTML = `<option value="">${escapeHtml(t("custom_model.te_not_required"))}</option><option value="__custom__">${escapeHtml(t("custom_model.custom_path"))}</option>`;
       for (const f of files) {
         const opt = document.createElement("option");
         opt.value = f.rel_path;
@@ -4179,7 +4388,7 @@ const App = {
     }
 
     if (vaeSel) {
-      vaeSel.innerHTML = `<option value="">— Auto / Встроен в модель —</option><option value="__custom__">Указать полный путь на ПК...</option>`;
+      vaeSel.innerHTML = `<option value="">${escapeHtml(t("custom_model.vae_auto"))}</option><option value="__custom__">${escapeHtml(t("custom_model.custom_path"))}</option>`;
       for (const f of files) {
         const opt = document.createElement("option");
         opt.value = f.rel_path;
@@ -4306,7 +4515,7 @@ const App = {
         throw new Error(data.detail || "Failed to register custom model");
       }
 
-      this.toast("success", `✓ Модель «${name}» добавлена!`);
+      this.toast("success", t("custom_model.saved", { name }));
       this.closeCustomModelModal();
 
       await this.refreshConfig();
@@ -4321,7 +4530,7 @@ const App = {
   async onHfSearchOrInspect() {
     const raw = document.getElementById("hf-search-input")?.value?.trim() || "";
     if (!raw) {
-      this.toast("warning", "Введите поисковый запрос или ссылку на Hugging Face");
+      this.toast("warning", t("custom_model.hf_query_required"));
       return;
     }
 
@@ -4339,7 +4548,7 @@ const App = {
     const resultsEl = document.getElementById("hf-search-results");
     if (resultsEl) {
       resultsEl.style.display = "flex";
-      resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-muted);">🔎 Поиск на Hugging Face...</div>`;
+      resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-muted);">${escapeHtml(t("custom_model.hf_searching"))}</div>`;
     }
 
     try {
@@ -4348,7 +4557,7 @@ const App = {
       if (!resultsEl) return;
 
       if (!results.length) {
-        resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-dim);">Ничего не найдено. Попробуйте вставить прямую ссылку <code>author/repo</code>.</div>`;
+        resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-dim);">${t("custom_model.hf_nothing")}</div>`;
         return;
       }
 
@@ -4359,16 +4568,16 @@ const App = {
         div.innerHTML = `
           <div style="min-width: 0;">
             <div style="font-size: 12.5px; font-weight: 600; color: var(--text-bright);">${escapeHtml(item.repo_id)}</div>
-            <div style="font-size: 11px; color: var(--text-dim);">⬇ ${item.downloads || 0} скачиваний · ❤️ ${item.likes || 0}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">${escapeHtml(t("custom_model.hf_counts", { downloads: item.downloads || 0, likes: item.likes || 0 }))}</div>
           </div>
-          <button class="setting-btn" style="height: 26px; font-size: 11px;">Открыть файлы →</button>
+          <button class="setting-btn" style="height: 26px; font-size: 11px;">${escapeHtml(t("custom_model.hf_open_files"))}</button>
         `;
         div.addEventListener("click", () => this.inspectHfRepo(item.repo_id));
         resultsEl.appendChild(div);
       }
     } catch (e) {
       if (resultsEl) {
-        resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: #f87171;">Ошибка: ${escapeHtml(e.message)}</div>`;
+        resultsEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: #f87171;">${escapeHtml(t("custom_model.hf_error"))}${escapeHtml(e.message)}</div>`;
       }
     }
   },
@@ -4378,8 +4587,8 @@ const App = {
     const filesListEl = document.getElementById("hf-repo-files-list") || document.getElementById("hf-files-checklist");
     const titleEl = document.getElementById("hf-inspected-repo-title") || document.getElementById("hf-repo-title");
     if (inspectorEl) inspectorEl.style.display = "block";
-    if (titleEl) titleEl.textContent = `📦 Загрузка списка файлов ${repoId}...`;
-    if (filesListEl) filesListEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted);">Запрос метаданных репозитория...</div>`;
+    if (titleEl) titleEl.textContent = t("custom_model.hf_loading_repo", { repo: repoId });
+    if (filesListEl) filesListEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted);">${escapeHtml(t("custom_model.hf_loading_meta"))}</div>`;
 
     try {
       const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(repoId)}`);
@@ -4413,7 +4622,7 @@ const App = {
         const chips = [];
         if (info.pipeline_tag) chips.push(`🎯 ${info.pipeline_tag}`);
         if (info.license) chips.push(`📄 ${info.license}`);
-        if (Number(info.weight_size_gb) > 0) chips.push(`💾 ${Number(info.weight_size_gb).toFixed(2)} GB весов`);
+        if (Number(info.weight_size_gb) > 0) chips.push(t("custom_model.hf_weight_size", { size: Number(info.weight_size_gb).toFixed(2) }));
         if (info.base_model) chips.push(`🧬 ${info.base_model}`);
         const counts = [
           [info.diffusion_files?.length, "transformer"],
@@ -4429,10 +4638,14 @@ const App = {
 
       const warnEl = document.getElementById("hf-import-warning-banner");
       if (warnEl) {
-        const missingLabels = { base: "базовая модель/конфиги", text_encoder: "текстовый энкодер", vae: "VAE" };
+        const missingLabels = {
+          base: t("custom_model.hf_missing_base"),
+          text_encoder: t("custom_model.hf_missing_te"),
+          vae: t("custom_model.hf_missing_vae"),
+        };
         const warnings = [...(info.warnings || [])];
         const missing = (info.missing || []).map(item => missingLabels[item] || item);
-        if (missing.length) warnings.push(`Не хватает: ${missing.join(", ")}. Заполните поля ниже.`);
+        if (missing.length) warnings.push(t("custom_model.hf_missing", { missing: missing.join(", ") }));
         const uniqueWarnings = [...new Set(warnings.filter(Boolean))];
         warnEl.innerHTML = uniqueWarnings.map(text => `<div>⚠️ ${escapeHtml(text)}</div>`).join("");
         warnEl.style.display = uniqueWarnings.length ? "block" : "none";
@@ -4442,7 +4655,7 @@ const App = {
       if (reasonEl) {
         const reasons = Array.isArray(info.engine_reasons) ? info.engine_reasons.filter(Boolean) : [];
         reasonEl.innerHTML = reasons.length
-          ? `<strong>Движок: ${escapeHtml(info.suggested_engine || "—")}</strong> · ${reasons.map(escapeHtml).join(" ")}`
+          ? `<strong>${escapeHtml(t("custom_model.hf_engine"))}${escapeHtml(info.suggested_engine || "—")}</strong> · ${reasons.map(escapeHtml).join(" ")}`
           : "";
         reasonEl.style.display = reasons.length ? "block" : "none";
       }
@@ -4451,8 +4664,8 @@ const App = {
       if (foldersEl) {
         const folders = Array.isArray(info.folders) ? info.folders : [];
         foldersEl.innerHTML = folders.length
-          ? `<div style="font-weight: 600; margin-bottom: 4px; color: var(--text-bright);">Структура репозитория</div>` +
-            folders.map(row => `<div class="hf-folder-row"><code>${escapeHtml(row.folder)}</code><span>${escapeHtml(row.role)} · ${row.files} файл(ов) · ${row.size_gb} GB</span></div>`).join("")
+          ? `<div style="font-weight: 600; margin-bottom: 4px; color: var(--text-bright);">${escapeHtml(t("custom_model.hf_structure"))}</div>` +
+            folders.map(row => `<div class="hf-folder-row"><code>${escapeHtml(row.folder)}</code><span>${escapeHtml(t("custom_model.hf_folder_row", { role: row.role, count: row.files, size: row.size_gb }))}</span></div>`).join("")
           : "";
         foldersEl.style.display = folders.length ? "block" : "none";
       }
@@ -4481,14 +4694,14 @@ const App = {
       if (filesListEl) {
         filesListEl.innerHTML = "";
         const groups = [
-          { title: "Веса модели (transformer / diffusion)", files: info.diffusion_files || [], cls: "hf-diff-checkbox", check: true, interactive: true },
-          { title: "Текстовый энкодер (скачается из этого репозитория)", files: info.text_encoder_files || [], cls: "hf-role-file", role: "TE" },
-          { title: "VAE (скачается из этого репозитория)", files: info.vae_files || [], cls: "hf-role-file", role: "VAE" },
+          { title: t("custom_model.hf_weights"), files: info.diffusion_files || [], cls: "hf-diff-checkbox", check: true, interactive: true },
+          { title: t("custom_model.hf_te_files"), files: info.text_encoder_files || [], cls: "hf-role-file", role: "TE" },
+          { title: t("custom_model.hf_vae_files"), files: info.vae_files || [], cls: "hf-role-file", role: "VAE" },
           { title: "Auxiliary / OrbitQuant sidecars", files: info.aux_files || [], cls: "hf-role-file", role: "AUX" },
         ];
         const allFiles = groups.reduce((sum, group) => sum + group.files.length, 0);
         if (!allFiles) {
-          filesListEl.innerHTML = `<div style="font-size: 12px; color: #f87171;">В репозитории не найдено файлов .gguf или .safetensors.</div>`;
+          filesListEl.innerHTML = `<div style="font-size: 12px; color: #f87171;">${escapeHtml(t("custom_model.hf_no_files"))}</div>`;
         }
         for (const group of groups) {
           if (!group.files.length) continue;
@@ -4515,7 +4728,7 @@ const App = {
         }
       }
     } catch (e) {
-      if (titleEl) titleEl.textContent = `❌ Ошибка загрузки ${repoId}`;
+      if (titleEl) titleEl.textContent = t("custom_model.hf_repo_error", { repo: repoId });
       if (filesListEl) filesListEl.innerHTML = `<div style="font-size: 12px; color: #f87171;">${escapeHtml(e.message)}</div>`;
     }
   },
@@ -4523,13 +4736,13 @@ const App = {
   async registerHfModel() {
     const info = this.state.hfInspectedRepo;
     if (!info || !info.repo_id) {
-      this.toast("warning", "Сначала выберите репозиторий Hugging Face");
+      this.toast("warning", t("custom_model.hf_repo_required"));
       return;
     }
 
     const checkedBoxes = Array.from(document.querySelectorAll(".hf-diff-checkbox:checked"));
     if (!checkedBoxes.length) {
-      this.toast("warning", "Отметьте хотя бы один файл модели (.gguf / .safetensors)");
+      this.toast("warning", t("custom_model.hf_files_required"));
       return;
     }
 
@@ -4575,7 +4788,7 @@ const App = {
 
     try {
       const res = await this.apiPost("/api/hf/register", payload);
-      this.toast("success", `✓ Модель «${payload.name}» добавлена в Model Hub!`);
+      this.toast("success", t("custom_model.hf_saved", { name: payload.name }));
       this.closeCustomModelModal();
       await this.refreshConfig();
       if (res.model && res.model.id) {
@@ -4588,10 +4801,7 @@ const App = {
 
   async deleteCustomModel(modelId, event) {
     if (event) event.stopPropagation();
-    const confirmed = confirm(
-      `Удалить модель «${modelId}» из реестра Model Hub и удалить её скачанные веса?\n\n` +
-      "Удаляются только файлы из манифеста этой модели. Общие энкодеры, VAE и файлы других моделей останутся на диске."
-    );
+    const confirmed = confirm(t("models.delete_card_confirm", { id: modelId }));
     if (!confirmed) return;
 
     try {
@@ -4602,7 +4812,7 @@ const App = {
         const data = await res.json();
         throw new Error(data.detail || "Failed to delete");
       }
-      this.toast("info", `Модель ${modelId} удалена из реестра, общие файлы сохранены`);
+      this.toast("info", t("models.delete_card_success", { id: modelId }));
       await this.refreshConfig();
       if (this.state.isModelPickerOpen) {
         this.renderModelPickerModal();
@@ -4680,11 +4890,11 @@ const App = {
       setValue("model-card-editor-base-repo", card.base_repo_id || "");
       setValue("model-card-editor-description", card.description || "");
       const repoEl = document.getElementById("model-card-editor-repo");
-      if (repoEl) repoEl.textContent = card.repo_id || "не указан";
+      if (repoEl) repoEl.textContent = card.repo_id || t("models.card_editor.no_repo");
       const subtitle = document.getElementById("model-card-editor-subtitle");
-      if (subtitle) subtitle.textContent = `${card.name || modelId} · ${card.repo_id || "локальная модель"}`;
+      if (subtitle) subtitle.textContent = `${card.name || modelId} · ${card.repo_id || t("models.card_editor.local_model")}`;
       const statusEl = document.getElementById("model-card-editor-repo-status");
-      if (statusEl) statusEl.textContent = "Проверка покажет, какие энкодеры, VAE и sidecar-файлы уже лежат в репозитории.";
+      if (statusEl) statusEl.textContent = t("models.card_editor.repo_hint");
       const suggestionsEl = document.getElementById("model-card-editor-suggestions");
       if (suggestionsEl) suggestionsEl.innerHTML = "";
 
@@ -4718,15 +4928,15 @@ const App = {
         ? editor.te.map((te, idx) => `
             <div class="component-item">
               <div class="component-info">
-                <span class="component-name">${escapeHtml(te.name || te.path || "Text encoder")} ${te.recommended ? '<span class="component-primary">основной</span>' : ""}</span>
+                <span class="component-name">${escapeHtml(te.name || te.path || t("models.card_editor.encoder_label"))} ${te.recommended ? `<span class="component-primary">${escapeHtml(t("models.card_editor.primary"))}</span>` : ""}</span>
                 <span class="component-sub" title="${escapeHtml([te.repo_id, te.path, te.precision].filter(Boolean).join(" · "))}">${escapeHtml([te.repo_id, te.path, te.precision, te.size_gb ? `${te.size_gb} GB` : ""].filter(Boolean).join(" · "))}</span>
               </div>
               <div class="component-actions">
-                <button type="button" class="dock-ctrl-btn" onclick="App.makeCardTePrimary(${idx})" title="Сделать основным">★</button>
-                <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('te', ${idx})" title="Убрать из карточки">✕</button>
+                <button type="button" class="dock-ctrl-btn" onclick="App.makeCardTePrimary(${idx})" title="${escapeHtml(t("models.card_editor.make_primary"))}">★</button>
+                <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('te', ${idx})" title="${escapeHtml(t("models.card_editor.remove_from_card"))}">✕</button>
               </div>
             </div>`).join("")
-        : `<div class="component-empty">Энкодер не указан. Добавьте его из репозитория, через поиск или по ссылке.</div>`;
+        : `<div class="component-empty">${escapeHtml(t("models.card_editor.te_empty"))}</div>`;
     }
 
     if (vaeList) {
@@ -4737,10 +4947,10 @@ const App = {
                <span class="component-sub" title="${escapeHtml([editor.vae.repo_id, editor.vae.path].filter(Boolean).join(" · "))}">${escapeHtml([editor.vae.repo_id, editor.vae.path].filter(Boolean).join(" · "))}</span>
              </div>
              <div class="component-actions">
-               <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('vae', 0)" title="Убрать VAE">✕</button>
+               <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('vae', 0)" title="${escapeHtml(t("models.card_editor.remove_vae"))}">✕</button>
              </div>
            </div>`
-        : `<div class="component-empty">VAE не указан. Добавьте его из репозитория, через поиск или по ссылке.</div>`;
+        : `<div class="component-empty">${escapeHtml(t("models.card_editor.vae_empty"))}</div>`;
     }
 
     if (auxList) {
@@ -4748,14 +4958,14 @@ const App = {
         ? editor.aux.map((aux, idx) => `
             <div class="component-item">
               <div class="component-info">
-                <span class="component-name">${escapeHtml(String(aux.path || "").split("/").pop() || "Sidecar")}</span>
+                <span class="component-name">${escapeHtml(String(aux.path || "").split("/").pop() || t("models.card_editor.sidecar_label"))}</span>
                 <span class="component-sub" title="${escapeHtml([aux.repo_id, aux.path].filter(Boolean).join(" · "))}">${escapeHtml([aux.repo_id, aux.path, aux.size_gb ? `${aux.size_gb} GB` : ""].filter(Boolean).join(" · "))}</span>
               </div>
               <div class="component-actions">
-                <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('aux', ${idx})" title="Убрать sidecar">✕</button>
+                <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('aux', ${idx})" title="${escapeHtml(t("models.card_editor.remove_sidecar"))}">✕</button>
               </div>
             </div>`).join("")
-        : `<div class="component-empty">Sidecar-файлы не указаны.</div>`;
+        : `<div class="component-empty">${escapeHtml(t("models.card_editor.aux_empty"))}</div>`;
     }
   },
 
@@ -4799,7 +5009,7 @@ const App = {
 
     const exists = editor.te.some(te => te.repo_id === repo && te.path === component.path);
     if (exists) {
-      this.toast("info", "Этот энкодер уже добавлен в карточку");
+      this.toast("info", t("models.card_editor.already_added"));
       return;
     }
     let baseId = String(component.path.split("/").pop() || "te").replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "te";
@@ -4826,7 +5036,7 @@ const App = {
     const input = document.getElementById(inputId);
     const parsed = this.parseComponentRef(input?.value || "");
     if (!parsed) {
-      this.toast("warning", "Укажите ссылку вида author/repo::path/to/file.safetensors");
+      this.toast("warning", t("models.card_editor.invalid_ref"));
       return;
     }
     this.addCardComponent(role, { ...parsed, size_gb: 0, precision: "custom" });
@@ -4836,12 +5046,12 @@ const App = {
   async inspectCardRepo(silent = false) {
     const editor = this.state.modelCardEditor;
     if (!editor || !editor.repoId) {
-      if (!silent) this.toast("warning", "В карточке не указан репозиторий модели");
+      if (!silent) this.toast("warning", t("models.card_editor.repo_missing"));
       return;
     }
     const statusEl = document.getElementById("model-card-editor-repo-status");
     const suggestionsEl = document.getElementById("model-card-editor-suggestions");
-    if (statusEl) statusEl.textContent = "Проверяем репозиторий...";
+    if (statusEl) statusEl.textContent = t("models.card_editor.checking_repo");
     try {
       const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(editor.repoId)}`);
       editor.repoInfo = info;
@@ -4849,13 +5059,15 @@ const App = {
       const vaeFiles = info.vae_files || [];
       const auxFiles = info.aux_files || [];
       if (statusEl) {
-        const parts = [
-          `энкодеров: ${teFiles.length}`,
-          `VAE: ${vaeFiles.length}`,
-          `sidecars: ${auxFiles.length}`,
-        ];
-        statusEl.innerHTML = `${teFiles.length ? "✅" : "⚠️"} В репозитории найдено ${parts.join(" · ")}.` +
-          (teFiles.length ? "" : " Энкодер не найден — добавьте его вручную или найдите на HF.");
+        const parts = t("models.card_editor.repo_counts", {
+          te: teFiles.length,
+          vae: vaeFiles.length,
+          aux: auxFiles.length,
+        });
+        statusEl.innerHTML = escapeHtml(t("models.card_editor.repo_found", {
+          icon: teFiles.length ? "✅" : "⚠️",
+          parts,
+        })) + (teFiles.length ? "" : escapeHtml(t("models.card_editor.te_not_found")));
       }
       if (!suggestionsEl) return;
       const rows = [];
@@ -4870,16 +5082,16 @@ const App = {
           <div class="card-editor-suggestion">
             <span><strong>${escapeHtml(label)}</strong> <code>${escapeHtml(file.path)}</code>${size ? ` · ${size} GB` : ""}</span>
             ${exists
-              ? `<span class="component-primary">уже в карточке</span>`
-              : `<button type="button" class="dock-mini-btn" data-role="${role}" data-repo="${escapeHtml(editor.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" onclick="App.addCardSuggestion(this.dataset.role, this.dataset.repo, this.dataset.path, this.dataset.size)">＋ Добавить</button>`}
+              ? `<span class="component-primary">${escapeHtml(t("models.card_editor.already_in_card"))}</span>`
+              : `<button type="button" class="dock-mini-btn" data-role="${role}" data-repo="${escapeHtml(editor.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" onclick="App.addCardSuggestion(this.dataset.role, this.dataset.repo, this.dataset.path, this.dataset.size)">${escapeHtml(t("models.card_editor.add"))}</button>`}
           </div>`);
       };
-      teFiles.slice(0, 8).forEach(file => pushSuggestion("te", file, "Энкодер"));
+      teFiles.slice(0, 8).forEach(file => pushSuggestion("te", file, t("models.card_editor.encoder_label")));
       vaeFiles.slice(0, 4).forEach(file => pushSuggestion("vae", file, "VAE"));
-      auxFiles.slice(0, 8).forEach(file => pushSuggestion("aux", file, "Sidecar"));
-      suggestionsEl.innerHTML = rows.join("") || `<div class="component-empty">В репозитории не найдено компонентов, которые можно добавить.</div>`;
+      auxFiles.slice(0, 8).forEach(file => pushSuggestion("aux", file, t("models.card_editor.sidecar_label")));
+      suggestionsEl.innerHTML = rows.join("") || `<div class="component-empty">${escapeHtml(t("models.card_editor.nothing_found"))}</div>`;
     } catch (e) {
-      if (statusEl) statusEl.innerHTML = `<span style="color:#f87171;">Не удалось проверить репозиторий: ${escapeHtml(e.message)}</span>`;
+      if (statusEl) statusEl.innerHTML = `<span style="color:#f87171;">${escapeHtml(t("models.card_editor.check_failed"))}${escapeHtml(e.message)}</span>`;
       if (suggestionsEl) suggestionsEl.innerHTML = "";
       if (!silent) this.toast("error", e.message);
     }
@@ -4925,7 +5137,7 @@ const App = {
     }
     try {
       await this.apiPatch(`/api/models/${encodeURIComponent(editor.modelId)}/card`, payload);
-      this.toast("success", "✓ Карточка модели сохранена");
+      this.toast("success", t("models.card_editor.saved"));
       this.closeModelCardEditor();
       await this.refreshConfig();
       if (this.state.selectedModel === editor.modelId) {
@@ -4942,7 +5154,11 @@ const App = {
     const modal = document.getElementById("component-picker-modal");
     if (modal) modal.style.display = "flex";
     const title = document.getElementById("component-picker-title");
-    if (title) title.textContent = role === "vae" ? "🔎 Найти VAE на Hugging Face" : role === "aux" ? "🔎 Найти sidecar на Hugging Face" : "🔎 Найти текстовый энкодер на Hugging Face";
+    if (title) title.textContent = role === "vae"
+      ? t("models.component_picker.title_vae")
+      : role === "aux"
+        ? t("models.component_picker.title_aux")
+        : t("models.component_picker.title_te");
     const search = document.getElementById("component-picker-search");
     if (search) search.value = "";
     const results = document.getElementById("component-picker-results");
@@ -4952,7 +5168,12 @@ const App = {
     const files = document.getElementById("component-picker-files");
     if (files) files.innerHTML = "";
     const manual = document.getElementById("component-picker-manual");
-    if (manual) { manual.value = ""; manual.placeholder = role === "vae" ? "author/repo::vae/file.safetensors" : "author/repo::text_encoder/model.safetensors"; }
+    if (manual) {
+      manual.value = "";
+      manual.placeholder = role === "vae"
+        ? t("models.component_picker.manual_vae")
+        : t("models.component_picker.manual_te");
+    }
     if (this.state.componentPicker.repoId) this.inspectComponentRepo();
   },
 
@@ -4968,7 +5189,7 @@ const App = {
     const input = document.getElementById("component-picker-search");
     const query = (input?.value || "").trim() || (picker.role === "vae" ? "flux vae" : "flux text encoder");
     const resultsEl = document.getElementById("component-picker-results");
-    if (resultsEl) { resultsEl.style.display = "block"; resultsEl.innerHTML = `<div class="component-empty">Поиск репозиториев...</div>`; }
+    if (resultsEl) { resultsEl.style.display = "block"; resultsEl.innerHTML = `<div class="component-empty">${escapeHtml(t("models.component_picker.searching"))}</div>`; }
     try {
       const res = await this.apiGet(`/api/hf/search?q=${encodeURIComponent(query)}&limit=12`);
       const results = res.results || [];
@@ -4979,7 +5200,7 @@ const App = {
               <div>${escapeHtml(item.repo_id)}</div>
               <div class="hf-result-meta">${escapeHtml(item.pipeline_tag || "")} ${item.downloads ? `· ⬇ ${item.downloads}` : ""}</div>
             </div>`).join("")
-        : `<div class="component-empty">Репозитории не найдены. Вставьте ссылку author/repo вручную ниже.</div>`;
+        : `<div class="component-empty">${escapeHtml(t("models.component_picker.none"))}</div>`;
     } catch (e) {
       if (resultsEl) resultsEl.innerHTML = `<div class="component-empty" style="color:#f87171;">${escapeHtml(e.message)}</div>`;
     }
@@ -4998,10 +5219,10 @@ const App = {
     const repoId = (repoInput?.value || "").trim();
     const filesEl = document.getElementById("component-picker-files");
     if (!repoId) {
-      this.toast("warning", "Укажите репозиторий Hugging Face");
+      this.toast("warning", t("models.component_picker.repo_required"));
       return;
     }
-    if (filesEl) filesEl.innerHTML = `<div class="component-empty">Проверяем дерево репозитория...</div>`;
+    if (filesEl) filesEl.innerHTML = `<div class="component-empty">${escapeHtml(t("models.component_picker.checking"))}</div>`;
     try {
       const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(repoId)}`);
       picker.repoId = info.repo_id || repoId;
@@ -5009,8 +5230,12 @@ const App = {
       const files = picker.role === "vae" ? (info.vae_files || []) : picker.role === "aux" ? (info.aux_files || []) : (info.text_encoder_files || []);
       if (!filesEl) return;
       if (!files.length) {
-        const what = picker.role === "vae" ? "VAE" : picker.role === "aux" ? "sidecar" : "текстового энкодера";
-        filesEl.innerHTML = `<div class="component-empty">В репозитории не найдено файлов ${what}. Проверьте другую папку/репозиторий или добавьте ссылку вручную.</div>`;
+        const what = picker.role === "vae"
+          ? t("models.component_picker.role_vae")
+          : picker.role === "aux"
+            ? t("models.component_picker.role_aux")
+            : t("models.component_picker.role_te");
+        filesEl.innerHTML = `<div class="component-empty">${escapeHtml(t("models.component_picker.no_files", { what }))}</div>`;
         return;
       }
       filesEl.innerHTML = files.map(file => {
@@ -5022,7 +5247,7 @@ const App = {
               <span class="component-sub">${size ? `${size} GB` : ""} ${file.quant ? `· ${file.quant}` : ""}</span>
             </div>
             <div class="component-actions">
-              <button type="button" class="dock-mini-btn" data-repo="${escapeHtml(picker.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" data-precision="${escapeHtml(file.quant || 'custom')}" onclick="App.pickComponentFile(this.dataset.repo, this.dataset.path, this.dataset.size, this.dataset.precision)">＋ Добавить</button>
+              <button type="button" class="dock-mini-btn" data-repo="${escapeHtml(picker.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" data-precision="${escapeHtml(file.quant || 'custom')}" onclick="App.pickComponentFile(this.dataset.repo, this.dataset.path, this.dataset.size, this.dataset.precision)">${escapeHtml(t("models.card_editor.add"))}</button>
             </div>
           </div>`;
       }).join("");
@@ -5036,7 +5261,7 @@ const App = {
     if (!picker) return;
     this.addCardComponent(picker.role, { repo_id: repoId, path, size_gb: Number(size || 0), precision: precision || "custom" });
     this.closeComponentPicker();
-    this.toast("success", "Компонент добавлен в карточку");
+    this.toast("success", t("models.component_picker.added"));
   },
 
   addComponentFromManual() {
@@ -5045,12 +5270,12 @@ const App = {
     const manual = document.getElementById("component-picker-manual");
     const parsed = this.parseComponentRef(manual?.value || "");
     if (!parsed) {
-      this.toast("warning", "Укажите ссылку вида author/repo::path/to/file.safetensors");
+      this.toast("warning", t("models.card_editor.invalid_ref"));
       return;
     }
     this.addCardComponent(picker.role, { ...parsed, size_gb: 0, precision: "custom" });
     this.closeComponentPicker();
-    this.toast("success", "Компонент добавлен в карточку");
+    this.toast("success", t("models.component_picker.added"));
   },
 
   async deleteModelFiles(modelId, variantId, btnEl) {
@@ -5059,12 +5284,9 @@ const App = {
     const variant = (model?.transformers || []).find(v => v.id === variantId);
     const sizeText = variant && Number(variant.size_gb) > 0 ? ` (~${Number(variant.size_gb).toFixed(1)} GB)` : "";
     const what = variantId
-      ? `веса варианта «${variantId}»${sizeText}`
-      : `все скачанные веса модели «${modelLabel}»`;
-    const confirmed = confirm(
-      `Удалить ${what}?\n\n` +
-      "Файлы будут удалены только из локального кэша. Общие энкодеры, VAE и файлы других моделей не затрагиваются."
-    );
+      ? t("models.weights_variant", { id: variantId, size: sizeText })
+      : t("models.weights_all", { name: modelLabel });
+    const confirmed = confirm(t("models.delete_weights_confirm", { what }));
     if (!confirmed) return;
 
     if (btnEl) {
@@ -5077,7 +5299,7 @@ const App = {
       const result = await this.apiDelete(`/api/models/${encodeURIComponent(modelId)}/files${query}`);
       const freedMb = Number(result.freed_mb || 0);
       const freedText = freedMb >= 1024 ? `${(freedMb / 1024).toFixed(2)} GB` : `${freedMb.toFixed(1)} MB`;
-      this.toast("success", result.message || `Удалено файлов: ${result.deleted_files_count || 0} (${freedText})`);
+      this.toast("success", result.message || t("models.files_deleted", { count: result.deleted_files_count || 0, size: freedText }));
 
       await this.refreshConfig();
       if (this.state.selectedModel === modelId) {
@@ -5088,7 +5310,7 @@ const App = {
         this.renderModelPickerModal();
       }
     } catch (err) {
-      this.toast("error", "Не удалось удалить веса: " + err.message);
+      this.toast("error", t("models.delete_weights_failed") + err.message);
       if (btnEl) {
         btnEl.disabled = false;
         btnEl.classList.remove("is-loading");
@@ -5109,7 +5331,7 @@ const App = {
     const chkHost = document.getElementById("model-vis-hidden-host");
 
     if (idInput) idInput.value = model.id;
-    if (descEl) descEl.textContent = `Модель: «${model.name}» (${model.id})`;
+    if (descEl) descEl.textContent = t("models.vis_model", { name: model.name, id: model.id });
     if (chkGuests) chkGuests.checked = !!model.hidden_for_guests;
     if (chkHost) chkHost.checked = !!model.hidden_from_host;
 
@@ -5135,7 +5357,7 @@ const App = {
 
     try {
       await this.apiPost(`/api/models/${encodeURIComponent(modelId)}/visibility`, payload);
-      this.toast("success", `✓ Настройки видимости для «${modelId}» сохранены`);
+      this.toast("success", t("models.vis_saved", { id: modelId }));
       this.closeModelVisibilityModal();
       await this.refreshConfig();
       if (this.state.isModelPickerOpen) {
@@ -5380,7 +5602,7 @@ const App = {
     const curIdx = order.indexOf(this.state.dockPosition || "center");
     const next = order[(curIdx + 1) % order.length];
     this.setDockPosition(next);
-    this.toast("info", `Позиция коробки: ${next}`);
+    this.toast("info", t("settings.dock.position_toast", { pos: next }));
   },
 
   toggleDockMinimized() {
@@ -5581,7 +5803,7 @@ const App = {
       return true;
     });
     if (blocked.length && notify) {
-      this.toast("warning", `Отключены несовместимые LoRA: ${blocked.join(", ")}`);
+      this.toast("warning", t("lora.hub.blocked", { names: blocked.join(", ") }));
     }
     return blocked;
   },
@@ -5646,7 +5868,7 @@ const App = {
     const inspectorList = document.getElementById("lora-inspector-list");
     if (inspectorList) {
       if (this.state.activeLoras.length === 0) {
-        inspectorList.innerHTML = '<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px 0;">Нет подключенных LoRA</div>';
+        inspectorList.innerHTML = `<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px 0;">${escapeHtml(t("inspector.no_loras"))}</div>`;
       } else {
         inspectorList.innerHTML = this.state.activeLoras.map(item => {
           return `
@@ -5694,8 +5916,8 @@ const App = {
 
     if (list.length === 0) {
       const message = allLoras.length === 0
-        ? "В папке LoRA пока нет файлов. Добавьте .safetensors или .gguf через кнопку «Добавить / Скачать LoRA»."
-        : "LoRA не найдены по заданному фильтру.";
+        ? t("lora.hub.empty")
+        : t("lora.hub.no_match");
       grid.innerHTML = `<div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-dim);">${message}</div>`;
       return;
     }
@@ -5842,7 +6064,7 @@ const App = {
     const fd = new FormData();
     fd.append("file", file);
 
-    this.toast("info", `Загрузка LoRA «${file.name}»...`);
+    this.toast("info", t("lora.hub.uploading", { name: file.name }));
     try {
       const res = await fetch("/api/loras/upload", {
         method: "POST",
@@ -5852,7 +6074,7 @@ const App = {
         const data = await res.json();
         throw new Error(data.detail || "Upload failed");
       }
-      this.toast("success", `✓ LoRA «${file.name}» загружена!`);
+      this.toast("success", t("lora.hub.uploaded", { name: file.name }));
       input.value = "";
       await this.loadLoras();
     } catch (e) {
@@ -5864,13 +6086,13 @@ const App = {
     const input = document.getElementById("lora-local-path-input");
     const path = input ? input.value.trim() : "";
     if (!path) {
-      this.toast("warning", "Укажите путь к файлу LoRA на диске");
+      this.toast("warning", t("lora.hub.path_required"));
       return;
     }
     try {
-      this.toast("info", "Импорт файла...");
+      this.toast("info", t("lora.hub.importing"));
       const res = await this.apiPost("/api/loras/import", { path: path });
-      this.toast("success", `✓ LoRA импортирована: ${res.lora?.name || "OK"}`);
+      this.toast("success", t("lora.hub.imported", { name: res.lora?.name || "OK" }));
       if (input) input.value = "";
       await this.loadLoras();
     } catch (e) {
@@ -5887,12 +6109,12 @@ const App = {
     const repo = repoInput ? repoInput.value.trim() : "";
     const filename = fileSelect ? fileSelect.value : "";
     if (!repo) {
-      this.toast("warning", "Укажите HuggingFace repo (author/repo)");
+      this.toast("warning", t("lora.hub.repo_required"));
       return;
     }
 
     try {
-      this.toast("info", `Скачивание LoRA из ${repo}...`);
+      this.toast("info", t("lora.hub.downloading", { repo }));
       const res = await this.apiPost("/api/loras/download", {
         repo_id: repo,
         filename: filename || null,
@@ -5900,7 +6122,7 @@ const App = {
         family: familySelect?.value && familySelect.value !== "any" ? familySelect.value : null,
         trigger: triggerInput?.value.trim() || null,
       });
-      this.toast("success", `✓ LoRA успешно скачана: ${res.lora?.name}`);
+      this.toast("success", t("lora.hub.downloaded", { name: res.lora?.name }));
       if (renameInput) renameInput.value = "";
       if (triggerInput) triggerInput.value = "";
       const inspector = document.getElementById("lora-hf-inspector");
@@ -5913,12 +6135,12 @@ const App = {
 
   openLoraBinding(name) {
     if (this.state.account?.is_guest) {
-      this.toast("warning", "Гости не могут менять привязку LoRA");
+      this.toast("warning", t("lora.hub.guest_denied"));
       return;
     }
     const item = this.state.loraLibrary.find(l => l.name === name);
     if (!item) {
-      this.toast("error", `LoRA не найдена: ${name}`);
+      this.toast("error", t("lora.hub.not_found", { name }));
       return;
     }
     this.state.loraBinding = {
@@ -6029,7 +6251,7 @@ const App = {
     };
     try {
       await this.apiPatch(`/api/loras/${encodeURIComponent(bind.name)}/metadata`, payload);
-      this.toast("success", "✓ Привязка LoRA сохранена");
+      this.toast("success", t("lora.hub.binding_saved"));
       this.closeLoraBinding();
       await this.loadLoras();
     } catch (e) {
@@ -6041,7 +6263,7 @@ const App = {
     const bind = this.state.loraBinding;
     const modelId = this.currentLoraModelId();
     if (!bind || !modelId) {
-      this.toast("warning", "Сначала выберите модель");
+      this.toast("warning", t("lora.hub.select_model_first"));
       return;
     }
     bind.models.add(modelId);
@@ -6065,14 +6287,14 @@ const App = {
     const current = promptInput.value.trim();
     promptInput.value = current ? `${current}, ${trigger}` : trigger;
     promptInput.dispatchEvent(new Event("input", { bubbles: true }));
-    this.toast("info", `Триггер добавлен: ${trigger}`);
+    this.toast("info", t("lora.hub.trigger_added", { trigger }));
   },
 
   async deleteLora(name) {
     if (!confirm(`Удалить LoRA «${name}» с диска?`)) return;
     try {
       await fetch(`/api/loras/${encodeURIComponent(name)}`, { method: "DELETE" });
-      this.toast("info", `LoRA «${name}» удалена`);
+      this.toast("info", t("lora.hub.deleted", { name }));
       const idx = this.state.activeLoras.findIndex(l => l.name === name);
       if (idx >= 0) this.state.activeLoras.splice(idx, 1);
       await this.loadLoras();
@@ -6114,15 +6336,15 @@ const App = {
       }
       if (urlWrap) urlWrap.style.display = "block";
       if (urlInput) urlInput.value = status.share_url || status.public_url;
-      if (toggleBtn) toggleBtn.textContent = "Остановить туннель";
+      if (toggleBtn) toggleBtn.textContent = t("settings.share.stop");
       if (copyBtn) copyBtn.style.display = "inline-block";
     } else {
       if (badge) {
         badge.className = "state-badge missing";
-        badge.textContent = "Остановлен";
+        badge.textContent = t("settings.share.status_stopped");
       }
       if (urlWrap) urlWrap.style.display = "none";
-      if (toggleBtn) toggleBtn.textContent = "Запустить туннель";
+      if (toggleBtn) toggleBtn.textContent = t("settings.share.start");
       if (copyBtn) copyBtn.style.display = "none";
     }
   },
@@ -6133,13 +6355,13 @@ const App = {
     try {
       if (isRunning) {
         if (btn) btn.textContent = "Остановка...";
-        this.toast("info", "Остановка туннеля...");
+        this.toast("info", t("settings.share.stopping"));
         await this.apiPost("/api/share/stop", {});
-        this.toast("info", "Туннель остановлен");
+        this.toast("info", t("settings.share.stopped"));
         await this.loadShareStatus();
       } else {
         if (btn) btn.textContent = "Запуск Cloudflare...";
-        this.toast("info", "Запуск Cloudflare quick tunnel...");
+        this.toast("info", t("settings.share.starting"));
         await this.apiPost("/api/share/start", { provider: "cloudflared" });
 
         // Poll for public trycloudflare URL (takes ~1-3s to establish)
@@ -6148,14 +6370,14 @@ const App = {
           await this.loadShareStatus();
           const st = this.state.shareStatus;
           if (st && st.running && st.public_url) {
-            this.toast("success", "✓ Туннель активен: " + st.public_url);
+            this.toast("success", t("settings.share.active", { url: st.public_url }));
             return;
           }
           if (st && st.error) {
             throw new Error(st.error);
           }
         }
-        this.toast("info", "Туннель запущен, ссылка формируется...");
+        this.toast("info", t("settings.share.starting_wait"));
       }
     } catch (e) {
       this.toast("error", e.message);
@@ -6167,7 +6389,7 @@ const App = {
     const input = document.getElementById("setting-share-url");
     if (!input || !input.value) return;
     navigator.clipboard.writeText(input.value);
-    this.toast("success", "✓ Публичная ссылка скопирована в буфер обмена!");
+    this.toast("success", t("settings.share.copied"));
   },
 
   generateShareToken() {
@@ -6182,7 +6404,7 @@ const App = {
     const val = input ? input.value.trim() : "";
     try {
       await this.apiPost("/api/share/token", { token: val || null });
-      this.toast("success", "✓ Токен гостя сохранён");
+      this.toast("success", t("settings.share.token_saved"));
       await this.loadShareStatus();
     } catch (e) {
       this.toast("error", e.message);
@@ -6192,7 +6414,7 @@ const App = {
   async saveShareAutoStart(checked) {
     try {
       await this.apiPost("/api/settings", { share_auto_start: checked });
-      this.toast("info", `Автозапуск туннеля: ${checked ? "ВКЛ" : "ВЫКЛ"}`);
+      this.toast("info", t("settings.share.autostart_toast", { state: checked ? t("common.enabled") : t("common.disabled") }));
     } catch (e) {
       this.toast("error", e.message);
     }
@@ -6238,28 +6460,47 @@ const App = {
     if (envDesc && data.env) {
       const e = data.env;
       if (e.ready) {
-        envDesc.innerHTML = `<span style="color: #4ade80; font-weight: 600;">✓ Готово к работе:</span> Python ${e.python || '3.12'} · Torch ${e.torch || 'OK'} · CUDA ${e.cuda || 'OK'} (${e.device || 'GPU'}) · Diffusers ${e.diffusers || 'OK'}`;
+        envDesc.innerHTML = `<span style="color: #4ade80; font-weight: 600;">${escapeHtml(t("settings.engines.env_ready"))}</span> Python ${e.python || '3.12'} · Torch ${e.torch || 'OK'} · CUDA ${e.cuda || 'OK'} (${e.device || 'GPU'}) · Diffusers ${e.diffusers || 'OK'}`;
       } else if (e.python_path || e.venv_exists) {
-        envDesc.innerHTML = `<span style="color: #fbbf24; font-weight: 600;">⚠️ Настраивается:</span> ${e.error || e.summary || 'Окружение создано, ожидается установка PyTorch и Diffusers'}`;
+        envDesc.innerHTML = `<span style="color: #fbbf24; font-weight: 600;">${escapeHtml(t("settings.engines.env_setup"))}</span> ${escapeHtml(e.error || e.summary || t("settings.engines.env_setup_default"))}`;
       } else {
-        envDesc.innerHTML = `<span style="color: var(--text-dim);">ℹ️ ${e.summary || 'Изолированное окружение (envs/extras) пока не создано. Создаётся автоматически при установке Nunchaku или OrbitQuant.'}</span>`;
+        envDesc.innerHTML = `<span style="color: var(--text-dim);">ℹ️ ${escapeHtml(e.summary || t("settings.engines.env_absent"))}</span>`;
       }
     }
 
     if (nunchakuBadge) {
       if (data.nunchaku_ready) {
-        nunchakuBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.nunchaku || 'ready'})</span>`;
+        nunchakuBadge.innerHTML = `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (${escapeHtml(data.env?.nunchaku || 'ready')})</span>`;
       } else {
-        nunchakuBadge.innerHTML = '<span class="state-badge missing">Не установлен</span>';
+        nunchakuBadge.innerHTML = `<span class="state-badge missing">${escapeHtml(t("common.not_installed"))}</span>`;
       }
     }
 
     if (orbitBadge) {
       if (data.orbitquant_ready) {
-        orbitBadge.innerHTML = `<span class="state-badge installed">✓ Установлен (${data.env?.orbitquant || 'ready'})</span>`;
+        orbitBadge.innerHTML = `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (${escapeHtml(data.env?.orbitquant || 'ready')})</span>`;
       } else {
-        orbitBadge.innerHTML = '<span class="state-badge missing">Не установлен</span>';
+        orbitBadge.innerHTML = `<span class="state-badge missing">${escapeHtml(t("common.not_installed"))}</span>`;
       }
+    }
+  },
+
+  async uninstallEngine(engine, label) {
+    const extrasNote = (engine === "nunchaku" || engine === "orbitquant")
+      ? t("settings.engine.uninstall_confirm_extras")
+      : "";
+    const confirmed = confirm(t("settings.engine.uninstall_confirm", { label }) + extrasNote);
+    if (!confirmed) return;
+    try {
+      this.toast("info", t("settings.engine.uninstalling", { label }));
+      const res = await this.apiPost("/api/engine/uninstall", { engine });
+      this.toast("success", t("settings.engine.uninstalled", { label }));
+      await this.refreshConfig();
+      if (engine === "nunchaku" || engine === "orbitquant") {
+        await this.refreshExtrasStatus(false);
+      }
+    } catch (e) {
+      this.toast("error", t("settings.engine.uninstall_failed", { label }) + e.message);
     }
   },
 
@@ -6276,18 +6517,18 @@ const App = {
     }
   },
 
-  async installExtrasPackage(target) {
-    const btn = document.getElementById(`btn-install-${target}`);
+  async installExtrasPackage(target, btnEl = null, force = false) {
+    const btn = btnEl || document.getElementById(`btn-install-${target}`);
     const origText = btn ? btn.textContent : `Установить ${target}`;
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Установка...";
     }
-    const labelTarget = target === "runtime" ? "базового окружения" : target;
-    this.toast("info", `Запущена установка ${labelTarget}...`);
+    const labelTarget = target === "runtime" ? t("settings.engine.extras_create_env") : target;
+    this.toast("info", t("settings.engine.install_started", { label: labelTarget }));
 
     try {
-      const res = await this.apiPost("/api/extras/install", { component: target, target: target });
+      const res = await this.apiPost("/api/extras/install", { component: target, target: target, force: Boolean(force) });
       const jobId = res.job?.id || res.id;
       if (!jobId) throw new Error(res.error || "Не удалось получить ID задачи установки");
 
@@ -6304,7 +6545,7 @@ const App = {
               btn.disabled = false;
               btn.textContent = origText;
             }
-            this.toast("success", `✓ Установка ${labelTarget} завершена!`);
+            this.toast("success", t("settings.engine.install_done", { label: labelTarget }));
             await this.refreshExtrasStatus(false);
           } else if (state === "error" || state === "failed" || state === "cancelled") {
             clearInterval(poll);
@@ -6312,7 +6553,7 @@ const App = {
               btn.disabled = false;
               btn.textContent = origText;
             }
-            this.toast("error", `Ошибка установки ${target}: ${job.error || "failed"}`);
+            this.toast("error", t("settings.engine.install_failed", { label: target }) + (job.error || "failed"));
           }
         } catch (_) {
           clearInterval(poll);
@@ -6651,6 +6892,14 @@ function applyViewportTransform(vp, showHud = true) {
     vp.label.textContent = `🔍 ${Math.round(vp.zoom * 100)}%`;
   }
 
+  // Let mode-specific controllers refine the label and react to zoom/pan
+  // without coupling the shared viewport engine to Halftone/Manga internals.
+  try {
+    window.dispatchEvent(new CustomEvent("viewport-transform", {
+      detail: { mode: vp.mode, zoom: vp.zoom, panX: vp.panX, panY: vp.panY },
+    }));
+  } catch (_) {}
+
   const showScroll = vp.zoom > 1.03;
   if (vp.scrollX && vp.thumbX) {
     if (showScroll && bounds.maxPanX > 1) {
@@ -6746,6 +6995,13 @@ function resetViewportZoom(mode) {
   applyViewportTransform(vp, true);
 }
 
+function getViewportState(mode) {
+  initAllViewportZoomPan();
+  const vp = viewports[mode];
+  if (!vp) return null;
+  return { mode: vp.mode, zoom: vp.zoom, panX: vp.panX, panY: vp.panY };
+}
+
 
   Object.assign(App, {
     initAllViewportZoomPan,
@@ -6758,6 +7014,7 @@ function resetViewportZoom(mode) {
     stepViewportZoom,
     setViewportZoom,
     resetViewportZoom,
+    getViewportState,
   });
 })();
 
@@ -7250,6 +7507,12 @@ void main() {
 }`;
 
 const HT_ORIGINAL_LAYER_ID = "hl_original";
+const HT_PREVIEW_QUALITY_DEFAULT = "auto";
+const HT_PERFORMANCE_MAX_SIDE = 1920;
+const HT_ROI_MIN_ZOOM = 1.08;
+const HT_ROI_MARGIN = 0.14;
+const HT_GPU_AUTO_MIN_CAP = 2048;
+const HT_GPU_MASK_MAX_SIDE = 2048;
 
 function createHalftoneLayer(name, paramsObj = null, options = {}) {
   const opts = options || {};
@@ -7262,6 +7525,11 @@ function createHalftoneLayer(name, paramsObj = null, options = {}) {
     params: { ...(paramsObj || halftonePresets.manga) },
     maskCanvas: null,
     maskDirty: false,
+    _maskRevision: 0,
+    _maskDataUrl: null,
+    _maskDataUrlRevision: -1,
+    _maskDataUrlCanvas: null,
+    _glMaskRevision: -1,
     hasMask: Boolean(opts.hasMask),
     isBase: Boolean(opts.isBase),
     isOriginal: false,
@@ -7279,6 +7547,11 @@ function createHalftoneOriginalLayer() {
     params: { ...halftonePresets.manga },
     maskCanvas: null,
     maskDirty: false,
+    _maskRevision: 0,
+    _maskDataUrl: null,
+    _maskDataUrlRevision: -1,
+    _maskDataUrlCanvas: null,
+    _glMaskRevision: -1,
     hasMask: false,
     isBase: false,
     isOriginal: true,
@@ -7354,6 +7627,22 @@ function initHalftoneStudio(appRef) {
       sourceDataUrl: null,
       resultDataUrl: null,
       comparing: false,
+      sourceWidth: 0,
+      sourceHeight: 0,
+      previewQuality: HT_PREVIEW_QUALITY_DEFAULT,
+      roiDataUrl: null,
+      roiRect: null,
+      _roiSignature: null,
+      _roiAbort: null,
+      _roiSeq: 0,
+      _roiTimer: null,
+      _previewAbort: null,
+      _previewSeq: 0,
+      _editRevision: 0,
+      _liveSourcePreparedUrl: null,
+      _gpuCanvasMaxSide: 0,
+      _viewportRaf: null,
+      _layoutTimer: null,
       tool: "view",
       brushSize: 24,
       lassoMode: "replace",
@@ -7370,10 +7659,532 @@ function initHalftoneStudio(appRef) {
     };
   }
 
-  ensureHalftoneLayerStack(app.state.halftone);
+  const st = app.state.halftone;
+  st.previewQuality = st.previewQuality || HT_PREVIEW_QUALITY_DEFAULT;
+  st.roiRect = st.roiRect || null;
+  st._editRevision = Number(st._editRevision) || 0;
+  st._previewSeq = Number(st._previewSeq) || 0;
+  st._roiSeq = Number(st._roiSeq) || 0;
+
+  ensureHalftoneLayerStack(st);
   ensureWebGLCanvas(app);
+  initHalftoneViewportBridge(app);
+  initHalftoneResizeObserver(app);
   renderHalftoneLayersUI(app);
-  syncHalftoneControlsFromParams(app.state.halftone.params);
+  syncHalftoneControlsFromParams(st.params);
+  syncHalftonePreviewQualityButtons(st);
+  if (st.sourceUrl || st.sourceDataUrl) {
+    requestAnimationFrame(() => layoutHalftonePreview(app));
+  }
+}
+
+function syncHalftonePreviewQualityButtons(st) {
+  const quality = st?.previewQuality || HT_PREVIEW_QUALITY_DEFAULT;
+  ["auto", "performance", "maximum"].forEach((id) => {
+    const btn = document.getElementById(`ht-preview-quality-${id}`);
+    if (btn) btn.classList.toggle("active", quality === id);
+  });
+}
+
+function setHalftonePreviewQuality(quality, appRef) {
+  const app = appRef || window.App;
+  initHalftoneStudio(app);
+  const st = app?.state?.halftone;
+  if (!st) return;
+
+  const next = ["auto", "performance", "maximum"].includes(quality)
+    ? quality
+    : HT_PREVIEW_QUALITY_DEFAULT;
+  if (st.previewQuality === next) return;
+
+  st.previewQuality = next;
+  syncHalftonePreviewQualityButtons(st);
+
+  // Any cached ROI belongs to the previous calculation quality.
+  st.roiDataUrl = null;
+  st.roiRect = null;
+  st._roiSignature = null;
+  st._pendingRoiPlan = null;
+  hideHalftoneRoi(app, true);
+
+  const labels = {
+    auto: "Авто — превью под экран (DPR) + детальный ROI при зуме",
+    performance: "Performance — превью до 1920 px",
+    maximum: "Максимум — полное разрешение источника",
+  };
+  toast("info", `Качество превью: ${labels[next] || next}`);
+
+  if (st.qualityMode === "live") {
+    layoutHalftonePreview(app);
+    const changed = resizeHalftoneGpuCanvas(app);
+    if (changed || st.liveReady) renderHalftoneWebGL(app);
+  } else if (st.sourcePath || st.sourceDataUrl) {
+    runHalftonePreview(true, app);
+  }
+}
+
+function initHalftoneViewportBridge(appRef) {
+  if (initHalftoneViewportBridge._bound) return;
+  initHalftoneViewportBridge._bound = true;
+  window.addEventListener("viewport-transform", (event) => {
+    const detail = event?.detail;
+    if (!detail || detail.mode !== "halftone") return;
+    const app = window.App;
+    const st = app?.state?.halftone;
+    if (!st) return;
+
+    updateHalftoneImageRendering(app);
+    updateHalftoneZoomLabel(app);
+
+    if (st.qualityMode === "live") {
+      if (st._viewportRaf) return;
+      st._viewportRaf = requestAnimationFrame(() => {
+        st._viewportRaf = null;
+        const changed = resizeHalftoneGpuCanvas(app);
+        if (changed) renderHalftoneWebGL(app);
+      });
+    } else {
+      scheduleHalftoneRoiUpdate(app, false);
+    }
+  });
+}
+
+function initHalftoneResizeObserver(appRef) {
+  const app = appRef || window.App;
+  const area = document.getElementById("ht-dropzone");
+  if (!area || area._htResizeObserver) return;
+
+  const observer = new ResizeObserver(() => scheduleHalftoneLayout(app));
+  observer.observe(area);
+  area._htResizeObserver = observer;
+
+  if (!initHalftoneResizeObserver._windowBound) {
+    initHalftoneResizeObserver._windowBound = true;
+    window.addEventListener("resize", () => scheduleHalftoneLayout(window.App));
+  }
+}
+
+function scheduleHalftoneLayout(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !(st.sourceUrl || st.sourceDataUrl)) return;
+  const prevFitW = Number(st._fitWidth) || 0;
+  const prevFitH = Number(st._fitHeight) || 0;
+  layoutHalftonePreview(app);
+  const fitChanged =
+    Math.abs((Number(st._fitWidth) || 0) - prevFitW) > 0.5 ||
+    Math.abs((Number(st._fitHeight) || 0) - prevFitH) > 0.5;
+  // A ResizeObserver can fire because our own meta label changed the toolbar
+  // height. When the fitted image size is identical, re-rendering would only
+  // restart the same request and feed the loop.
+  if (!fitChanged && st.resultDataUrl) {
+    updateHalftoneRoiPosition(app);
+    return;
+  }
+  if (st._layoutTimer) clearTimeout(st._layoutTimer);
+  st._layoutTimer = setTimeout(() => {
+    st._layoutTimer = null;
+    if (!st.sourceUrl && !st.sourceDataUrl) return;
+    if (st.qualityMode === "full") {
+      runHalftonePreview(false, app);
+    } else {
+      const changed = resizeHalftoneGpuCanvas(app);
+      if (changed) renderHalftoneWebGL(app);
+    }
+  }, 160);
+}
+
+function ensureHalftoneSourceDimensions(st) {
+  if (!st) return Promise.resolve(null);
+  if (st.origWidth && st.origHeight) {
+    return Promise.resolve({ width: st.origWidth, height: st.origHeight });
+  }
+  if (st._sourceSizePromise) return st._sourceSizePromise;
+  const url = st.sourceUrl || st.sourceDataUrl;
+  if (!url) return Promise.resolve(null);
+
+  st._sourceSizePromise = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      st.origWidth = img.naturalWidth || img.width || 0;
+      st.origHeight = img.naturalHeight || img.height || 0;
+      st.liveWidth = st.origWidth;
+      st.liveHeight = st.origHeight;
+      resolve({ width: st.origWidth, height: st.origHeight });
+    };
+    img.onerror = () => reject(new Error("Failed to load source image"));
+    img.src = url;
+  });
+  return st._sourceSizePromise;
+}
+
+function getHalftoneViewportMetrics() {
+  const area = document.getElementById("ht-dropzone");
+  if (!area) return { width: 0, height: 0, dpr: window.devicePixelRatio || 1 };
+  const cs = getComputedStyle(area);
+  const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+  const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  return {
+    width: Math.max(0, area.clientWidth - padX),
+    height: Math.max(0, area.clientHeight - padY),
+    dpr: window.devicePixelRatio || 1,
+  };
+}
+
+function getHalftoneFitSize(st, metrics) {
+  const sourceW = Number(st?.origWidth) || Number(st?.liveWidth) || 0;
+  const sourceH = Number(st?.origHeight) || Number(st?.liveHeight) || 0;
+  if (!sourceW || !sourceH || !metrics?.width || !metrics?.height) {
+    return { width: 0, height: 0, sourceW, sourceH };
+  }
+  const aspect = sourceW / sourceH;
+  let width = metrics.width;
+  let height = width / aspect;
+  if (height > metrics.height) {
+    height = metrics.height;
+    width = height * aspect;
+  }
+  return { width: Math.max(1, width), height: Math.max(1, height), sourceW, sourceH };
+}
+
+function layoutHalftonePreview(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  const wrap = document.getElementById("ht-preview-wrap");
+  if (!wrap) return;
+  const metrics = getHalftoneViewportMetrics();
+  if (!metrics.width || !metrics.height) return;
+  const fit = getHalftoneFitSize(st, metrics);
+  if (!fit.width || !fit.height) return;
+
+  wrap.style.width = `${fit.width.toFixed(2)}px`;
+  wrap.style.height = `${fit.height.toFixed(2)}px`;
+  st._fitWidth = fit.width;
+  st._fitHeight = fit.height;
+  st._fitMetrics = { ...metrics };
+
+  updateHalftoneImageRendering(app);
+  updateHalftoneZoomLabel(app);
+  updateHalftoneRoiPosition(app);
+
+  if (st.qualityMode === "live" && st.liveReady) {
+    const changed = resizeHalftoneGpuCanvas(app);
+    if (changed) renderHalftoneWebGL(app);
+  }
+}
+
+function updateHalftoneImageRendering(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const img = document.getElementById("ht-preview-img");
+  if (!st || !img) return;
+  const sourceW = Number(st.origWidth) || Number(st.liveWidth) || 0;
+  const fitW = Number(st._fitWidth) || document.getElementById("ht-preview-wrap")?.offsetWidth || 0;
+  const vp = App.getViewportState?.("halftone");
+  const zoom = Number(vp?.zoom) || 1;
+  const actualScale = sourceW > 0 && fitW > 0 ? (fitW / sourceW) * zoom : 1;
+  st._actualPreviewScale = actualScale;
+  img.classList.toggle("ht-pixelated", actualScale >= 1.15);
+}
+
+function updateHalftoneZoomLabel(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const label = document.getElementById("ht-zoom-label");
+  if (!st || !label) return;
+  const sourceW = Number(st.origWidth) || Number(st.liveWidth) || 0;
+  const fitW = Number(st._fitWidth) || document.getElementById("ht-preview-wrap")?.offsetWidth || 0;
+  const vp = App.getViewportState?.("halftone");
+  const zoom = Number(vp?.zoom) || 1;
+  const actualScale = sourceW > 0 && fitW > 0 ? (fitW / sourceW) * zoom : zoom;
+  const pct = Math.max(1, Math.round(actualScale * 100));
+  label.textContent = `${pct}%`;
+  label.title = `${pct}% — реальный масштаб к источнику (клик — вписать в экран)`;
+}
+
+function getHalftoneCpuPreviewMaxSide(st) {
+  if (!st) return 0;
+  if (st.previewQuality === "maximum") return 0;
+  if (st.previewQuality === "performance") return HT_PERFORMANCE_MAX_SIDE;
+  const metrics = getHalftoneViewportMetrics();
+  const fit = getHalftoneFitSize(st, metrics);
+  if (!fit.width) return 1024;
+  return Math.max(256, Math.round(Math.max(fit.width, fit.height) * metrics.dpr));
+}
+
+function getHalftoneCpuRoiMaxSide(st) {
+  if (!st) return 0;
+  if (st.previewQuality === "maximum") return 0;
+  if (st.previewQuality === "performance") return HT_PERFORMANCE_MAX_SIDE;
+  const metrics = getHalftoneViewportMetrics();
+  return Math.max(256, Math.round(Math.max(metrics.width, metrics.height) * metrics.dpr * 1.35));
+}
+
+function getHalftoneGpuLimits(gl) {
+  if (!gl) return { maxSide: 2048, maxTexture: 2048, maxRender: 2048 };
+  const maxTexture = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 2048;
+  const maxRender = Number(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)) || maxTexture;
+  const dims = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+  const viewportMax = dims ? Math.max(Number(dims[0]) || 0, Number(dims[1]) || 0) : 0;
+  const maxSide = Math.max(64, Math.min(maxTexture, maxRender, viewportMax || maxRender));
+  return { maxSide, maxTexture, maxRender };
+}
+
+function resizeHalftoneGpuCanvas(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || !glContext || !st.liveReady) return false;
+  const canvas = document.getElementById("ht-live-canvas");
+  if (!canvas) return false;
+
+  const sourceW = Number(st.origWidth) || Number(st.liveWidth) || 0;
+  const sourceH = Number(st.origHeight) || Number(st.liveHeight) || 0;
+  if (!sourceW || !sourceH) return false;
+
+  const metrics = getHalftoneViewportMetrics();
+  const fit = getHalftoneFitSize(st, metrics);
+  if (!fit.width) return false;
+  const vp = App.getViewportState?.("halftone");
+  const zoom = Math.max(0.01, Number(vp?.zoom) || 1);
+  const dpr = metrics.dpr || 1;
+  const sourceMax = Math.max(sourceW, sourceH);
+  const limits = getHalftoneGpuLimits(glContext);
+
+  let desiredMax = sourceMax;
+  if (st.previewQuality === "performance") {
+    // "Up to 1920" is a cap, not an upscale: never render more pixels than
+    // the source can meaningfully provide.
+    desiredMax = Math.min(sourceMax, HT_PERFORMANCE_MAX_SIDE);
+  } else if (st.previewQuality !== "maximum") {
+    const displayMax = Math.max(fit.width, fit.height) * zoom * dpr;
+    const softSourceCap = Math.max(sourceMax, HT_GPU_AUTO_MIN_CAP);
+    desiredMax = Math.min(displayMax, softSourceCap);
+  }
+
+  let targetMax = Math.min(Math.max(64, desiredMax), limits.maxSide);
+  if (st.previewQuality !== "maximum") {
+    targetMax = Math.round(targetMax / 64) * 64;
+  }
+  targetMax = Math.max(64, Math.min(targetMax, limits.maxSide));
+
+  let width;
+  let height;
+  if (sourceW >= sourceH) {
+    width = targetMax;
+    height = Math.max(1, Math.round(targetMax * sourceH / sourceW));
+  } else {
+    height = targetMax;
+    width = Math.max(1, Math.round(targetMax * sourceW / sourceH));
+  }
+  width = Math.max(1, Math.min(width, limits.maxSide));
+  height = Math.max(1, Math.min(height, limits.maxSide));
+
+  if (canvas.width === width && canvas.height === height) return false;
+  canvas.width = width;
+  canvas.height = height;
+  st._gpuCanvasMaxSide = targetMax;
+  glContext.viewport(0, 0, width, height);
+  return true;
+}
+
+function getHalftoneRoiPlan(st) {
+  if (!st) return null;
+  // Maximum already renders the whole source at native resolution; a second
+  // ROI request would duplicate the same pixels.
+  if (st.previewQuality === "maximum") return null;
+  const sourceW = Number(st.origWidth) || Number(st.liveWidth) || 0;
+  const sourceH = Number(st.origHeight) || Number(st.liveHeight) || 0;
+  if (!sourceW || !sourceH) return null;
+
+  const wrap = document.getElementById("ht-preview-wrap");
+  const fitW = Number(st._fitWidth) || wrap?.offsetWidth || 0;
+  const fitH = Number(st._fitHeight) || wrap?.offsetHeight || 0;
+  if (!fitW || !fitH) return null;
+
+  const vp = App.getViewportState?.("halftone");
+  const zoom = Number(vp?.zoom) || 1;
+  if (zoom < HT_ROI_MIN_ZOOM) return null;
+
+  const metrics = getHalftoneViewportMetrics();
+  if (!metrics.width || !metrics.height) return null;
+  const panX = Number(vp?.panX) || 0;
+  const panY = Number(vp?.panY) || 0;
+
+  // Convert the visible viewport rectangle into un-transformed wrapper pixels.
+  let left = (-metrics.width * 0.5 - panX) / zoom;
+  let right = (metrics.width * 0.5 - panX) / zoom;
+  let top = (-metrics.height * 0.5 - panY) / zoom;
+  let bottom = (metrics.height * 0.5 - panY) / zoom;
+  left = Math.max(-fitW * 0.5, left);
+  right = Math.min(fitW * 0.5, right);
+  top = Math.max(-fitH * 0.5, top);
+  bottom = Math.min(fitH * 0.5, bottom);
+  if (right - left < 2 || bottom - top < 2) return null;
+
+  let x0 = (left + fitW * 0.5) / fitW * sourceW;
+  let x1 = (right + fitW * 0.5) / fitW * sourceW;
+  let y0 = (top + fitH * 0.5) / fitH * sourceH;
+  let y1 = (bottom + fitH * 0.5) / fitH * sourceH;
+
+  const marginX = (x1 - x0) * HT_ROI_MARGIN;
+  const marginY = (y1 - y0) * HT_ROI_MARGIN;
+  x0 -= marginX;
+  x1 += marginX;
+  y0 -= marginY;
+  y1 += marginY;
+
+  const x = Math.max(0, Math.floor(x0));
+  const y = Math.max(0, Math.floor(y0));
+  const width = Math.max(1, Math.min(sourceW - x, Math.ceil(x1) - x));
+  const height = Math.max(1, Math.min(sourceH - y, Math.ceil(y1) - y));
+
+  if (width >= sourceW * 0.97 && height >= sourceH * 0.97) return null;
+  return { x, y, width, height };
+}
+
+function updateHalftoneRoiPosition(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const img = document.getElementById("ht-roi-img");
+  if (!st || !img) return;
+
+  if (st.comparing || st.qualityMode !== "full" || !st.roiDataUrl || !st.roiRect) {
+    img.style.display = "none";
+    return;
+  }
+  const vp = App.getViewportState?.("halftone");
+  if ((Number(vp?.zoom) || 1) < HT_ROI_MIN_ZOOM) {
+    img.style.display = "none";
+    return;
+  }
+  const sourceW = Number(st.origWidth) || Number(st.liveWidth) || 0;
+  const sourceH = Number(st.origHeight) || Number(st.liveHeight) || 0;
+  const wrap = document.getElementById("ht-preview-wrap");
+  const fitW = Number(st._fitWidth) || wrap?.offsetWidth || 0;
+  const fitH = Number(st._fitHeight) || wrap?.offsetHeight || 0;
+  if (!sourceW || !sourceH || !fitW || !fitH) {
+    img.style.display = "none";
+    return;
+  }
+
+  const rect = st.roiRect;
+  img.style.left = `${(rect.x / sourceW) * fitW}px`;
+  img.style.top = `${(rect.y / sourceH) * fitH}px`;
+  img.style.right = "auto";
+  img.style.bottom = "auto";
+  img.style.width = `${(rect.width / sourceW) * fitW}px`;
+  img.style.height = `${(rect.height / sourceH) * fitH}px`;
+  img.style.display = "block";
+}
+
+function hideHalftoneRoi(appRef, abortRequest = false) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  const img = document.getElementById("ht-roi-img");
+  if (img) img.style.display = "none";
+  if (abortRequest && st?._roiAbort) {
+    try { st._roiAbort.abort(); } catch (_) {}
+    st._roiAbort = null;
+  }
+}
+
+function scheduleHalftoneRoiUpdate(appRef, immediate = false) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st) return;
+  if (st.qualityMode !== "full" || st.comparing || (!st.sourceUrl && !st.sourceDataUrl)) {
+    hideHalftoneRoi(app, true);
+    return;
+  }
+  const plan = getHalftoneRoiPlan(st);
+  if (!plan) {
+    hideHalftoneRoi(app, true);
+    return;
+  }
+
+  st._pendingRoiPlan = plan;
+  const signature = `${plan.x},${plan.y},${plan.width},${plan.height}|${st._editRevision || 0}|${st.previewQuality}`;
+  if (st.roiDataUrl && st.roiRect && st._roiSignature === signature) {
+    updateHalftoneRoiPosition(app);
+    return;
+  }
+
+  if (st._roiTimer) clearTimeout(st._roiTimer);
+  st._roiTimer = setTimeout(() => {
+    st._roiTimer = null;
+    updateHalftoneRoi(app);
+  }, immediate ? 0 : 110);
+}
+
+async function updateHalftoneRoi(appRef) {
+  const app = appRef || window.App;
+  const st = app?.state?.halftone;
+  if (!st || st.qualityMode !== "full" || st.comparing) return;
+  const plan = st._pendingRoiPlan;
+  if (!plan) return;
+
+  const signature = `${plan.x},${plan.y},${plan.width},${plan.height}|${st._editRevision || 0}|${st.previewQuality}`;
+  if (st.roiDataUrl && st.roiRect && st._roiSignature === signature) {
+    updateHalftoneRoiPosition(app);
+    return;
+  }
+
+  if (st._roiAbort) {
+    try { st._roiAbort.abort(); } catch (_) {}
+  }
+  const controller = new AbortController();
+  st._roiAbort = controller;
+  const seq = ++st._roiSeq;
+  const roi = { x: plan.x, y: plan.y, width: plan.width, height: plan.height };
+
+  try {
+    const res = await halftoneFetchJson("/api/halftone/process", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: buildHalftoneParamsPayload(st, true),
+      layers: buildHalftoneLayersPayload(st, true),
+      save: false,
+      preview_max_side: getHalftoneCpuRoiMaxSide(st),
+      roi,
+    }, controller.signal);
+    if (seq !== st._roiSeq || st.qualityMode !== "full" || st.comparing) return;
+    if (!res?.preview_data_url) return;
+
+    const rect = res.roi
+      ? { x: res.roi.x, y: res.roi.y, width: res.roi.width, height: res.roi.height }
+      : roi;
+    st.roiDataUrl = res.preview_data_url;
+    st.roiRect = rect;
+    st._roiSignature = `${rect.x},${rect.y},${rect.width},${rect.height}|${st._editRevision || 0}|${st.previewQuality}`;
+
+    const img = document.getElementById("ht-roi-img");
+    if (!img) return;
+    img.onload = () => {
+      if (seq === st._roiSeq) updateHalftoneRoiPosition(app);
+    };
+    img.src = res.preview_data_url;
+    if (img.complete) updateHalftoneRoiPosition(app);
+  } catch (e) {
+    if (e?.name !== "AbortError") console.warn("[halftone] ROI preview failed:", e);
+  } finally {
+    if (st._roiAbort === controller) st._roiAbort = null;
+  }
+}
+
+async function halftoneFetchJson(url, body, signal) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || res.statusText || `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
 function ensureWebGLCanvas(appRef) {
@@ -7475,7 +8286,14 @@ function setHalftoneQualityMode(mode, appRef) {
   const st = app.state.halftone;
   if (!st) return;
 
-  st.qualityMode = mode || "full";
+  const nextMode = mode === "live" ? "live" : "full";
+  const changed = st.qualityMode !== nextMode;
+  st.qualityMode = nextMode;
+  st.comparing = false;
+  const compareBtn = document.getElementById("ht-compare-btn");
+  if (compareBtn) compareBtn.classList.remove("active");
+  const compareBadge = document.getElementById("ht-compare-badge");
+  if (compareBadge) compareBadge.style.display = "none";
 
   const btnFull = document.getElementById("ht-quality-full");
   const btnLive = document.getElementById("ht-quality-live");
@@ -7488,13 +8306,23 @@ function setHalftoneQualityMode(mode, appRef) {
   if (st.qualityMode === "full") {
     if (canvas) canvas.style.display = "none";
     if (imgEl) imgEl.style.visibility = "visible";
-    runHalftonePreview(true, app);
+    hideHalftoneRoi(app, true);
+    if (st.sourcePath || st.sourceDataUrl) runHalftonePreview(true, app);
   } else {
     if (imgEl) imgEl.style.visibility = "hidden";
     if (canvas) canvas.style.display = "block";
-    renderHalftoneWebGL(app);
+    hideHalftoneRoi(app, true);
+    const srcUrl = st.sourceUrl || st.sourceDataUrl;
+    if (srcUrl) {
+      prepareHalftoneLiveSource(srcUrl, app);
+    } else if (st.liveReady) {
+      layoutHalftonePreview(app);
+      resizeHalftoneGpuCanvas(app);
+      renderHalftoneWebGL(app);
+    }
   }
-  if (app.toast) {
+
+  if (changed && app.toast) {
     app.toast("info", st.qualityMode === "live" ? "⚡ Включён движок WebGL2 GPU (Живой)" : "🎨 Включён движок Точный CPU (Canvas 2D)");
   }
 }
@@ -7505,43 +8333,68 @@ function prepareHalftoneLiveSource(srcUrl, appRef) {
   const st = app?.state?.halftone;
   if (!st) return;
 
+  if (st.liveReady && st._liveSourcePreparedUrl === srcUrl) {
+    layoutHalftonePreview(app);
+    const resized = resizeHalftoneGpuCanvas(app);
+    if (st.qualityMode === "live" && (resized || st.liveReady)) renderHalftoneWebGL(app);
+    return;
+  }
+
+  const token = (st._liveSourceToken || 0) + 1;
+  st._liveSourceToken = token;
+
   const img = new Image();
   img.crossOrigin = "anonymous";
   img.onload = () => {
+    if (token !== st._liveSourceToken) return;
     st.liveWidth = img.naturalWidth || img.width;
     st.liveHeight = img.naturalHeight || img.height;
+    if (!st.origWidth || !st.origHeight) {
+      st.origWidth = st.liveWidth;
+      st.origHeight = st.liveHeight;
+    }
     st.liveReady = true;
+    st._liveSourcePreparedUrl = srcUrl;
 
     const canvas = ensureWebGLCanvas(app);
-    if (canvas && glContext && glProgram) {
-      // Full natural resolution up to 4096px
-      const maxSide = 4096;
-      let w = st.liveWidth;
-      let h = st.liveHeight;
-      if (Math.max(w, h) > maxSide) {
-        const sc = maxSide / Math.max(w, h);
-        w = Math.round(w * sc);
-        h = Math.round(h * sc);
-      }
-      canvas.width = w;
-      canvas.height = h;
-      glContext.viewport(0, 0, canvas.width, canvas.height);
+    if (!canvas || !glContext || !glProgram) {
+      renderHalftoneWebGL(app);
+      return;
+    }
 
-      if (!glSourceTexture) {
-        glSourceTexture = glContext.createTexture();
-      }
-      glContext.activeTexture(glContext.TEXTURE0);
-      glContext.bindTexture(glContext.TEXTURE_2D, glSourceTexture);
-      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_WRAP_S, glContext.CLAMP_TO_EDGE);
-      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_WRAP_T, glContext.CLAMP_TO_EDGE);
-      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_MIN_FILTER, glContext.NEAREST);
-      glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_MAG_FILTER, glContext.NEAREST);
-      glContext.texImage2D(glContext.TEXTURE_2D, 0, glContext.RGBA, glContext.RGBA, glContext.UNSIGNED_BYTE, img);
-      syncHalftoneMaskCanvasSize(st.liveWidth, st.liveHeight, app);
+    const limits = getHalftoneGpuLimits(glContext);
+    const maxTexture = limits.maxTexture;
+    let uploadSource = img;
+    if (Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height) > maxTexture) {
+      const sc = maxTexture / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height);
+      const down = document.createElement("canvas");
+      down.width = Math.max(1, Math.round((img.naturalWidth || img.width) * sc));
+      down.height = Math.max(1, Math.round((img.naturalHeight || img.height) * sc));
+      down.getContext("2d").drawImage(img, 0, 0, down.width, down.height);
+      uploadSource = down;
+    }
 
-      if (st.qualityMode === "live") {
-        renderHalftoneWebGL(app);
-      }
+    // The source stays at native size (up to the hardware texture limit). The
+    // drawable canvas is sized separately by resizeHalftoneGpuCanvas().
+    if (!glSourceTexture) {
+      glSourceTexture = glContext.createTexture();
+    }
+    glContext.activeTexture(glContext.TEXTURE0);
+    glContext.bindTexture(glContext.TEXTURE_2D, glSourceTexture);
+    glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_WRAP_S, glContext.CLAMP_TO_EDGE);
+    glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_WRAP_T, glContext.CLAMP_TO_EDGE);
+    glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_MIN_FILTER, glContext.LINEAR_MIPMAP_LINEAR);
+    glContext.texParameteri(glContext.TEXTURE_2D, glContext.TEXTURE_MAG_FILTER, glContext.LINEAR);
+    glContext.pixelStorei(glContext.UNPACK_FLIP_Y_WEBGL, false);
+    glContext.texImage2D(glContext.TEXTURE_2D, 0, glContext.RGBA, glContext.RGBA, glContext.UNSIGNED_BYTE, uploadSource);
+    glContext.generateMipmap(glContext.TEXTURE_2D);
+    glContext.bindTexture(glContext.TEXTURE_2D, null);
+    syncHalftoneMaskCanvasSize(st.liveWidth, st.liveHeight, app);
+
+    layoutHalftonePreview(app);
+    const resized = resizeHalftoneGpuCanvas(app);
+    if (st.qualityMode === "live" && (resized || st.liveReady)) {
+      renderHalftoneWebGL(app);
     }
   };
   img.src = srcUrl;
@@ -7552,6 +8405,16 @@ function triggerHalftoneLiveUpdate(appRef) {
   const st = app?.state?.halftone;
   if (!st || (!st.sourcePath && !st.sourceDataUrl)) return;
 
+  // Every edit invalidates both the adaptive base and the high-detail ROI.
+  st._editRevision = (Number(st._editRevision) || 0) + 1;
+  st._previewSeq = (Number(st._previewSeq) || 0) + 1;
+  if (st._previewAbort) {
+    try { st._previewAbort.abort(); } catch (_) {}
+    st._previewAbort = null;
+  }
+  st._roiSignature = null;
+  hideHalftoneRoi(app, true);
+
   const canvas = document.getElementById("ht-live-canvas");
   const imgEl = document.getElementById("ht-preview-img");
 
@@ -7560,6 +8423,7 @@ function triggerHalftoneLiveUpdate(appRef) {
     if (imgEl) imgEl.style.visibility = "visible";
     if (st.debounceTimer) clearTimeout(st.debounceTimer);
     st.debounceTimer = setTimeout(() => {
+      st.debounceTimer = null;
       runHalftonePreview(false, app);
     }, 120);
     return;
@@ -7577,14 +8441,10 @@ function triggerHalftoneLiveUpdate(appRef) {
         renderHalftoneWebGL(app);
       });
     }
-
-    if (st.debounceTimer) clearTimeout(st.debounceTimer);
-    st.debounceTimer = setTimeout(() => {
-      syncHalftoneBackendSilent(app);
-    }, 500);
   } else {
     if (st.debounceTimer) clearTimeout(st.debounceTimer);
     st.debounceTimer = setTimeout(() => {
+      st.debounceTimer = null;
       runHalftonePreview(false, app);
     }, 120);
   }
@@ -7652,14 +8512,41 @@ function bindHalftoneLayerMask(gl, lyr) {
     lyr._glMaskTexture = gl.createTexture();
   }
   gl.bindTexture(gl.TEXTURE_2D, lyr._glMaskTexture);
-  if (lyr.maskDirty || lyr._glMaskCanvas !== lyr.maskCanvas) {
+  const maskRevision = Number(lyr._maskRevision) || 0;
+  if (lyr._glMaskRevision !== maskRevision || lyr._glMaskCanvas !== lyr.maskCanvas) {
+    // Painting a 4K mask should not upload 64 MB to the GPU on every frame.
+    // Downscale a cached preview copy once per revision; export still uses the
+    // full-resolution mask on the CPU backend.
+    let upload = lyr.maskCanvas;
+    const srcW = lyr.maskCanvas.width;
+    const srcH = lyr.maskCanvas.height;
+    const maxSide = Math.max(srcW, srcH);
+    if (maxSide > HT_GPU_MASK_MAX_SIDE) {
+      const sc = HT_GPU_MASK_MAX_SIDE / maxSide;
+      const w = Math.max(1, Math.round(srcW * sc));
+      const h = Math.max(1, Math.round(srcH * sc));
+      let scratch = lyr._glMaskUploadCanvas;
+      if (!scratch) {
+        scratch = document.createElement("canvas");
+        lyr._glMaskUploadCanvas = scratch;
+      }
+      if (scratch.width !== w || scratch.height !== h) {
+        scratch.width = w;
+        scratch.height = h;
+      }
+      const ctx = scratch.getContext("2d");
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(lyr.maskCanvas, 0, 0, w, h);
+      upload = scratch;
+    }
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, lyr.maskCanvas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, upload);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     lyr._glMaskCanvas = lyr.maskCanvas;
+    lyr._glMaskRevision = maskRevision;
     lyr.maskDirty = false;
   }
   gl.uniform1i(glUniformLocations.u_has_mask, 1);
@@ -7669,9 +8556,11 @@ function applyHalftoneLayerParams(gl, p, st, width, height) {
   const params = p || {};
   gl.uniform2f(glUniformLocations.u_resolution, width, height);
 
-  // Cell size scaled to natural dimensions
+  // Cell size scaled to natural dimensions. No lower clamp on the scale:
+  // the adaptive canvas can be smaller than the source, and the halftone grid
+  // must stay in source pixels so zooming never changes dot size.
   const scaleFactor = st.origWidth ? (width / Math.max(st.origWidth, 1)) : 1.0;
-  const cell = Math.max(2.5, (Number(params.cell_size) || 8) * Math.max(0.45, scaleFactor));
+  const cell = Math.max(1.0, (Number(params.cell_size) || 8) * scaleFactor);
   gl.uniform1f(glUniformLocations.u_cell_size, cell);
 
   // 13 Geometry shapes map
@@ -7744,7 +8633,9 @@ function applyHalftoneLayerParams(gl, p, st, width, height) {
   gl.uniform1f(glUniformLocations.u_gradAngle, gradAngleRad);
   gl.uniform1f(glUniformLocations.u_gradStrength, Number(params.grad_strength ?? 0.0));
 
-  gl.uniform1i(glUniformLocations.u_antialias, Number(params.antialias) || 2);
+  // AA4 is export-only; live GPU preview is capped at AA2.
+  const liveAa = Math.max(1, Math.min(2, Number(params.antialias) || 2));
+  gl.uniform1i(glUniformLocations.u_antialias, liveAa);
   const modeVal = params.mode === "manga" ? 1 : (params.mode === "color" ? 2 : 0);
   gl.uniform1i(glUniformLocations.u_mode, modeVal);
 }
@@ -7813,30 +8704,6 @@ function renderHalftoneWebGL(appRef) {
 }
 
 
-async function syncHalftoneBackendSilent(appRef) {
-  const app = appRef || window.App;
-  const st = app?.state?.halftone;
-  if (!st || (!st.sourcePath && !st.sourceDataUrl)) return;
-
-  try {
-    const layersPayload = buildHalftoneLayersPayload(st);
-    const payload = {
-      image_path: st.sourcePath,
-      image_data: st.sourceDataUrl,
-      params: st.params,
-      layers: layersPayload,
-      save: false,
-      preview_max_side: 0,
-    };
-    const res = await apiPost("/api/halftone/process", payload, 1);
-    if (res && res.preview_data_url) {
-      st.resultDataUrl = res.preview_data_url;
-      const imgEl = document.getElementById("ht-preview-img");
-      if (imgEl) imgEl.src = res.preview_data_url;
-    }
-  } catch (_) {}
-}
-
 async function runHalftonePreview(immediate = false, appRef) {
   const app = appRef || window.App;
   initHalftoneStudio(app);
@@ -7845,26 +8712,48 @@ async function runHalftonePreview(immediate = false, appRef) {
     if (immediate) toast("warning", "Сначала выберите или загрузите изображение");
     return;
   }
+  // The callback-based CPU preview belongs to the CPU engine. GPU mode uses
+  // the shader pipeline and must not overwrite its canvas with a CPU result.
+  if (st.qualityMode !== "full") return;
+
+  try {
+    await ensureHalftoneSourceDimensions(st);
+  } catch (_) {}
+
+  layoutHalftonePreview(app);
 
   const metaEl = document.getElementById("ht-meta-info");
   const loadOverlay = document.getElementById("ht-loading-overlay");
-  if (metaEl) metaEl.textContent = "⏳ Обработка...";
-  if (loadOverlay) loadOverlay.style.display = "flex";
+  const showOverlay = immediate || !st.resultDataUrl;
+  // Background refreshes keep the previous status text: toggling it can reflow
+  // the toolbar and feed the ResizeObserver layout loop.
+  if (metaEl && showOverlay) metaEl.textContent = "⏳ Обработка...";
+  if (loadOverlay && showOverlay) loadOverlay.style.display = "flex";
+
+  hideHalftoneRoi(app, true);
+
+  if (st._previewAbort) {
+    try { st._previewAbort.abort(); } catch (_) {}
+  }
+  const controller = new AbortController();
+  st._previewAbort = controller;
+  const seq = ++st._previewSeq;
 
   try {
-    const layersPayload = buildHalftoneLayersPayload(st);
-    const res = await apiPost("/api/halftone/process", {
+    const res = await halftoneFetchJson("/api/halftone/process", {
       image_path: st.sourcePath,
       image_data: st.sourceDataUrl,
-      params: st.params,
-      layers: layersPayload,
+      params: buildHalftoneParamsPayload(st, true),
+      layers: buildHalftoneLayersPayload(st, true),
       save: false,
-      preview_max_side: 0, // 100% Full-Res WYSIWYG
-    }, 1);
+      preview_max_side: getHalftoneCpuPreviewMaxSide(st),
+    }, controller.signal);
+    if (seq !== st._previewSeq || st.qualityMode !== "full") return;
 
     st.resultDataUrl = res.preview_data_url;
-    st.origWidth = res.orig_width || res.width;
-    st.origHeight = res.orig_height || res.height;
+    st.origWidth = res.orig_width || res.width || st.origWidth;
+    st.origHeight = res.orig_height || res.height || st.origHeight;
+    st._sourceSizePromise = null;
     syncHalftoneMaskCanvasSize(st.origWidth, st.origHeight, app);
 
     const emptyEl = document.getElementById("ht-empty-state");
@@ -7875,23 +8764,26 @@ async function runHalftonePreview(immediate = false, appRef) {
     if (emptyEl) emptyEl.style.display = "none";
     if (wrapEl) wrapEl.style.display = "inline-flex";
 
-    if (imgEl) {
-      imgEl.src = res.preview_data_url;
+    layoutHalftonePreview(app);
+
+    if (imgEl) imgEl.src = res.preview_data_url;
+    if (canvas) canvas.style.display = "none";
+    if (imgEl) imgEl.style.visibility = "visible";
+
+    if (res.elapsed_sec != null && metaEl) {
+      metaEl.textContent = `CPU ${Math.round(Number(res.elapsed_sec) * 1000)} ms · ${res.width}×${res.height} px`;
     }
 
-    if (st.qualityMode === "full") {
-      if (canvas) canvas.style.display = "none";
-      if (imgEl) imgEl.style.visibility = "visible";
-    } else {
-      if (imgEl) imgEl.style.visibility = "hidden";
-      if (canvas) canvas.style.display = "block";
-    }
-
-    prepareHalftoneLiveSource(st.sourceUrl || res.preview_data_url, app);
+    scheduleHalftoneRoiUpdate(app, false);
   } catch (e) {
+    if (e?.name === "AbortError") return;
     toast("error", "Halftone error: " + e.message);
   } finally {
-    if (loadOverlay) loadOverlay.style.display = "none";
+    const isActivePreview = st._previewAbort === controller;
+    if (isActivePreview) st._previewAbort = null;
+    // Hide the overlay when this preview finishes even if it was a silent
+    // refresh, otherwise an aborted "immediate" render can leave it stuck.
+    if (isActivePreview && loadOverlay) loadOverlay.style.display = "none";
   }
 }
 
@@ -7995,21 +8887,64 @@ function onHalftoneParamInput(key, rawVal, appRef) {
   triggerHalftoneLiveUpdate(app);
 }
 
-function buildHalftoneLayersPayload(st) {
+function clampHalftonePreviewAntialias(params) {
+  const aa = parseInt(params?.antialias, 10);
+  return { ...(params || {}), antialias: Math.max(1, Math.min(2, Number.isFinite(aa) ? aa : 2)) };
+}
+
+function buildHalftoneParamsPayload(st, forPreview = false) {
+  const params = { ...(st?.params || {}) };
+  return forPreview ? clampHalftonePreviewAntialias(params) : params;
+}
+
+function markHalftoneMaskDirty(lyr) {
+  if (!lyr) return;
+  lyr.maskDirty = true;
+  lyr._maskRevision = (Number(lyr._maskRevision) || 0) + 1;
+  lyr._maskDataUrl = null;
+  lyr._maskDataUrlRevision = -1;
+  lyr._maskDataUrlCanvas = null;
+}
+
+function getHalftoneMaskDataUrl(lyr) {
+  if (!lyr || !lyr.hasMask || !lyr.maskCanvas) return null;
+  const revision = Number(lyr._maskRevision) || 0;
+  if (
+    lyr._maskDataUrl &&
+    lyr._maskDataUrlRevision === revision &&
+    lyr._maskDataUrlCanvas === lyr.maskCanvas
+  ) {
+    return lyr._maskDataUrl;
+  }
+  try {
+    lyr._maskDataUrl = lyr.maskCanvas.toDataURL("image/png");
+    lyr._maskDataUrlRevision = revision;
+    lyr._maskDataUrlCanvas = lyr.maskCanvas;
+    return lyr._maskDataUrl;
+  } catch (e) {
+    console.warn("[halftone] mask serialization failed:", e);
+    return null;
+  }
+}
+
+function buildHalftoneLayersPayload(st, forPreview = false) {
   const layers = Array.isArray(st?.layers) ? st.layers : [];
   return layers
     .filter((l) => l && !l.isOriginal)
-    .map((l) => ({
-      id: l.id,
-      name: l.name,
-      visible: l.visible !== false,
-      opacity: typeof l.opacity === "number" ? Math.max(0, Math.min(1, l.opacity)) : 1.0,
-      blend_mode: l.blend_mode || "normal",
-      params: { ...(l.params || st.params || {}) },
-      hasMask: Boolean(l.hasMask && l.maskCanvas),
-      isBase: Boolean(l.isBase),
-      mask: (l.hasMask && l.maskCanvas) ? l.maskCanvas.toDataURL("image/png") : null,
-    }));
+    .map((l) => {
+      const rawParams = { ...(l.params || st.params || {}) };
+      return {
+        id: l.id,
+        name: l.name,
+        visible: l.visible !== false,
+        opacity: typeof l.opacity === "number" ? Math.max(0, Math.min(1, l.opacity)) : 1.0,
+        blend_mode: l.blend_mode || "normal",
+        params: forPreview ? clampHalftonePreviewAntialias(rawParams) : rawParams,
+        hasMask: Boolean(l.hasMask && l.maskCanvas),
+        isBase: Boolean(l.isBase),
+        mask: getHalftoneMaskDataUrl(l),
+      };
+    });
 }
 
 function getActiveHalftoneLayer(appRef) {
@@ -8158,7 +9093,7 @@ function addHalftoneLayer(appRef) {
   const newLyr = createHalftoneLayer(`Слой ${rasterCount + 1}`, { ...(st.params || {}) }, { hasMask: true });
   ensureLayerMaskCanvas(newLyr, false, app);
   newLyr.hasMask = true;
-  newLyr.maskDirty = true;
+  markHalftoneMaskDirty(newLyr);
   st.layers.push(newLyr);
   selectHalftoneLayer(newLyr.id, app);
 }
@@ -8191,7 +9126,7 @@ function duplicateHalftoneLayer(id, appRef) {
     ctx.clearRect(0, 0, dstCanvas.width, dstCanvas.height);
     ctx.drawImage(srcCanvas, 0, 0);
     copy.hasMask = true;
-    copy.maskDirty = true;
+    markHalftoneMaskDirty(copy);
   } else {
     copy.hasMask = false;
   }
@@ -8283,6 +9218,7 @@ function toggleHalftoneCompare(appRef) {
   if (btn) btn.classList.toggle("active", st.comparing);
 
   if (st.comparing) {
+    hideHalftoneRoi(app, true);
     if (canvas) canvas.style.display = "none";
     if (img) {
       img.style.visibility = "visible";
@@ -8292,6 +9228,7 @@ function toggleHalftoneCompare(appRef) {
   } else {
     if (badge) badge.style.display = "none";
     if (st.qualityMode === "live") {
+      hideHalftoneRoi(app, true);
       if (img) img.style.visibility = "hidden";
       if (canvas) canvas.style.display = "block";
       renderHalftoneWebGL(app);
@@ -8301,6 +9238,8 @@ function toggleHalftoneCompare(appRef) {
         img.style.visibility = "visible";
         img.src = st.resultDataUrl || st.sourceUrl;
       }
+      updateHalftoneRoiPosition(app);
+      scheduleHalftoneRoiUpdate(app, false);
     }
   }
 }
@@ -8310,6 +9249,7 @@ function revertHalftoneToOriginal(appRef) {
   const st = app?.state?.halftone;
   if (!st || !st.sourceUrl) return;
   st.comparing = true;
+  hideHalftoneRoi(app, true);
   const canvas = document.getElementById("ht-live-canvas");
   const img = document.getElementById("ht-preview-img");
   const badge = document.getElementById("ht-compare-badge");
@@ -8320,6 +9260,8 @@ function revertHalftoneToOriginal(appRef) {
     img.src = st.sourceUrl;
   }
   if (badge) badge.style.display = "block";
+  const btn = document.getElementById("ht-compare-btn");
+  if (btn) btn.classList.add("active");
 }
 
 async function saveHalftoneToGallery(appRef) {
@@ -8333,70 +9275,22 @@ async function saveHalftoneToGallery(appRef) {
   const loadOverlay = document.getElementById("ht-loading-overlay");
   if (loadOverlay) loadOverlay.style.display = "flex";
 
-  // If WebGL2 GPU Live mode is active, export directly from canvas for 100% WYSIWYG
-  if (st.qualityMode === "live") {
-    const canvas = document.getElementById("ht-live-canvas");
-    if (canvas && canvas.width > 0) {
-      try {
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            toast("error", "Ошибка создания PNG");
-            return;
-          }
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `halftone_gt_gpu_${Date.now()}.png`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-          toast("success", "PNG сохранён без рассинхрона (100% WYSIWYG WebGL2)");
-        }, "image/png");
-        if (loadOverlay) loadOverlay.style.display = "none";
-        return;
-      } catch (e) {
-        console.warn("Direct canvas export fallback:", e);
-      }
-    }
-  }
-
-  // If Full-Res CPU mode has rendered dataUrl, download immediately
-  if (st.qualityMode === "full" && st.resultDataUrl) {
-    try {
-      const a = document.createElement("a");
-      a.href = st.resultDataUrl;
-      a.download = `halftone_gt_cpu_${Date.now()}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      toast("success", "PNG сохранён (100% WYSIWYG CPU)");
-      if (loadOverlay) loadOverlay.style.display = "none";
-      return;
-    } catch (_) {}
-  }
-
-  // If WebGL2 GPU Live mode is active, pass the exact canvas dataUrl to gallery
-  let liveDataUrl = null;
-  if (st.qualityMode === "live") {
-    const canvas = document.getElementById("ht-live-canvas");
-    if (canvas && canvas.width > 0) {
-      try { liveDataUrl = canvas.toDataURL("image/png"); } catch (_) {}
-    }
-  }
-
   try {
-    const layersPayload = buildHalftoneLayersPayload(st);
+    // Always re-render from the original source at full resolution. The live
+    // canvas is a screen-sized preview and must never be used as export input.
     const res = await apiPost("/api/halftone/process", {
-      image_path: liveDataUrl ? null : st.sourcePath,
-      image_data: liveDataUrl || st.resultDataUrl || st.sourceDataUrl,
-      params: st.params,
-      layers: layersPayload,
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: buildHalftoneParamsPayload(st, false),
+      layers: buildHalftoneLayersPayload(st, false),
       save: true,
       preview_max_side: 0,
     });
     if (res.saved) {
       toast("success", `Сохранено в галерею: ${res.saved.name} ✓`);
+      if (app?.loadHistory) app.loadHistory();
+    } else {
+      toast("success", "Сохранено в галерею ✓");
     }
   } catch (e) {
     toast("error", "Ошибка сохранения: " + e.message);
@@ -8418,23 +9312,24 @@ async function downloadHalftonePng(appRef) {
   toast("info", "Рендеринг в полном разрешении для скачивания...");
 
   try {
-    const layersPayload = buildHalftoneLayersPayload(st);
     const res = await apiPost("/api/halftone/process", {
       image_path: st.sourcePath,
       image_data: st.sourceDataUrl,
-      params: st.params,
-      layers: layersPayload,
+      params: buildHalftoneParamsPayload(st, false),
+      layers: buildHalftoneLayersPayload(st, false),
       save: false,
       preview_max_side: 0,
     });
 
-    const src = res?.preview_data_url || st.resultDataUrl;
+    const src = res?.preview_data_url;
     if (!src) throw new Error("Не удалось получить результат рендеринга");
 
     const a = document.createElement("a");
     a.href = src;
     a.download = `halftone_${res.width || "full"}x${res.height || "res"}_${Date.now()}.png`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     toast("success", `Скачано в оригинальном разрешении ${res.width}×${res.height} px ✓`);
   } catch (e) {
     toast("error", "Ошибка скачивания: " + e.message);
@@ -8574,7 +9469,7 @@ function initHalftoneMaskEvents(appRef = null) {
     ctx.fill();
 
     lyr.hasMask = true;
-    lyr.maskDirty = true;
+    markHalftoneMaskDirty(lyr);
     renderMaskOverlayVisual(lyr, app);
     triggerHalftoneLiveUpdate(app);
   });
@@ -8591,7 +9486,7 @@ function initHalftoneMaskEvents(appRef = null) {
     ctx.lineTo(pos[0], pos[1]);
     ctx.stroke();
     lastPos = pos;
-    lyr.maskDirty = true;
+    markHalftoneMaskDirty(lyr);
     renderMaskOverlayVisual(lyr, app);
     triggerHalftoneLiveUpdate(app);
   });
@@ -8602,7 +9497,7 @@ function initHalftoneMaskEvents(appRef = null) {
     try { maskCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
     const lyr = getActiveHalftoneLayer(app);
     if (lyr) {
-      lyr.maskDirty = true;
+      markHalftoneMaskDirty(lyr);
       renderMaskOverlayVisual(lyr, app);
       triggerHalftoneLiveUpdate(app);
     }
@@ -8709,7 +9604,7 @@ function initHalftoneMaskEvents(appRef = null) {
           }
         }
         lyr.hasMask = true;
-        lyr.maskDirty = true;
+        markHalftoneMaskDirty(lyr);
         renderMaskOverlayVisual(lyr, app);
         triggerHalftoneLiveUpdate(app);
       }
@@ -8807,7 +9702,7 @@ function clearHalftoneMask(appRef = null) {
     ensureLayerMaskCanvas(lyr, false, app);
     lyr.hasMask = true;
   }
-  lyr.maskDirty = true;
+  markHalftoneMaskDirty(lyr);
 
   const maskCanvas = document.getElementById("ht-mask-canvas");
   if (maskCanvas) {
@@ -8836,7 +9731,7 @@ function invertHalftoneMaskSelection(appRef = null) {
       d[i + 3] = newA;
     }
     ctx.putImageData(imgData, 0, 0);
-    lyr.maskDirty = true;
+    markHalftoneMaskDirty(lyr);
     renderMaskOverlayVisual(lyr, app);
     triggerHalftoneLiveUpdate(app);
     toast("info", "Выделение маски инвертировано");
@@ -8899,13 +9794,68 @@ function onHalftoneFileUpload(input, appRef) {
   input.value = "";
 }
 
+function resolveHalftoneSourceRef(src) {
+  const raw = String(src || "").trim();
+  const fallback = { sourceUrl: raw, sourceDataUrl: raw, sourcePath: null };
+  if (!raw) return fallback;
+  try {
+    const parsed = new URL(raw, window.location.href);
+    if (parsed.origin === window.location.origin && parsed.pathname.startsWith("/outputs/")) {
+      // Gallery/history images live on disk. Passing the path avoids a huge
+      // base64 round-trip and lets export read the untouched original file.
+      return {
+        sourceUrl: parsed.pathname + parsed.search,
+        sourceDataUrl: null,
+        sourcePath: parsed.pathname,
+      };
+    }
+  } catch (_) {}
+  return fallback;
+}
+
 function loadHalftoneSource(dataUrl, filename = "image.png", appRef) {
   const app = appRef || window.App;
   initHalftoneStudio(app);
   const st = app.state.halftone;
-  st.sourceDataUrl = dataUrl;
-  st.sourceUrl = dataUrl;
-  st.sourcePath = null;
+  const sourceRef = resolveHalftoneSourceRef(dataUrl);
+  st.sourceDataUrl = sourceRef.sourceDataUrl;
+  st.sourceUrl = sourceRef.sourceUrl;
+  st.sourcePath = sourceRef.sourcePath;
+
+  // Reset everything tied to the previous source so stale previews, ROI
+  // rectangles and GPU textures can never leak into the new document.
+  st.resultDataUrl = null;
+  st.roiDataUrl = null;
+  st.roiRect = null;
+  st._roiSignature = null;
+  st._pendingRoiPlan = null;
+  st._sourceSizePromise = null;
+  st.origWidth = 0;
+  st.origHeight = 0;
+  st.liveWidth = 0;
+  st.liveHeight = 0;
+  st.liveReady = false;
+  st._liveSourcePreparedUrl = null;
+  st._liveSourceToken = (Number(st._liveSourceToken) || 0) + 1;
+  st._editRevision = 0;
+  st._previewSeq = (Number(st._previewSeq) || 0) + 1;
+  st._roiSeq = (Number(st._roiSeq) || 0) + 1;
+  st._gpuCanvasMaxSide = 0;
+  st.comparing = false;
+  if (st._previewAbort) {
+    try { st._previewAbort.abort(); } catch (_) {}
+    st._previewAbort = null;
+  }
+  if (st._roiTimer) {
+    clearTimeout(st._roiTimer);
+    st._roiTimer = null;
+  }
+  if (st._layoutTimer) {
+    clearTimeout(st._layoutTimer);
+    st._layoutTimer = null;
+  }
+  hideHalftoneRoi(app, true);
+
   resetHalftoneLayerStack(app);
 
   const emptyEl = document.getElementById("ht-empty-state");
@@ -8915,11 +9865,19 @@ function loadHalftoneSource(dataUrl, filename = "image.png", appRef) {
   if (wrapEl) wrapEl.style.display = "inline-flex";
   if (imgEl) imgEl.src = dataUrl;
 
+  const compareBtn = document.getElementById("ht-compare-btn");
+  if (compareBtn) compareBtn.classList.remove("active");
+  const badge = document.getElementById("ht-compare-badge");
+  if (badge) badge.style.display = "none";
+
   const metaEl = document.getElementById("ht-meta-info");
   if (metaEl) metaEl.textContent = `Файл: ${filename}`;
 
-  prepareHalftoneLiveSource(dataUrl, app);
-  runHalftonePreview(true, app);
+  if (st.qualityMode === "live") {
+    prepareHalftoneLiveSource(sourceRef.sourceUrl, app);
+  } else {
+    runHalftonePreview(true, app);
+  }
 }
 
 function onStudioDrop(e, target, appRef) {
@@ -8947,19 +9905,39 @@ function onStudioDrop(e, target, appRef) {
   reader.readAsDataURL(file);
 }
 
-function sendHalftoneToManga(appRef) {
+async function sendHalftoneToManga(appRef) {
   const app = appRef || window.App;
   const st = app?.state?.halftone;
-  const src = st?.resultDataUrl || st?.sourceDataUrl;
-  if (!src) {
+  if (!st || (!st.sourcePath && !st.sourceDataUrl)) {
     toast("warning", "Нет результата Halftone Studio для передачи в Manga Screen AI");
     return;
   }
-  app.switchTab("manga");
-  if (app.loadMangaSource) {
-    app.loadMangaSource(src, "halftone_export.png");
+
+  const loadOverlay = document.getElementById("ht-loading-overlay");
+  if (loadOverlay) loadOverlay.style.display = "flex";
+
+  try {
+    const res = await apiPost("/api/halftone/process", {
+      image_path: st.sourcePath,
+      image_data: st.sourceDataUrl,
+      params: buildHalftoneParamsPayload(st, false),
+      layers: buildHalftoneLayersPayload(st, false),
+      save: false,
+      preview_max_side: 0,
+    });
+    const src = res?.preview_data_url || st.resultDataUrl || st.sourceDataUrl;
+    if (!src) throw new Error("Не удалось получить результат рендеринга");
+
+    app.switchTab("manga");
+    if (app.loadMangaSource) {
+      app.loadMangaSource(src, "halftone_export.png");
+    }
+    toast("success", "Результат Halftone Studio передан в Manga Screen AI ✓");
+  } catch (e) {
+    toast("error", "Ошибка передачи в Manga AI: " + e.message);
+  } finally {
+    if (loadOverlay) loadOverlay.style.display = "none";
   }
-  toast("success", "Результат Halftone Studio передан в Manga Screen AI ✓");
 }
 
 let _galleryPickerTarget = "halftone";
@@ -9070,6 +10048,7 @@ function useCanvasImageInTool(tool, appRef) {
     createHalftoneLayer,
     initHalftoneStudio,
     setHalftoneQualityMode,
+    setHalftonePreviewQuality,
     prepareHalftoneLiveSource,
     triggerHalftoneLiveUpdate,
     renderHalftoneWebGL,
@@ -9437,8 +10416,8 @@ async function runMangaPipeline(immediate = false, appRef) {
   const loadText = document.getElementById("manga-loading-text");
 
   if (!isAi) {
-    if (metaEl) metaEl.textContent = "⏳ Обработка (CPU)...";
-    if (loadText) loadText.textContent = "Обработка манги (CPU)...";
+    if (metaEl) metaEl.textContent = t("manga.processing_meta");
+    if (loadText) loadText.textContent = t("manga.processing_cpu");
     if (loadOverlay) loadOverlay.style.display = "flex";
 
     try {
@@ -9467,7 +10446,7 @@ async function runMangaPipeline(immediate = false, appRef) {
         metaEl.textContent = `${res.width}×${res.height} px · ${(res.elapsed_sec * 1000).toFixed(0)} ms (CPU)`;
       }
     } catch (e) {
-      if (metaEl) metaEl.textContent = "Ошибка";
+      if (metaEl) metaEl.textContent = t("manga.error");
       toast("error", "Manga pipeline error: " + e.message);
     } finally {
       if (loadOverlay) loadOverlay.style.display = "none";
@@ -9771,19 +10750,21 @@ Object.assign(App, {
   },
 
   async scanLocalModelPath() {
-    const input = document.getElementById("custom-model-local-path");
+    const input = document.getElementById("custom-model-scan-path");
     const path = (input?.value || "").trim();
     if (!path) {
-      this.toast("warning", "Укажите путь к файлу или папке модели");
+      this.toast("warning", t("custom_model.scan_path_required"));
       return;
     }
     try {
-      this.toast("info", "Сканирование пути...");
+      this.toast("info", t("custom_model.scanning"));
       const res = await this.apiPost("/api/custom-models/sniff", { path });
       this.populateCustomFileSelects(res);
-      this.toast("success", `Обнаружено: ${res.detected_architecture || "модель"} ✓`);
+      this.toast("success", t("custom_model.scan_found", {
+        arch: res.detected_architecture || t("custom_model.scan_model"),
+      }));
     } catch (e) {
-      this.toast("error", "Ошибка сканирования: " + e.message);
+      this.toast("error", t("custom_model.scan_failed") + e.message);
     }
   },
 
@@ -9818,15 +10799,15 @@ Object.assign(App, {
     const repoInput = document.getElementById("lora-hf-repo-input");
     const repo = (repoInput?.value || "").trim();
     if (!repo) {
-      this.toast("warning", "Укажите репозиторий HuggingFace");
+      this.toast("warning", t("lora.hub.repo_required"));
       return;
     }
     try {
-      this.toast("info", "Проверка репозитория...");
+      this.toast("info", t("lora.hub.checking_repo"));
       const res = await this.apiGet(`/api/loras/hf-inspect?repo_id=${encodeURIComponent(repo)}`);
       const files = res.files || [];
       if (!files.length) {
-        this.toast("warning", "В репозитории не найдены файлы LoRA (.safetensors / .gguf)");
+        this.toast("warning", t("lora.hub.repo_files_missing"));
         return;
       }
 
@@ -9857,7 +10838,7 @@ Object.assign(App, {
       const renameInput = document.getElementById("lora-hf-rename-input");
       if (renameInput) renameInput.value = "";
 
-      this.toast("success", `Найдено файлов LoRA: ${files.length}`);
+      this.toast("success", t("lora.hub.files_found", { count: files.length }));
     } catch (e) {
       this.toast("error", e.message);
     }
@@ -9866,11 +10847,11 @@ Object.assign(App, {
   async searchHfLoras(query) {
     const q = (query || document.getElementById("lora-hf-search-input")?.value || "").trim();
     if (!q) {
-      this.toast("warning", "Введите запрос для поиска на HuggingFace");
+      this.toast("warning", t("lora.hub.search_required"));
       return;
     }
     try {
-      this.toast("info", "Поиск на HuggingFace...");
+      this.toast("info", t("lora.hub.searching"));
       const res = await this.apiGet(`/api/loras/hf-search?q=${encodeURIComponent(q)}`);
       this.renderHfLoraSearchResults(res.results || []);
     } catch (e) {
@@ -9920,9 +10901,9 @@ Object.assign(App, {
       if (this.state.settings) this.state.settings.hide_uninstalled_in_generator = checked;
       this.renderModels();
       this.updateDockPills();
-      this.toast("info", checked ? "Нескачанные модели скрыты из Дока" : "Отображаются все модели");
+      this.toast("info", checked ? t("settings.dock.hidden_toast") : t("settings.dock.shown_toast"));
     } catch (e) {
-      this.toast("error", e.message || "Ошибка сохранения настроек");
+      this.toast("error", e.message || t("settings.save_error"));
     }
   },
 

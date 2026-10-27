@@ -10,7 +10,7 @@
 
   <title>LazySD UI</title>
 
-  <link rel="stylesheet" href="/css/styles.css?v=20261025_02">
+  <link rel="stylesheet" href="/css/styles.css?v=20261027_03">
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EL%3C/text%3E%3C/svg%3E">
 
@@ -64,15 +64,15 @@
 
       <div class="menubar-right">
 
-        <button class="menubar-pill-btn" onclick="App.switchTab('templates')" title="Открыть менеджер шаблонов и пресетов">
+        <button class="menubar-pill-btn" onclick="App.switchTab('templates')" data-i18n-title="nav.templates_title" title="Открыть менеджер шаблонов и пресетов">
 
-          📋 <span>Шаблоны</span>
+          📋 <span data-i18n="nav.templates">Шаблоны</span>
 
         </button>
 
-        <button class="menubar-pill-btn active" id="inspector-toggle-btn" onclick="App.toggleInspector()" title="Показать / скрыть правый инспектор параметров (Topaz-style)">
+        <button class="menubar-pill-btn active" id="inspector-toggle-btn" onclick="App.toggleInspector()" data-i18n-title="inspector.toggle_title" title="Показать / скрыть правый инспектор параметров (Topaz-style)">
 
-          🎛️ <span>Инспектор</span>
+          🎛️ <span data-i18n="inspector.menu_label">Инспектор</span>
 
         </button>
 
@@ -250,7 +250,7 @@
 
               <div class="placeholder-text" data-i18n="preview.placeholder">Generated image will appear here</div>
 
-              <div style="margin-top: 8px; font-size: 11px; color: var(--text-dim);">Перетащите картинку сюда или нажмите <strong>➕ Img</strong> для режима ControlNet / Reference</div>
+              <div style="margin-top: 8px; font-size: 11px; color: var(--text-dim);"><span data-i18n="generate.drop_hint_prefix">Перетащите картинку сюда или нажмите</span> <strong>➕ Img</strong> <span data-i18n="generate.drop_hint_suffix">для режима ControlNet / Reference</span></div>
 
             </div>
 
@@ -362,13 +362,13 @@
 
               <div class="dock-popover-header">
 
-                <span>⚡ Модель, Квантизация и Энкодер</span>
+                <span data-i18n="generate.dock.model_header">⚡ Модель, Квантизация и Энкодер</span>
 
                 <div style="display: flex; gap: 6px;">
 
-                  <button type="button" class="dock-mini-btn accent" onclick="App.openCustomModelModal(); App.closeAllDockPopovers();">+ Добавить</button>
+                  <button type="button" class="dock-mini-btn accent" onclick="App.openCustomModelModal(); App.closeAllDockPopovers();" data-i18n="generate.dock.add">+ Добавить</button>
 
-                  <button type="button" class="dock-mini-btn" onclick="App.openModelPickerModal(); App.closeAllDockPopovers();">📦 Все модели</button>
+                  <button type="button" class="dock-mini-btn" onclick="App.openModelPickerModal(); App.closeAllDockPopovers();" data-i18n="generate.dock.all_models">📦 Все модели</button>
 
                 </div>
 
@@ -378,7 +378,7 @@
 
                 <div class="dock-field">
 
-                  <label>Модель генерации</label>
+                  <label data-i18n="generate.dock.model_label">Модель генерации</label>
 
                   <select id="dock-model-quick-select" onchange="App.onDockModelSelect(this.value)"></select>
 
@@ -386,7 +386,7 @@
 
                 <div class="dock-field">
 
-                  <label>Квантизация / Вариант</label>
+                  <label data-i18n="generate.dock.variant_label">Квантизация / Вариант</label>
 
                   <select id="dock-variant-quick-select" onchange="App.onDockVariantSelect(this.value)"></select>
 
@@ -397,6 +397,14 @@
                   <label>Text Encoder (--llm)</label>
 
                   <select id="dock-te-quick-select" onchange="App.onDockTeSelect(this.value)"></select>
+
+                </div>
+
+                <div class="dock-field" id="dock-vae-quick-field" style="display: none;">
+
+                  <label data-i18n="controls.vae">VAE</label>
+
+                  <select id="dock-vae-quick-select" onchange="App.onDockVaeSelect(this.value)"></select>
 
                 </div>
 
@@ -751,7 +759,7 @@
 
                   <button type="button" class="dock-pill" id="dock-presets-pill" onclick="App.toggleDockPopover('presets', event)" title="Шаблоны промптов и параметров">
 
-                    <span>📋</span> <span id="dock-presets-pill-text">Шаблоны</span> <span class="pill-caret">▾</span>
+                    <span>📋</span> <span id="dock-presets-pill-text" data-i18n="nav.templates">Шаблоны</span> <span class="pill-caret">▾</span>
 
                   </button>
 
@@ -761,7 +769,7 @@
 
                   <button type="button" class="dock-pill" id="dock-save-preset-btn" onclick="App.openSavePresetModal()" title="Сохранить текущие параметры и промпт как шаблон (Preset)" style="height: 38px; padding: 0 12px; font-weight: 600; white-space: nowrap; margin-right: 6px;">
 
-                    <span>💾</span> <span class="hide-mobile">В шаблон</span>
+                    <span>💾</span> <span class="hide-mobile" data-i18n="generate.save_to_template">В шаблон</span>
 
                   </button>
 
@@ -783,9 +791,9 @@
 
           <div class="inspector-header">
 
-            <span class="inspector-title">🎛️ Инспектор параметров</span>
+            <span class="inspector-title" data-i18n="inspector.title">🎛️ Инспектор параметров</span>
 
-            <button type="button" class="icon-btn" onclick="App.toggleInspector()" title="Свернуть инспектор" style="width: 24px; height: 24px; font-size: 12px;">✕</button>
+            <button type="button" class="icon-btn" onclick="App.toggleInspector()" data-i18n-title="inspector.collapse" title="Свернуть инспектор" style="width: 24px; height: 24px; font-size: 12px;">✕</button>
 
           </div>
 
@@ -793,13 +801,11 @@
 
             <!-- Accordion 1: Model & Backend -->
 
-            <details class="inspector-accordion" open>
+            <details class="inspector-accordion">
 
               <summary class="inspector-summary">
 
-                <span>📦 Model & Backend</span>
-
-                <span class="summary-chevron">▾</span>
+                <span data-i18n="inspector.section.model_backend">📦 Model &amp; Backend</span>
 
               </summary>
 
@@ -811,7 +817,7 @@
 
                     <label data-i18n="controls.model">Model</label>
 
-                    <a href="javascript:void(0)" onclick="App.openCustomModelModal()" style="font-size: 11px; color: var(--accent); text-decoration: none; font-weight: 600;">+ Добавить модель</a>
+                    <a href="javascript:void(0)" onclick="App.openCustomModelModal()" class="inspector-add-link" data-i18n="inspector.add_model">+ Добавить модель</a>
 
                   </div>
 
@@ -895,27 +901,21 @@
 
             <!-- Accordion 2: Reference / ControlNet -->
 
-            <details class="inspector-accordion" open>
+            <details class="inspector-accordion">
 
               <summary class="inspector-summary">
 
-                <span>🖼️ Reference / ControlNet</span>
-
-                <span class="summary-chevron">▾</span>
+                <span data-i18n="inspector.section.reference">🖼️ Reference / ControlNet</span>
 
               </summary>
 
               <div class="inspector-section-body">
 
-                <div id="img2img-mode-hint" style="font-size: 11px; color: var(--success, #22c55e); line-height: 1.4; margin-bottom: 8px;">
-
-                  ✓ Изоляция шагов активна: <code>--init-img</code> и <code>--strength</code> отключены. Модель выполнит 100% шагов с чистого листа.
-
-                </div>
+                <div id="img2img-mode-hint" class="inspector-hint" style="color: var(--success, #22c55e);" data-i18n="inspector.img2img_hint">✓ Изоляция шагов активна: --init-img и --strength отключены. Модель выполнит 100% шагов с чистого листа.</div>
 
                 <button type="button" class="history-action-btn" onclick="document.getElementById('dock-ref-file-input').click()" style="height: 32px; font-size: 11.5px;">
 
-                  ➕ Загрузить референс / лайн-арт
+                  <span data-i18n="inspector.upload_reference">➕ Загрузить референс / лайн-арт</span>
 
                 </button>
 
@@ -925,13 +925,11 @@
 
             <!-- Accordion: LoRA Stacking -->
 
-            <details class="inspector-accordion" open id="inspector-lora-accordion">
+            <details class="inspector-accordion" id="inspector-lora-accordion">
 
               <summary class="inspector-summary">
 
-                <span>🎨 LoRA Stacking (<span id="inspector-lora-count">0</span>)</span>
-
-                <span class="summary-chevron">▾</span>
+                <span data-i18n="inspector.section.lora_prefix">🎨 LoRA Stacking</span> (<span id="inspector-lora-count">0</span>)
 
               </summary>
 
@@ -939,13 +937,13 @@
 
                 <div class="lora-inspector-wrap" id="lora-inspector-list">
 
-                  <div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px 0;">Нет подключенных LoRA</div>
+                  <div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px 0;" data-i18n="inspector.no_loras">Нет подключенных LoRA</div>
 
                 </div>
 
                 <div style="display: flex; gap: 6px; margin-top: 8px;">
 
-                  <button type="button" class="dock-mini-btn accent" onclick="App.openLoraModal()" style="width: 100%; justify-content: center; height: 30px;">+ Управление LoRA</button>
+                  <button type="button" class="dock-mini-btn accent" onclick="App.openLoraModal()" style="width: 100%; justify-content: center; height: 30px;" data-i18n="inspector.manage_loras">+ Управление LoRA</button>
 
                 </div>
 
@@ -955,13 +953,11 @@
 
             <!-- Accordion 3: Generation Settings -->
 
-            <details class="inspector-accordion" open>
+            <details class="inspector-accordion">
 
               <summary class="inspector-summary">
 
-                <span>⚙️ Generation Settings</span>
-
-                <span class="summary-chevron">▾</span>
+                <span data-i18n="inspector.section.generation">⚙️ Generation Settings</span>
 
               </summary>
 
@@ -1075,7 +1071,7 @@
 
                     <input type="text" id="seed-input" value="random" data-i18n-placeholder="controls.seed.random" style="flex: 1;">
 
-                    <button type="button" class="icon-btn" onclick="document.getElementById('seed-input').value='random'; App.updateDockPills();" title="Сбросить на случайный сид">🎲</button>
+                    <button type="button" class="icon-btn" onclick="document.getElementById('seed-input').value='random'; App.updateDockPills();" data-i18n-title="inspector.seed_reset" title="Сбросить на случайный сид">🎲</button>
 
                   </div>
 
@@ -1091,9 +1087,7 @@
 
               <summary class="inspector-summary">
 
-                <span>📋 Шаблоны (Presets)</span>
-
-                <span class="summary-chevron">▾</span>
+                <span data-i18n="inspector.presets">📋 Шаблоны (Presets)</span>
 
               </summary>
 
@@ -1101,13 +1095,13 @@
 
                 <button type="button" class="history-action-btn" onclick="App.openSavePresetModal()" style="height: 32px; font-size: 11.5px; margin-bottom: 6px;">
 
-                  ⭐ Сохранить текущие настройки
+                  <span data-i18n="inspector.save_current">⭐ Сохранить текущие настройки</span>
 
                 </button>
 
                 <button type="button" class="history-action-btn" onclick="App.switchTab('templates')" style="height: 32px; font-size: 11.5px;">
 
-                  📂 Открыть все шаблоны
+                  <span data-i18n="inspector.open_all">📂 Открыть все шаблоны</span>
 
                 </button>
 
@@ -1133,7 +1127,7 @@
 
               <h2 data-i18n="nav.models" style="margin: 0;">Models &amp; LoRA Hub</h2>
 
-              <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-dim);">Установленные модели и LoRA-адаптеры · Управление весами, семейством и триггерами</p>
+              <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-dim);" data-i18n="models.tab.subtitle">Установленные модели и LoRA-адаптеры · Управление весами, семейством и триггерами</p>
 
             </div>
 
@@ -1141,13 +1135,13 @@
 
               <button type="button" class="filter-chip active" id="models-subtab-btn-models" onclick="App.switchModelsHubSubtab('models')" style="padding: 6px 14px; font-size: 12.5px; font-weight: 600;">
 
-                📦 Модели
+                <span data-i18n="models.tab.models">📦 Модели</span>
 
               </button>
 
               <button type="button" class="filter-chip" id="models-subtab-btn-loras" onclick="App.switchModelsHubSubtab('loras')" style="padding: 6px 14px; font-size: 12.5px; font-weight: 600;">
 
-                🧩 LoRA Хаб (<span id="models-hub-lora-count">0</span>)
+                <span data-i18n="models.tab.loras_label">🧩 LoRA Хаб</span> (<span id="models-hub-lora-count">0</span>)
 
               </button>
 
@@ -1159,13 +1153,13 @@
 
             <button type="button" class="generate-btn" id="models-hub-add-model-btn" style="height: 36px; padding: 0 18px; font-size: 12.5px;" onclick="App.openCustomModelModal('local')">
 
-              ➕ Добавить модель
+              <span data-i18n="models.tab.add_model">➕ Добавить модель</span>
 
             </button>
 
             <button type="button" class="generate-btn" id="models-hub-add-lora-btn" style="display: none; height: 36px; padding: 0 18px; font-size: 12.5px; background: #6366f1;" onclick="App.openLoraManageModal('local')">
 
-              ➕ Добавить / Скачать LoRA
+              <span data-i18n="models.tab.add_lora">➕ Добавить / Скачать LoRA</span>
 
             </button>
 
@@ -1183,17 +1177,17 @@
 
             <div class="model-picker-filters" id="models-tab-filters" style="display: flex; gap: 6px; flex-wrap: wrap;">
 
-              <button type="button" class="filter-chip active" data-tab-filter="all" onclick="App.setModelsTabFilter('all', this)">Все</button>
+              <button type="button" class="filter-chip active" data-tab-filter="all" onclick="App.setModelsTabFilter('all', this)" data-i18n="models.filter.all">Все</button>
 
-              <button type="button" class="filter-chip" data-tab-filter="installed" onclick="App.setModelsTabFilter('installed', this)">Установленные</button>
+              <button type="button" class="filter-chip" data-tab-filter="installed" onclick="App.setModelsTabFilter('installed', this)" data-i18n="models.filter.installed">Установленные</button>
 
               <button type="button" class="filter-chip" data-tab-filter="svdq" onclick="App.setModelsTabFilter('svdq', this)">⚡ SVDQ</button>
 
-              <button type="button" class="filter-chip" data-tab-filter="encoders" onclick="App.setModelsTabFilter('encoders', this)">🔤 Энкодеры</button>
+              <button type="button" class="filter-chip" data-tab-filter="encoders" onclick="App.setModelsTabFilter('encoders', this)" data-i18n="models.filter.encoders">🔤 Энкодеры</button>
 
-              <button type="button" class="filter-chip" data-tab-filter="custom" onclick="App.setModelsTabFilter('custom', this)">🎨 Свои</button>
+              <button type="button" class="filter-chip" data-tab-filter="custom" onclick="App.setModelsTabFilter('custom', this)" data-i18n="models.filter.custom">🎨 Свои</button>
 
-              <button type="button" class="filter-chip settings-host-only" id="models-tab-chip-hidden" data-tab-filter="hidden" onclick="App.setModelsTabFilter('hidden', this)">🙈 Скрытые</button>
+              <button type="button" class="filter-chip settings-host-only" id="models-tab-chip-hidden" data-tab-filter="hidden" onclick="App.setModelsTabFilter('hidden', this)" data-i18n="models.filter.hidden">🙈 Скрытые</button>
 
               <button type="button" class="filter-chip" data-tab-filter="sd_cpp" onclick="App.setModelsTabFilter('sd_cpp', this)">SD.CPP</button>
 
@@ -1209,13 +1203,13 @@
 
             <div style="display: flex; gap: 8px; align-items: center;">
 
-              <input type="text" id="models-tab-search" class="history-search-input" placeholder="Поиск по названию или движку..." oninput="App.onModelsTabSearch(this.value)" style="width: 250px; height: 32px; font-size: 12px;">
+              <input type="text" id="models-tab-search" class="history-search-input" placeholder="Поиск по названию или движку..." data-i18n-placeholder="models.tab.search_placeholder" oninput="App.onModelsTabSearch(this.value)" style="width: 250px; height: 32px; font-size: 12px;">
 
             </div>
 
           </div>
 
-          <details id="downloads-panel" class="downloads-panel" open>
+          <details id="downloads-panel" class="downloads-panel">
 
             <summary class="downloads-summary">
 
@@ -1223,7 +1217,7 @@
 
                 <svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
 
-                Загрузки
+                <span data-i18n="models.downloads.title">Загрузки</span>
 
                 <span id="downloads-active-count" class="downloads-count" hidden>0</span>
 
@@ -1231,7 +1225,7 @@
 
               <span class="downloads-summary-actions">
 
-                <button type="button" class="downloads-clear-btn" onclick="event.preventDefault(); event.stopPropagation(); App.clearFinishedDownloads()">Очистить завершённые</button>
+                <button type="button" class="downloads-clear-btn" onclick="event.preventDefault(); event.stopPropagation(); App.clearFinishedDownloads()" data-i18n="models.downloads.clear">Очистить завершённые</button>
 
                 <span class="downloads-chevron" aria-hidden="true">▾</span>
 
@@ -1241,7 +1235,7 @@
 
             <div id="downloads-list" class="downloads-list">
 
-              <div class="downloads-empty">Нет активных загрузок</div>
+              <div class="downloads-empty" data-i18n="models.downloads.empty">Нет активных загрузок</div>
 
             </div>
 
@@ -1259,17 +1253,17 @@
 
             <div style="font-size: 12px; color: var(--text-muted);">
 
-              Папка LoRA: <code style="color: var(--accent);">models/cache/loras/</code> (внутри models_dir) · Поддерживаются движки <strong>SD.CPP (GGUF)</strong>, <strong>SDNQ (Diffusers)</strong> и <strong>Nunchaku SVDQ (Flux.2 Klein)</strong>
+              <span data-i18n="lora.hub.folder_label">Папка LoRA:</span> <code style="color: var(--accent);">models/cache/loras/</code> <span data-i18n="lora.hub.folder_hint">(внутри models_dir) · Поддерживаются движки</span> <strong>SD.CPP (GGUF)</strong>, <strong>SDNQ (Diffusers)</strong> и <strong>Nunchaku SVDQ (Flux.2 Klein)</strong>
 
             </div>
 
             <div style="display: flex; gap: 8px; align-items: center;">
 
-              <input type="text" id="lora-hub-search" class="history-search-input" placeholder="Поиск LoRA по имени, семейству или триггеру..." oninput="App.renderLoraHubGrid()" style="width: 280px; height: 32px; font-size: 12px;">
+              <input type="text" id="lora-hub-search" class="history-search-input" placeholder="Поиск LoRA по имени, семейству или триггеру..." data-i18n-placeholder="lora.hub.search_placeholder" oninput="App.renderLoraHubGrid()" style="width: 280px; height: 32px; font-size: 12px;">
 
-              <button type="button" class="history-action-btn" style="width: auto; height: 32px; padding: 0 12px; font-size: 12px;" onclick="App.loadLoras()">🔄 Обновить</button>
+              <button type="button" class="history-action-btn" style="width: auto; height: 32px; padding: 0 12px; font-size: 12px;" onclick="App.loadLoras()" data-i18n="lora.hub.refresh">🔄 Обновить</button>
 
-              <button type="button" class="generate-btn" style="width: auto; height: 32px; padding: 0 14px; font-size: 12px; background: #6366f1;" onclick="App.openLoraManageModal('hf')">🤗 Скачать с HuggingFace</button>
+              <button type="button" class="generate-btn" style="width: auto; height: 32px; padding: 0 14px; font-size: 12px; background: #6366f1;" onclick="App.openLoraManageModal('hf')" data-i18n="lora.hub.download_hf">🤗 Скачать с HuggingFace</button>
 
             </div>
 
@@ -1289,9 +1283,9 @@
 
           <div>
 
-            <h2 style="margin: 0;">📋 Шаблоны промптов и настроек</h2>
+            <h2 style="margin: 0;" data-i18n="templates.page_title">📋 Шаблоны промптов и настроек</h2>
 
-            <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-dim);">Готовые пресеты для реставрации манги/скринтонов, аниме и фотореализма, а также ваши собственные шаблоны</p>
+            <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-dim);" data-i18n="templates.page_subtitle">Готовые пресеты для реставрации манги/скринтонов, аниме и фотореализма, а также ваши собственные шаблоны</p>
 
           </div>
 
@@ -1299,7 +1293,7 @@
 
             <button type="button" class="generate-btn" style="height: 36px; padding: 0 18px; font-size: 12.5px;" onclick="App.openSavePresetModal()">
 
-              ⭐ Сохранить текущие настройки как шаблон
+              <span data-i18n="templates.save_current">⭐ Сохранить текущие настройки как шаблон</span>
 
             </button>
 
@@ -1387,9 +1381,9 @@
 
           <div>
 
-            <div style="font-weight: 600; color: #e4e4e7; font-size: 14px;">Гостевой режим (<span id="guest-username-display">Гость</span>)</div>
+            <div style="font-weight: 600; color: #e4e4e7; font-size: 14px;"><span data-i18n="settings.guest.banner_title">Гостевой режим</span> (<span id="guest-username-display" data-i18n="settings.guest.default_name">Гость</span>)</div>
 
-            <div style="color: #a1a1aa; font-size: 12.5px; margin-top: 2px;">Системные пути, токены и управление движками защищены владельцем. Вам доступны генерация и просмотр своих работ.</div>
+            <div style="color: #a1a1aa; font-size: 12.5px; margin-top: 2px;" data-i18n="settings.guest.banner_desc">Системные пути, токены и управление движками защищены владельцем. Вам доступны генерация и просмотр своих работ.</div>
 
           </div>
 
@@ -1399,19 +1393,19 @@
 
         <div class="settings-section" id="section-guest-account" style="display: none;">
 
-          <h3>👤 Мой аккаунт гостя</h3>
+          <h3 data-i18n="settings.guest.my_account">👤 Мой аккаунт гостя</h3>
 
           <div class="setting-row">
 
             <div class="setting-label">
 
-              <strong>Имя пользователя (Логин)</strong><br>
+              <strong data-i18n="settings.guest.username">Имя пользователя (Логин)</strong><br>
 
-              <small style="color: var(--text-dim);">Ваш логин для подключения к мощностям хоста</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.guest.username_hint">Ваш логин для подключения к мощностям хоста</small>
 
             </div>
 
-            <div class="setting-value" id="guest-profile-username" style="font-weight: 600; color: #a78bfa;">Гость</div>
+            <div class="setting-value" id="guest-profile-username" style="font-weight: 600; color: #a78bfa;" data-i18n="settings.guest.default_name">Гость</div>
 
             <div></div>
 
@@ -1421,15 +1415,15 @@
 
             <div class="setting-label">
 
-              <strong>Смена постоянного пароля</strong><br>
+              <strong data-i18n="settings.guest.change_password">Смена постоянного пароля</strong><br>
 
-              <small style="color: var(--text-dim);">Установите свой собственный пароль вместо временного от хоста</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.guest.change_password_hint">Установите свой собственный пароль вместо временного от хоста</small>
 
             </div>
 
             <div class="setting-value" style="display: flex; gap: 8px;">
 
-              <input type="password" id="guest-input-new-password" placeholder="Новый пароль..." style="flex: 1; font-size: 12px; height: 32px;">
+              <input type="password" id="guest-input-new-password" data-i18n-placeholder="settings.guest.new_password_placeholder" placeholder="Новый пароль..." style="flex: 1; font-size: 12px; height: 32px;">
 
               <button type="button" class="icon-btn" onclick="App.toggleTokenVisibility('guest-input-new-password')" style="height: 32px; width: 32px;">👁️</button>
 
@@ -1437,7 +1431,7 @@
 
             <div class="setting-actions">
 
-              <button type="button" class="setting-btn" onclick="App.saveGuestPassword()" style="background: var(--accent); color: #fff;">Сохранить пароль</button>
+              <button type="button" class="setting-btn" onclick="App.saveGuestPassword()" style="background: var(--accent); color: #fff;" data-i18n="settings.guest.save_password">Сохранить пароль</button>
 
             </div>
 
@@ -1453,9 +1447,9 @@
 
           <!-- Subhead: Основные квантованные движки -->
 
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 6px 0 10px 0; font-weight: 600;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 6px 0 10px 0; font-weight: 600;" data-i18n="settings.engine.fast_subhead">
 
-            Быстрые квантованные движки (GGUF, SDNQ, SVDQuant, W4A4)
+            <span data-i18n="settings.engines.subhead_fast">Быстрые квантованные движки (GGUF, SDNQ, SVDQuant, W4A4)</span>
 
           </div>
 
@@ -1475,9 +1469,11 @@
 
             <div class="setting-actions" style="display: flex; gap: 6px; flex-wrap: wrap;">
 
-              <button class="setting-btn" onclick="downloadSDCpp(false)" data-i18n="settings.engine.download_sdcpp">Download (~320 MB)</button>
+              <button class="setting-btn" onclick="downloadSDCpp(false)" data-i18n="settings.engine.install">Установить</button>
 
-              <button class="setting-btn" onclick="downloadSDCpp(true)" title="Принудительно скачать свежий релиз stable-diffusion.cpp с GitHub">🔄 Обновить</button>
+              <button class="setting-btn" onclick="downloadSDCpp(true)" data-i18n="settings.engine.update" title="Скачать свежий релиз stable-diffusion.cpp с GitHub">Обновить</button>
+
+              <button class="setting-btn danger" onclick="App.uninstallEngine('sd_cpp', 'SD.CPP')" data-i18n="settings.engine.delete">Удалить</button>
 
             </div>
 
@@ -1499,9 +1495,11 @@
 
             <div class="setting-actions" style="display: flex; gap: 6px; flex-wrap: wrap;">
 
-              <button class="setting-btn" onclick="installSDNQ(false)" data-i18n="settings.engine.install_sdnq">Verify / Install</button>
+              <button class="setting-btn" onclick="installSDNQ(false)" data-i18n="settings.engine.install">Установить</button>
 
-              <button class="setting-btn" onclick="installSDNQ(true)" title="Обновить пакеты sdnq, diffusers и transformers">🔄 Обновить</button>
+              <button class="setting-btn" onclick="installSDNQ(true)" data-i18n="settings.engine.update" title="Обновить пакеты sdnq, diffusers и transformers">Обновить</button>
+
+              <button class="setting-btn danger" onclick="App.uninstallEngine('sdnq', 'SDNQ')" data-i18n="settings.engine.delete">Удалить</button>
 
             </div>
 
@@ -1515,19 +1513,23 @@
 
               <strong>Nunchaku SVDQ (vitoom-nunchaku)</strong><br>
 
-              <small style="color: var(--text-dim);">Быстрый 4-битный движок SVDQuant для Flux.2 Klein (поддержка Blackwell NVFP4 и LoRA). Автоматическая загрузка wheel из HuggingFace (tonera/vitoom-nunchaku).</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.nunchaku_desc">Быстрый 4-битный движок SVDQuant для Flux.2 Klein (поддержка Blackwell NVFP4 и LoRA). Автоматическая загрузка wheel из HuggingFace (tonera/vitoom-nunchaku).</small>
 
             </div>
 
             <div class="setting-value" id="setting-nunchaku-status">
 
-              <span class="state-badge missing">Не установлен</span>
+              <span class="state-badge missing" data-i18n="common.not_installed">Не установлен</span>
 
             </div>
 
             <div class="setting-actions" style="display: flex; gap: 6px; flex-wrap: wrap;">
 
-              <button class="setting-btn" id="btn-install-nunchaku" onclick="App.installExtrasPackage('nunchaku')">Установить / Обновить Nunchaku</button>
+              <button class="setting-btn" id="btn-install-nunchaku" onclick="App.installExtrasPackage('nunchaku', this, false)" data-i18n="settings.engine.install">Установить</button>
+
+              <button class="setting-btn" onclick="App.installExtrasPackage('nunchaku', this, true)" data-i18n="settings.engine.update">Обновить</button>
+
+              <button class="setting-btn danger" onclick="App.uninstallEngine('nunchaku', 'Nunchaku')" data-i18n="settings.engine.delete">Удалить</button>
 
             </div>
 
@@ -1541,19 +1543,23 @@
 
               <strong>OrbitQuant W4A4 (WaveCut)</strong><br>
 
-              <small style="color: var(--text-dim);">Движок ротационных квантованных кодеков OrbitQuant W4A4 для FLUX.2 Klein и Z-Image-Turbo.</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.orbitquant_desc">Движок ротационных квантованных кодеков OrbitQuant W4A4 для FLUX.2 Klein и Z-Image-Turbo.</small>
 
             </div>
 
             <div class="setting-value" id="setting-orbitquant-status">
 
-              <span class="state-badge missing">Не установлен</span>
+              <span class="state-badge missing" data-i18n="common.not_installed">Не установлен</span>
 
             </div>
 
             <div class="setting-actions" style="display: flex; gap: 6px; flex-wrap: wrap;">
 
-              <button class="setting-btn" id="btn-install-orbitquant" onclick="App.installExtrasPackage('orbitquant')">Установить / Обновить OrbitQuant</button>
+              <button class="setting-btn" id="btn-install-orbitquant" onclick="App.installExtrasPackage('orbitquant', this, false)" data-i18n="settings.engine.install">Установить</button>
+
+              <button class="setting-btn" onclick="App.installExtrasPackage('orbitquant', this, true)" data-i18n="settings.engine.update">Обновить</button>
+
+              <button class="setting-btn danger" onclick="App.uninstallEngine('orbitquant', 'OrbitQuant')" data-i18n="settings.engine.delete">Удалить</button>
 
             </div>
 
@@ -1561,9 +1567,9 @@
 
           <!-- Subhead: Экспериментальные движки (Legacy) -->
 
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 16px 0 10px 0; font-weight: 600;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 16px 0 10px 0; font-weight: 600;" data-i18n="settings.engine.legacy_subhead">
 
-            Экспериментальные движки QuantFunc (Legacy)
+            <span data-i18n="settings.engines.subhead_legacy">Экспериментальные движки QuantFunc (Legacy)</span>
 
           </div>
 
@@ -1577,7 +1583,7 @@
 
               <small style="color: var(--text-dim);" data-i18n="settings.engine.qf17_desc">Primary SVDQuant (Qwen-2.1)</small>
 
-              <small style="color: #f87171; display: block; margin-top: 4px;">⚠️ Не поддерживается пока (сырые веса с полосами)</small>
+              <small style="color: #f87171; display: block; margin-top: 4px;" data-i18n="settings.engine.unsupported">⚠️ Не поддерживается пока (сырые веса с полосами)</small>
 
             </div>
 
@@ -1603,7 +1609,7 @@
 
               <small style="color: var(--text-dim);" data-i18n="settings.engine.qf12_desc">Legacy NVFP4 (Klein FP4 / Z-Image)</small>
 
-              <small style="color: #f87171; display: block; margin-top: 4px;">⚠️ Не поддерживается пока (сырые веса с полосами)</small>
+              <small style="color: #f87171; display: block; margin-top: 4px;" data-i18n="settings.engine.unsupported">⚠️ Не поддерживается пока (сырые веса с полосами)</small>
 
             </div>
 
@@ -1625,9 +1631,9 @@
 
             <div class="setting-label">
 
-              <strong>Включить модели QuantFunc</strong><br>
+              <strong data-i18n="settings.engine.enable_quantfunc">Включить модели QuantFunc</strong><br>
 
-              <small style="color: var(--text-dim);">Разрешить выбор и скачивание моделей QuantFunc (содержат артефакты полос/сетки). По умолчанию отключено.</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.engine.enable_quantfunc_hint">Разрешить выбор и скачивание моделей QuantFunc (содержат артефакты полос/сетки). По умолчанию отключено.</small>
 
             </div>
 
@@ -1635,13 +1641,13 @@
 
               <input type="checkbox" id="setting-enable-quantfunc" onchange="App.toggleQuantFuncModels(this.checked)">
 
-              <label for="setting-enable-quantfunc" style="font-size: 12px; color: var(--text-muted); cursor: pointer;">Включить экспериментальные веса</label>
+              <label for="setting-enable-quantfunc" style="font-size: 12px; color: var(--text-muted); cursor: pointer;" data-i18n="settings.engine.enable_quantfunc_label">Включить экспериментальные веса</label>
 
             </div>
 
             <div class="setting-actions" id="setting-qf-toggle-badge">
 
-              <span class="state-badge missing">Отключено</span>
+              <span class="state-badge missing" data-i18n="common.disabled">Отключено</span>
 
             </div>
 
@@ -1691,9 +1697,9 @@
 
           <!-- Subhead: Среды выполнения и рантаймы -->
 
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 16px 0 10px 0; font-weight: 600;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 16px 0 10px 0; font-weight: 600;" data-i18n="settings.engine.runtime_subhead">
 
-            Изолированная среда Python и CUDA
+            <span data-i18n="settings.engines.subhead_runtime">Изолированная среда Python и CUDA</span>
 
           </div>
 
@@ -1703,13 +1709,13 @@
 
             <div class="setting-label">
 
-              <strong>Окружение Extras Python</strong><br>
+              <strong data-i18n="settings.engine.extras_title">Окружение Extras Python</strong><br>
 
               <small style="color: var(--text-dim); line-height: 1.4; display: block; margin-top: 4px;">
 
-                Изолированная среда Python в папке <code>envs/extras</code> для запуска движков Nunchaku (vitoom) и OrbitQuant без конфликтов с основным WebUI и SD.Next.<br>
+                <span data-i18n="settings.engine.extras_desc">Изолированная среда Python в папке envs/extras для запуска движков Nunchaku (vitoom) и OrbitQuant без конфликтов с основным WebUI и SD.Next.</span><br>
 
-                <em>Создаётся автоматически при первой установке Nunchaku или OrbitQuant.</em>
+                <em data-i18n="settings.engine.extras_created">Создаётся автоматически при первой установке Nunchaku или OrbitQuant.</em>
 
               </small>
 
@@ -1717,13 +1723,13 @@
 
             <div class="setting-value">
 
-              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted); line-height: 1.5; padding: 6px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border);">Проверка...</div>
+              <div id="setting-extras-env-desc" style="font-size: 11px; font-family: monospace; color: var(--text-muted); line-height: 1.5; padding: 6px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border);">—</div>
 
               <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
 
-                <input type="text" id="setting-extras-custom-py" placeholder="Кастомный путь к python.exe (опционально, напр. D:\...)" style="flex: 1; font-size: 11px; height: 30px;">
+                <input type="text" id="setting-extras-custom-py" data-i18n-placeholder="settings.engine.extras_custom_python" placeholder="Кастомный путь к python.exe (опционально, напр. D:\...)" style="flex: 1; font-size: 11px; height: 30px;">
 
-                <button type="button" class="history-action-btn" onclick="App.saveExtrasPythonPath()" style="height: 30px; font-size: 11px; width: auto;">Применить путь</button>
+                <button type="button" class="history-action-btn" onclick="App.saveExtrasPythonPath()" style="height: 30px; font-size: 11px; width: auto;" data-i18n="settings.engine.extras_apply_path">Применить путь</button>
 
               </div>
 
@@ -1731,9 +1737,9 @@
 
             <div class="setting-actions" style="display: flex; flex-direction: column; gap: 6px;">
 
-              <button class="setting-btn" onclick="App.refreshExtrasStatus(true)">🔍 Проверить</button>
+              <button class="setting-btn" onclick="App.refreshExtrasStatus(true)" data-i18n="settings.engine.extras_check">🔍 Проверить</button>
 
-              <button class="setting-btn" id="btn-install-runtime" onclick="App.installExtrasPackage('runtime')">⚡ Создать окружение</button>
+              <button class="setting-btn" id="btn-install-runtime" onclick="App.installExtrasPackage('runtime')" data-i18n="settings.engine.extras_create_env">⚡ Создать окружение</button>
 
             </div>
 
@@ -1753,13 +1759,13 @@
 
           <div class="setting-row">
 
-            <div class="setting-label">CUDA deps</div>
+            <div class="setting-label" data-i18n="settings.engine.cuda_deps">CUDA deps</div>
 
             <div class="setting-value" id="setting-cuda-status">—</div>
 
             <div class="setting-actions">
 
-              <button class="setting-btn" onclick="downloadCudaDeps()">Download</button>
+              <button class="setting-btn" onclick="downloadCudaDeps()" data-i18n="settings.engine.download">Download</button>
 
             </div>
 
@@ -1767,19 +1773,19 @@
 
           <div class="setting-row">
 
-            <div class="setting-label">CUDA bin path<br><small style="color: var(--text-dim);">if auto-detect fails</small></div>
+            <div class="setting-label"><span data-i18n="settings.engine.cuda_bin_path">CUDA bin path</span><br><small style="color: var(--text-dim);" data-i18n="settings.engine.cuda_bin_hint">if auto-detect fails</small></div>
 
             <div class="setting-value">
 
-              <input type="text" id="setting-cuda-bin-path" placeholder="auto-detect"
+              <input type="text" id="setting-cuda-bin-path" data-i18n-placeholder="settings.engine.cuda_auto_detect" placeholder="auto-detect"
 
                      style="width: 100%; font-family: monospace; font-size: 11px;"
 
-                     title="Path to folder with cublas64_13.dll etc. Example: G:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin\x64">
+                     data-i18n-title="settings.engine.cuda_bin_title" title="Path to folder with cublas64_13.dll etc. Example: G:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin\x64">
 
             </div>
 
-            <button class="icon-btn" onclick="saveCudaBinPath()" title="Save">✓</button>
+            <button class="icon-btn" onclick="saveCudaBinPath()" data-i18n-title="settings.engine.save_path" title="Save">✓</button>
 
           </div>
 
@@ -1791,7 +1797,7 @@
 
               <small style="color: var(--text-dim);">
 
-                Searched paths (auto-detect):
+                <span data-i18n="settings.engine.cuda_searched">Searched paths (auto-detect):</span>
 
                 <div id="setting-cuda-search-paths" style="margin-top: 4px; font-family: monospace; font-size: 10px;"></div>
 
@@ -1889,37 +1895,6 @@
 
         </div>
 
-        <div class="settings-section settings-host-only">
-
-          <h3 data-i18n="settings.section.vae">VAE (Variational Autoencoder)</h3>
-
-          <div class="setting-row">
-
-            <div class="setting-label">
-
-              <strong data-i18n="settings.vae.qwen_title">Qwen-Image-2.1 VAE</strong><br>
-
-              <small style="color: var(--text-dim);" data-i18n="settings.vae.qwen_desc">Choose VAE decoder. Texture-Fix eliminates 2px high-frequency checkerboard / carpet patterns.</small>
-
-            </div>
-
-            <div class="setting-value">
-
-              <select id="setting-qwen-vae" onchange="App.saveQwenVae(this.value)">
-
-                <option value="texture_fix" data-i18n="settings.vae.texture_fix">Texture-Fix VAE (madebyollin) [Recommended]</option>
-
-                <option value="official" data-i18n="settings.vae.official">Official VAE (Comfy-Org / Wan 2.1)</option>
-
-              </select>
-
-            </div>
-
-            <div></div>
-
-          </div>
-
-        </div>
 
         <div class="settings-section settings-host-only">
 
@@ -1929,11 +1904,15 @@
 
             <div class="setting-label" data-i18n="settings.models_dir">Models directory</div>
 
-            <div class="setting-value" id="setting-models-dir">—</div>
+            <div class="setting-value">
+
+              <input type="text" id="setting-models-dir" class="setting-path-input" data-i18n-placeholder="settings.paths.models_placeholder" placeholder="например: G:\AI\models">
+
+            </div>
 
             <div>
 
-              <button type="button" class="history-action-btn" onclick="openSystemFolder('models')" title="Открыть папку со скачанными моделями в проводнике Windows" style="height: 28px; padding: 0 12px; font-size: 11.5px; width: auto;">📂 Открыть</button>
+              <button type="button" class="history-action-btn" onclick="openSystemFolder('models')" data-i18n-title="settings.paths.open_models_title" title="Открыть папку со скачанными моделями в проводнике Windows" style="height: 30px; padding: 0 12px; font-size: 11.5px; width: auto;"><span data-i18n="settings.paths.open">📂 Открыть</span></button>
 
             </div>
 
@@ -1943,13 +1922,33 @@
 
             <div class="setting-label" data-i18n="settings.output_dir">Output directory</div>
 
-            <div class="setting-value" id="setting-output-dir">—</div>
+            <div class="setting-value">
+
+              <input type="text" id="setting-output-dir" class="setting-path-input" data-i18n-placeholder="settings.paths.outputs_placeholder" placeholder="например: G:\AI\outputs">
+
+            </div>
 
             <div>
 
-              <button type="button" class="history-action-btn" onclick="openSystemFolder('outputs')" title="Открыть папку со скачанными / сгенерированными изображениями в проводнике Windows" style="height: 28px; padding: 0 12px; font-size: 11.5px; width: auto;">📂 Открыть</button>
+              <button type="button" class="history-action-btn" onclick="openSystemFolder('outputs')" data-i18n-title="settings.paths.open_outputs_title" title="Открыть папку со сгенерированными изображениями в проводнике Windows" style="height: 30px; padding: 0 12px; font-size: 11.5px; width: auto;"><span data-i18n="settings.paths.open">📂 Открыть</span></button>
 
             </div>
+
+          </div>
+
+          <div class="setting-row">
+
+            <div></div>
+
+            <div class="setting-value" style="flex-direction: column; align-items: flex-start; gap: 6px;">
+
+              <button type="button" class="setting-btn" onclick="App.savePaths()" style="background: var(--accent); color: #fff;" data-i18n="settings.paths.save">Сохранить пути</button>
+
+              <small style="color: var(--text-dim); font-size: 11px; line-height: 1.4;" data-i18n="settings.paths.restart_hint">Новые загрузки и генерации используют эти пути. Перезапустите WebUI, чтобы перемонтировать /outputs и обновить кэш моделей.</small>
+
+            </div>
+
+            <div></div>
 
           </div>
 
@@ -1987,7 +1986,7 @@
 
               <strong data-i18n="settings.hf_token">HuggingFace token</strong><br>
 
-              <small style="color: var(--text-dim);">Токен доступа (Read) для приватных моделей и сборки Nunchaku</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.network.hf_token_hint">Токен доступа (Read) для приватных моделей и сборки Nunchaku</small>
 
             </div>
 
@@ -1995,15 +1994,15 @@
 
               <input type="password" id="setting-hf-token" placeholder="hf_..." style="flex: 1; font-family: monospace; font-size: 11px;">
 
-              <button type="button" class="icon-btn" onclick="App.toggleTokenVisibility('setting-hf-token')" title="Показать / скрыть токен" style="height: 28px; width: 28px;">👁️</button>
+              <button type="button" class="icon-btn" onclick="App.toggleTokenVisibility('setting-hf-token')" data-i18n-title="settings.network.toggle_token" title="Показать / скрыть токен" style="height: 28px; width: 28px;">👁️</button>
 
             </div>
 
             <div class="setting-actions" style="display: flex; gap: 6px;">
 
-              <button class="setting-btn" onclick="App.saveHfToken()">Сохранить</button>
+              <button class="setting-btn" onclick="App.saveHfToken()" data-i18n="settings.network.save">Сохранить</button>
 
-              <button class="setting-btn" onclick="App.testHfToken()" id="btn-test-hf-token">🔍 Проверить</button>
+              <button class="setting-btn" onclick="App.testHfToken()" id="btn-test-hf-token" data-i18n="settings.network.test">🔍 Проверить</button>
 
             </div>
 
@@ -2139,15 +2138,15 @@
 
         <div class="settings-section" id="section-interface-settings">
 
-          <h3>Интерфейс и Коробка (Gemini Dock)</h3>
+          <h3 data-i18n="settings.dock.title">Интерфейс и Коробка (Gemini Dock)</h3>
 
           <div class="setting-row">
 
             <div class="setting-label">
 
-              <strong>Скрывать нескачанные модели в Генераторе</strong><br>
+              <strong data-i18n="settings.dock.hide_uninstalled">Скрывать нескачанные модели в Генераторе</strong><br>
 
-              <small style="color: var(--text-dim);">Показывать в списке моделей генератора только установленные на диске. Все доступные модели можно просматривать и скачивать в Model Hub.</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.dock.hide_uninstalled_hint">Показывать в списке моделей генератора только установленные на диске. Все доступные модели можно просматривать и скачивать в Model Hub.</small>
 
             </div>
 
@@ -2155,7 +2154,7 @@
 
               <input type="checkbox" id="setting-hide-uninstalled-gen" onchange="App.onSettingHideUninstalledChange(this.checked)" style="width: 18px; height: 18px; cursor: pointer;">
 
-              <label for="setting-hide-uninstalled-gen" style="font-size: 13px; cursor: pointer; color: var(--text-main);">Скрывать нескачанные</label>
+              <label for="setting-hide-uninstalled-gen" style="font-size: 13px; cursor: pointer; color: var(--text-main);" data-i18n="settings.dock.hide_uninstalled_label">Скрывать нескачанные</label>
 
             </div>
 
@@ -2167,9 +2166,9 @@
 
             <div class="setting-label">
 
-              <strong>Позиция коробки</strong><br>
+              <strong data-i18n="settings.dock.position">Позиция коробки</strong><br>
 
-              <small style="color: var(--text-dim);">Расположение плавающего центра управления на холсте</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.dock.position_hint">Расположение плавающего центра управления на холсте</small>
 
             </div>
 
@@ -2177,13 +2176,13 @@
 
               <select id="setting-dock-pos" onchange="App.setDockPosition(this.value)">
 
-                <option value="center">Плавающий по центру (Gemini)</option>
+                <option value="center" data-i18n="settings.dock.position_center">Плавающий по центру (Gemini)</option>
 
-                <option value="left">Плавающий слева</option>
+                <option value="left" data-i18n="settings.dock.position_left">Плавающий слева</option>
 
-                <option value="right">Плавающий справа</option>
+                <option value="right" data-i18n="settings.dock.position_right">Плавающий справа</option>
 
-                <option value="bottom">Прикреплённая нижняя панель</option>
+                <option value="bottom" data-i18n="settings.dock.position_bottom">Прикреплённая нижняя панель</option>
 
               </select>
 
@@ -2197,17 +2196,17 @@
 
             <div class="setting-label">
 
-              <strong>Свободное перемещение коробки (Drag)</strong><br>
+              <strong data-i18n="settings.dock.drag">Свободное перемещение коробки (Drag)</strong><br>
 
-              <small style="color: var(--text-dim);">Включите и тяните док за ручку ⋮⋮. Перетаскивание больше не конфликтует с полями и поповерами; смена позиции автоматически выключает drag.</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.dock.drag_hint">Включите и тяните док за ручку ⋮⋮. Перетаскивание больше не конфликтует с полями и поповерами; смена позиции автоматически выключает drag.</small>
 
             </div>
 
             <div class="setting-value" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
 
-              <button type="button" class="setting-btn" id="setting-dock-drag-toggle" onclick="App.toggleDockDrag()">Включить / выключить</button>
+              <button type="button" class="setting-btn" id="setting-dock-drag-toggle" onclick="App.toggleDockDrag()" data-i18n="settings.dock.drag_toggle">Включить / выключить</button>
 
-              <button type="button" class="setting-btn" onclick="App.resetDockPosition()">Сбросить док</button>
+              <button type="button" class="setting-btn" onclick="App.resetDockPosition()" data-i18n="settings.dock.reset">Сбросить док</button>
 
             </div>
 
@@ -2219,9 +2218,9 @@
 
             <div class="setting-label">
 
-              <strong>Непрозрачность коробки (Opacity)</strong><br>
+              <strong data-i18n="settings.dock.opacity">Непрозрачность коробки (Opacity)</strong><br>
 
-              <small style="color: var(--text-dim);">Прозрачность фона плавающего блока</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.dock.opacity_hint">Прозрачность фона плавающего блока</small>
 
             </div>
 
@@ -2241,9 +2240,9 @@
 
             <div class="setting-label">
 
-              <strong>Размытие фона (Backdrop blur)</strong><br>
+              <strong data-i18n="settings.dock.blur">Размытие фона (Backdrop blur)</strong><br>
 
-              <small style="color: var(--text-dim);">Матовое стекло под коробкой (эффект стекла)</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.dock.blur_hint">Матовое стекло под коробкой (эффект стекла)</small>
 
             </div>
 
@@ -2265,15 +2264,15 @@
 
         <div class="settings-section settings-host-only" id="section-presence-monitor">
 
-          <h3>Подключённые пользователи</h3>
+          <h3 data-i18n="settings.presence.title">Подключённые пользователи</h3>
 
           <div class="setting-row">
 
             <div class="setting-label">
 
-              <strong>Мониторинг подключений</strong><br>
+              <strong data-i18n="settings.presence.monitor">Мониторинг подключений</strong><br>
 
-              <small style="color: var(--text-dim);">Считать уникальные активные аккаунты и показывать индикатор в шапке. Гостям отображается только общее число; список пользователей виден хосту.</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.presence.monitor_hint">Считать уникальные активные аккаунты и показывать индикатор в шапке. Гостям отображается только общее число; список пользователей виден хосту.</small>
 
             </div>
 
@@ -2281,7 +2280,7 @@
 
               <input type="checkbox" id="setting-monitor-connections" onchange="App.onSettingMonitorConnectionsChange(this.checked)" style="width: 18px; height: 18px; cursor: pointer;">
 
-              <label for="setting-monitor-connections" style="font-size: 13px; cursor: pointer; color: var(--text-main);">Включить мониторинг</label>
+              <label for="setting-monitor-connections" style="font-size: 13px; cursor: pointer; color: var(--text-main);" data-i18n="settings.presence.monitor_label">Включить мониторинг</label>
 
             </div>
 
@@ -2293,9 +2292,9 @@
 
             <div class="setting-label">
 
-              <strong>Сейчас онлайн</strong><br>
+              <strong data-i18n="settings.presence.online">Сейчас онлайн</strong><br>
 
-              <small style="color: var(--text-dim);">Активные за последние 90 секунд</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.presence.online_hint">Активные за последние 90 секунд</small>
 
             </div>
 
@@ -2311,7 +2310,7 @@
 
           <div class="presence-users-list" id="presence-users-list">
 
-            <span class="presence-settings-empty">Нет активных подключений</span>
+            <span class="presence-settings-empty" data-i18n="settings.presence.empty">Нет активных подключений</span>
 
           </div>
 
@@ -2321,21 +2320,21 @@
 
         <div class="settings-section settings-host-only" id="section-remote-tunnels">
 
-          <h3>Деление сайтом (Remote Sharing & Tunnels)</h3>
+          <h3 data-i18n="settings.share.title">Деление сайтом (Remote Sharing & Tunnels)</h3>
 
           <div class="setting-row">
 
             <div class="setting-label">
 
-              <strong>Публичный доступ (Cloudflare Quick Tunnel)</strong><br>
+              <strong data-i18n="settings.share.public">Публичный доступ (Cloudflare Quick Tunnel)</strong><br>
 
-              <small style="color: var(--text-dim);">Создание временной защищённой ссылки для друзей без внешнего IP и проброса портов</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.share.public_hint">Создание временной защищённой ссылки для друзей без внешнего IP и проброса портов</small>
 
             </div>
 
             <div class="setting-value">
 
-              <div id="setting-share-status-badge" class="state-badge missing" style="display: inline-block;">Остановлен</div>
+              <div id="setting-share-status-badge" class="state-badge missing" style="display: inline-block;" data-i18n="settings.share.status_stopped">Остановлен</div>
 
               <div id="setting-share-url-wrap" style="display: none; margin-top: 8px;">
 
@@ -2347,9 +2346,9 @@
 
             <div class="setting-actions">
 
-              <button class="setting-btn" id="btn-share-toggle" onclick="App.toggleShareTunnel()">Запустить туннель</button>
+              <button class="setting-btn" id="btn-share-toggle" onclick="App.toggleShareTunnel()" data-i18n="settings.share.start">Запустить туннель</button>
 
-              <button class="setting-btn" id="btn-share-copy" onclick="App.copyShareUrl()" style="display: none;">Копировать</button>
+              <button class="setting-btn" id="btn-share-copy" onclick="App.copyShareUrl()" style="display: none;" data-i18n="settings.share.copy">Копировать</button>
 
             </div>
 
@@ -2359,23 +2358,23 @@
 
             <div class="setting-label">
 
-              <strong>Токен гостя / Пароль доступа</strong><br>
+              <strong data-i18n="settings.share.token">Токен гостя / Пароль доступа</strong><br>
 
-              <small style="color: var(--text-dim);">Защищает удалённый доступ: гость должен ввести этот ключ для генерации</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.share.token_hint">Защищает удалённый доступ: гость должен ввести этот ключ для генерации</small>
 
             </div>
 
             <div class="setting-value" style="display: flex; gap: 8px;">
 
-              <input type="text" id="setting-share-token" placeholder="Случайный токен" style="flex: 1; font-family: monospace; font-size: 12px;">
+              <input type="text" id="setting-share-token" data-i18n-placeholder="settings.share.token_placeholder" placeholder="Случайный токен" style="flex: 1; font-family: monospace; font-size: 12px;">
 
-              <button class="setting-btn" onclick="App.generateShareToken()">Сгенерировать</button>
+              <button class="setting-btn" onclick="App.generateShareToken()" data-i18n="settings.share.generate">Сгенерировать</button>
 
             </div>
 
             <div class="setting-actions">
 
-              <button class="setting-btn" onclick="App.saveShareToken()">Сохранить</button>
+              <button class="setting-btn" onclick="App.saveShareToken()" data-i18n="settings.share.save">Сохранить</button>
 
             </div>
 
@@ -2385,9 +2384,9 @@
 
             <div class="setting-label">
 
-              <strong>Автозапуск туннеля</strong><br>
+              <strong data-i18n="settings.share.autostart">Автозапуск туннеля</strong><br>
 
-              <small style="color: var(--text-dim);">Автоматически поднимать ссылку при запуске WebUI</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.share.autostart_hint">Автоматически поднимать ссылку при запуске WebUI</small>
 
             </div>
 
@@ -2411,19 +2410,19 @@
 
             <div>
 
-              <h3 style="margin: 0 0 4px 0;">Управление гостевыми аккаунтами</h3>
+              <h3 style="margin: 0 0 4px 0;" data-i18n="settings.accounts.title">Управление гостевыми аккаунтами</h3>
 
-              <small style="color: var(--text-dim);">Постоянные аккаунты для друзей с персональными ссылками доступа и раздельной историей генераций на вашем ПК.</small>
+              <small style="color: var(--text-dim);" data-i18n="settings.accounts.hint">Постоянные аккаунты для друзей с персональными ссылками доступа и раздельной историей генераций на вашем ПК.</small>
 
             </div>
 
-            <button type="button" class="setting-btn" onclick="App.showCreateGuestModal()" style="background: var(--accent); color: #fff; font-weight: 500;">+ Новый гость</button>
+            <button type="button" class="setting-btn" onclick="App.showCreateGuestModal()" style="background: var(--accent); color: #fff; font-weight: 500;" data-i18n="settings.accounts.create">+ Новый гость</button>
 
           </div>
 
           <div id="guest-accounts-list" style="display: flex; flex-direction: column; gap: 8px;">
 
-            <div style="color: var(--text-dim); font-size: 13px; padding: 12px; text-align: center;">Загрузка списка аккаунтов...</div>
+            <div style="color: var(--text-dim); font-size: 13px; padding: 12px; text-align: center;" data-i18n="settings.accounts.loading">Загрузка списка аккаунтов...</div>
 
           </div>
 
@@ -2437,11 +2436,11 @@
 
             <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">LazySD UI (Pre-Alpha)</div>
 
-            <div>Легковесный локальный веб-интерфейс для запуска квантованных диффузионных моделей (GGUF, SDNQ, Nunchaku, OrbitQuant, QuantFunc), а также алгоритмической и нейросетевой обработки манги и скринтонов.</div>
+            <div data-i18n="settings.about.desc">Легковесный локальный веб-интерфейс для запуска квантованных диффузионных моделей (GGUF, SDNQ, Nunchaku, OrbitQuant, QuantFunc), а также алгоритмической и нейросетевой обработки манги и скринтонов.</div>
 
             <div style="margin-top: 10px; padding: 12px 16px; background: var(--bg-primary); border-radius: var(--radius); border: 1px solid var(--border);">
 
-              <div style="font-weight: 600; color: var(--text-bright); margin-bottom: 6px;">Авторы нейросети (архитектура и вайб-код):</div>
+              <div style="font-weight: 600; color: var(--text-bright); margin-bottom: 6px;" data-i18n="settings.about.authors_title">Авторы нейросети (архитектура и вайб-код):</div>
 
               <ul style="margin: 0; padding-left: 20px; color: var(--text-primary);">
 
@@ -2457,13 +2456,13 @@
 
               <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-bright);">
 
-                ✨ <strong>Создано по плану FGSFDS в рамках проекта Dungeon Impact</strong>
+                ✨ <strong data-i18n="settings.about.created_by">Создано по плану FGSFDS в рамках проекта Dungeon Impact</strong>
 
               </div>
 
               <div style="margin-top: 6px;">
 
-                🔗 Контакт / Репозиторий проекта: <a href="https://github.com/nnmgrp/LazySD-UI" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: underline; font-weight: 600;">https://github.com/nnmgrp/LazySD-UI</a>
+                <span data-i18n="settings.about.contact">🔗 Контакт / Репозиторий проекта:</span> <a href="https://github.com/nnmgrp/LazySD-UI" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: underline; font-weight: 600;">https://github.com/nnmgrp/LazySD-UI</a>
 
               </div>
 
@@ -2493,37 +2492,37 @@
 
             <div class="studio-left-group">
 
-              <div class="studio-left-label">Инструменты</div>
+              <div class="studio-left-label" data-i18n="halftone.ui.tools">Инструменты</div>
 
-              <button type="button" class="studio-tool-btn active" id="ht-tool-view" onclick="App.setHalftoneTool('view')" title="Просмотр и панорама холста (колесо мыши — зум, перетаскивание — панорама)">
+              <button type="button" class="studio-tool-btn active" id="ht-tool-view" onclick="App.setHalftoneTool('view')" data-i18n-title="halftone.ui.tip_view" title="Просмотр и панорама холста (колесо мыши — зум, перетаскивание — панорама)">
 
                 <span class="studio-tool-icon">👁</span>
 
-                <span class="studio-tool-text">Просмотр</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.tool_view">Просмотр</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn" id="ht-tool-lasso" onclick="App.setHalftoneTool('lasso')" title="Лассо: обведите контур для выделения области скринтона">
+              <button type="button" class="studio-tool-btn" id="ht-tool-lasso" onclick="App.setHalftoneTool('lasso')" data-i18n-title="halftone.ui.tip_lasso" title="Лассо: обведите контур для выделения области скринтона">
 
                 <span class="studio-tool-icon">➰</span>
 
-                <span class="studio-tool-text">Лассо</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.tool_lasso">Лассо</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn" id="ht-tool-brush" onclick="App.setHalftoneTool('brush')" title="Кисть маски (добавление к маске слоя)">
+              <button type="button" class="studio-tool-btn" id="ht-tool-brush" onclick="App.setHalftoneTool('brush')" data-i18n-title="halftone.ui.tip_brush" title="Кисть маски (добавление к маске слоя)">
 
                 <span class="studio-tool-icon">🖌</span>
 
-                <span class="studio-tool-text">Кисть</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.tool_brush">Кисть</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn" id="ht-tool-eraser" onclick="App.setHalftoneTool('eraser')" title="Ластик маски (стирание маски слоя)">
+              <button type="button" class="studio-tool-btn" id="ht-tool-eraser" onclick="App.setHalftoneTool('eraser')" data-i18n-title="halftone.ui.tip_eraser" title="Ластик маски (стирание маски слоя)">
 
                 <span class="studio-tool-icon">🧹</span>
 
-                <span class="studio-tool-text">Ластик</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.tool_eraser">Ластик</span>
 
               </button>
 
@@ -2535,55 +2534,55 @@
 
             <div class="studio-left-group" id="ht-lasso-modes-group">
 
-              <div class="studio-left-label">Выделение</div>
+              <div class="studio-left-label" data-i18n="halftone.ui.selection">Выделение</div>
 
-              <button type="button" class="studio-tool-btn active" id="ht-sel-replace" onclick="App.setHalftoneLassoMode('replace')" title="Новое выделение (заменить текущую маску слоя)">
+              <button type="button" class="studio-tool-btn active" id="ht-sel-replace" onclick="App.setHalftoneLassoMode('replace')" data-i18n-title="halftone.ui.tip_sel_replace" title="Новое выделение (заменить текущую маску слоя)">
 
                 <span class="studio-tool-icon">⭕</span>
 
-                <span class="studio-tool-text">Выделить</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.sel_replace">Выделить</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn" id="ht-sel-add" onclick="App.setHalftoneLassoMode('add')" title="Добавить область к существующему выделению">
+              <button type="button" class="studio-tool-btn" id="ht-sel-add" onclick="App.setHalftoneLassoMode('add')" data-i18n-title="halftone.ui.tip_sel_add" title="Добавить область к существующему выделению">
 
                 <span class="studio-tool-icon">➕</span>
 
-                <span class="studio-tool-text">Добавить</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.sel_add">Добавить</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn" id="ht-sel-subtract" onclick="App.setHalftoneLassoMode('subtract')" title="Вычесть (обрезать) область из выделения">
+              <button type="button" class="studio-tool-btn" id="ht-sel-subtract" onclick="App.setHalftoneLassoMode('subtract')" data-i18n-title="halftone.ui.tip_sel_subtract" title="Вычесть (обрезать) область из выделения">
 
                 <span class="studio-tool-icon">➖</span>
 
-                <span class="studio-tool-text">Обрезать</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.sel_subtract">Обрезать</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn" id="ht-sel-intersect" onclick="App.setHalftoneLassoMode('intersect')" title="Оставить только пересечение с новым контуром">
+              <button type="button" class="studio-tool-btn" id="ht-sel-intersect" onclick="App.setHalftoneLassoMode('intersect')" data-i18n-title="halftone.ui.tip_sel_intersect" title="Оставить только пересечение с новым контуром">
 
                 <span class="studio-tool-icon">✂</span>
 
-                <span class="studio-tool-text">Пересечь</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.sel_intersect">Пересечь</span>
 
               </button>
 
               <div class="studio-left-divider"></div>
 
-              <button type="button" class="studio-tool-btn" onclick="App.invertHalftoneMaskSelection()" title="Инвертировать выделенную область текущего слоя">
+              <button type="button" class="studio-tool-btn" onclick="App.invertHalftoneMaskSelection()" data-i18n-title="halftone.ui.tip_invert" title="Инвертировать выделенную область текущего слоя">
 
                 <span class="studio-tool-icon">🔄</span>
 
-                <span class="studio-tool-text">Инверсия</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.invert">Инверсия</span>
 
               </button>
 
-              <button type="button" class="studio-tool-btn danger" onclick="App.clearHalftoneMask()" title="Снять выделение (применить скринтон ко всему слою)">
+              <button type="button" class="studio-tool-btn danger" onclick="App.clearHalftoneMask()" data-i18n-title="halftone.ui.tip_clear" title="Снять выделение (применить скринтон ко всему слою)">
 
                 <span class="studio-tool-icon">✖</span>
 
-                <span class="studio-tool-text">Снять</span>
+                <span class="studio-tool-text" data-i18n="halftone.ui.sel_clear">Снять</span>
 
               </button>
 
@@ -2593,15 +2592,15 @@
 
             <div class="studio-left-group">
 
-              <label class="studio-left-check" title="Показать красную полупрозрачную накладку маски поверх превью">
+              <label class="studio-left-check" data-i18n-title="halftone.ui.tip_mask_overlay" title="Показать красную полупрозрачную накладку маски поверх превью">
 
                 <input type="checkbox" id="ht-show-mask-overlay" checked onchange="App.toggleHalftoneMaskOverlay(this.checked)">
 
-                <span>Маска</span>
+                <span data-i18n="halftone.ui.mask">Маска</span>
 
               </label>
 
-              <div class="studio-left-status" id="ht-selection-badge">Весь холст</div>
+              <div class="studio-left-status" id="ht-selection-badge" data-i18n="halftone.ui.full_canvas">Весь холст</div>
 
             </div>
 
@@ -2617,9 +2616,15 @@
 
                 <span class="studio-badge-title">🔘 <span data-i18n="halftone.title">Halftone Studio GT</span></span>
 
-                <div class="studio-quality-toggle" id="ht-quality-toggle" title="Движок рендера">
-                  <button type="button" class="studio-quality-pill active" id="ht-quality-full" onclick="App.setHalftoneQualityMode('full')" title="🎨 Точный CPU (Canvas 2D) — пиксель-в-пиксель, оригинальное качество без сжатия (WYSIWYG)">🎨 Точный CPU</button>
-                  <button type="button" class="studio-quality-pill" id="ht-quality-live" onclick="App.setHalftoneQualityMode('live')" title="⚡ WebGL2 GPU — живой шейдерный рендер в реальном времени (<1 мс)">⚡ WebGL2 GPU</button>
+                <div class="studio-quality-toggle" id="ht-quality-toggle" data-i18n-title="halftone.ui.tip_engine" title="Движок рендера">
+                  <button type="button" class="studio-quality-pill active" id="ht-quality-full" onclick="App.setHalftoneQualityMode('full')" data-i18n-title="halftone.ui.tip_quality_full" title="🎨 Точный CPU (Canvas 2D) — точный расчёт с адаптивным превью и полным разрешением при экспорте" data-i18n="halftone.ui.quality_full">🎨 Точный CPU</button>
+                  <button type="button" class="studio-quality-pill" id="ht-quality-live" onclick="App.setHalftoneQualityMode('live')" data-i18n-title="halftone.ui.tip_quality_live" title="⚡ WebGL2 GPU — живой шейдерный рендер в реальном времени (<1 мс)" data-i18n="halftone.ui.quality_live">⚡ WebGL2 GPU</button>
+                </div>
+
+                <div class="studio-quality-toggle ht-preview-quality-toggle" id="ht-preview-quality-toggle" data-i18n-title="halftone.ui.tip_preview_quality" title="Качество расчёта превью: Авто — под размер экрана и DPR; 2K — не выше 1920 px; Максимум — полное разрешение">
+                  <button type="button" class="studio-quality-pill active" id="ht-preview-quality-auto" onclick="App.setHalftonePreviewQuality('auto')" data-i18n-title="halftone.ui.tip_preview_auto" title="Авто: адаптивно под экран, с детальным ROI при зуме" data-i18n="halftone.ui.preview_auto">Авто</button>
+                  <button type="button" class="studio-quality-pill" id="ht-preview-quality-performance" onclick="App.setHalftonePreviewQuality('performance')" data-i18n-title="halftone.ui.tip_preview_2k" title="Performance: превью не выше 1920 px по длинной стороне" data-i18n="halftone.ui.preview_2k">2K</button>
+                  <button type="button" class="studio-quality-pill" id="ht-preview-quality-maximum" onclick="App.setHalftonePreviewQuality('maximum')" data-i18n-title="halftone.ui.tip_preview_max" title="Максимум: полное разрешение источника" data-i18n="halftone.ui.preview_max">Макс</button>
                 </div>
 
                 <input type="file" id="ht-file-input" accept=".png,.jpg,.jpeg,.webp" style="display: none;" onchange="App.onHalftoneFileUpload(event)">
@@ -2671,11 +2676,13 @@
 
                 <img id="ht-preview-img" alt="Halftone Preview">
 
+                <img id="ht-roi-img" class="ht-roi-img" alt="" aria-hidden="true" style="display: none;">
+
                 <canvas id="ht-mask-canvas" class="studio-mask-canvas" style="display: none;"></canvas>
 
                 <canvas id="ht-lasso-overlay" class="studio-lasso-overlay" style="display: none;"></canvas>
 
-                <div class="studio-compare-badge" id="ht-compare-badge" style="display: none;">ОРИГИНАЛ (ДО)</div>
+                <div class="studio-compare-badge" id="ht-compare-badge" style="display: none;" data-i18n="manga.compare_original">ОРИГИНАЛ (ДО)</div>
 
                 <!-- Processing Animation Overlay -->
 
@@ -2689,7 +2696,7 @@
 
                   </div>
 
-                  <div class="studio-loading-text" id="ht-loading-text">Генерация скринтона...</div>
+                  <div class="studio-loading-text" id="ht-loading-text" data-i18n="halftone.ui.generating">Генерация скринтона...</div>
 
                 </div>
 
@@ -2699,15 +2706,15 @@
 
               <div class="viewport-zoom-hud" id="ht-zoom-hud">
 
-                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('halftone', -1)" title="Отдалить">−</button>
+                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('halftone', -1)" data-i18n-title="manga.zoom_out" title="Отдалить">−</button>
 
-                <span class="zoom-hud-label" id="ht-zoom-label" onclick="App.resetViewportZoom('halftone')" title="Нажмите для сброса масштаба (100%)">🔍 100%</span>
+                <span class="zoom-hud-label" id="ht-zoom-label" onclick="App.resetViewportZoom('halftone')" data-i18n-title="manga.zoom_reset_title" title="Нажмите для сброса масштаба (100%)">🔍 100%</span>
 
-                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('halftone', 1)" title="Приблизить">+</button>
+                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('halftone', 1)" data-i18n-title="manga.zoom_in" title="Приблизить">+</button>
 
-                <button type="button" class="zoom-hud-reset" onclick="App.resetViewportZoom('halftone')" title="Вписать в окно">⤢</button>
+                <button type="button" class="zoom-hud-reset" onclick="App.resetViewportZoom('halftone')" data-i18n-title="manga.zoom_fit" title="Вписать в окно">⤢</button>
 
-              <button type="button" class="zoom-hud-btn zoom-hud-opacity" id="ht-zoom-opacity-btn" onclick="App.cycleViewportHudOpacity()" title="Настроить прозрачность блока (100% → 70% → 45% → 20%)">👁️</button>
+              <button type="button" class="zoom-hud-btn zoom-hud-opacity" id="ht-zoom-opacity-btn" onclick="App.cycleViewportHudOpacity()" data-i18n-title="manga.hud_opacity_title" title="Настроить прозрачность блока (100% → 70% → 45% → 20%)">👁️</button>
 
               </div>
 
@@ -2731,19 +2738,19 @@
 
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
 
-                  <div class="studio-card-title" style="margin: 0;">🗂 Слои скринтона (GT)</div>
+                  <div class="studio-card-title" style="margin: 0;" data-i18n="halftone.ui.layers_title">🗂 Слои скринтона (GT)</div>
 
                   <div style="display: flex; gap: 4px;">
 
-                    <button type="button" class="studio-mini-btn" onclick="App.addHalftoneLayer()" title="Добавить новый слой скринтона">➕ Слой</button>
+                    <button type="button" class="studio-mini-btn" onclick="App.addHalftoneLayer()" data-i18n-title="halftone.ui.tip_add_layer" title="Добавить новый слой скринтона" data-i18n="halftone.ui.add_layer">➕ Слой</button>
 
-                    <button type="button" class="studio-mini-btn" onclick="App.moveHalftoneLayer('up')" title="Переместить активный слой вверх">⬆</button>
+                    <button type="button" class="studio-mini-btn" onclick="App.moveHalftoneLayer('up')" data-i18n-title="halftone.ui.tip_move_up" title="Переместить активный слой вверх">⬆</button>
 
-                    <button type="button" class="studio-mini-btn" onclick="App.moveHalftoneLayer('down')" title="Переместить активный слой вниз">⬇</button>
+                    <button type="button" class="studio-mini-btn" onclick="App.moveHalftoneLayer('down')" data-i18n-title="halftone.ui.tip_move_down" title="Переместить активный слой вниз">⬇</button>
 
-                    <button type="button" class="studio-mini-btn" onclick="App.duplicateHalftoneLayer()" title="Дублировать активный слой">📋</button>
+                    <button type="button" class="studio-mini-btn" onclick="App.duplicateHalftoneLayer()" data-i18n-title="halftone.ui.tip_duplicate" title="Дублировать активный слой">📋</button>
 
-                    <button type="button" class="studio-mini-btn danger" onclick="App.removeHalftoneLayer()" title="Удалить активный слой">🗑</button>
+                    <button type="button" class="studio-mini-btn danger" onclick="App.removeHalftoneLayer()" data-i18n-title="halftone.ui.tip_delete" title="Удалить активный слой">🗑</button>
 
                   </div>
 
@@ -2755,21 +2762,21 @@
 
                   <div class="studio-control-row">
 
-                    <label>Наложение слоя</label>
+                    <label data-i18n="halftone.ui.blend">Наложение слоя</label>
 
                     <select id="ht-layer-blend" class="studio-select" onchange="App.onHalftoneLayerMetaChange('blend_mode', this.value)">
 
-                      <option value="normal">Обычный (Normal)</option>
+                      <option value="normal" data-i18n="halftone.ui.blend_normal">Обычный (Normal)</option>
 
-                      <option value="multiply">Умножение (Multiply)</option>
+                      <option value="multiply" data-i18n="halftone.ui.blend_multiply">Умножение (Multiply)</option>
 
-                      <option value="screen">Экран (Screen)</option>
+                      <option value="screen" data-i18n="halftone.ui.blend_screen">Экран (Screen)</option>
 
-                      <option value="overlay">Перекрытие (Overlay)</option>
+                      <option value="overlay" data-i18n="halftone.ui.blend_overlay">Перекрытие (Overlay)</option>
 
-                      <option value="darken">Затемнение (Darken)</option>
+                      <option value="darken" data-i18n="halftone.ui.blend_darken">Затемнение (Darken)</option>
 
-                      <option value="lighten">Осветление (Lighten)</option>
+                      <option value="lighten" data-i18n="halftone.ui.blend_lighten">Осветление (Lighten)</option>
 
                     </select>
 
@@ -2777,7 +2784,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Непрозрачность (%)</label>
+                    <label data-i18n="halftone.ui.opacity">Непрозрачность (%)</label>
 
                     <div class="studio-slider-group">
 
@@ -2863,25 +2870,25 @@
 
                     <option value="line" data-i18n="halftone.shape_line">Линия (Line)</option>
 
-                    <option value="crosshatch">Перекрёстная штриховка (Crosshatch)</option>
+                    <option value="crosshatch" data-i18n="halftone.ui.shape_crosshatch">Перекрёстная штриховка (Crosshatch)</option>
 
-                    <option value="hexagon">Гексагон / Соты (Hexagon GT)</option>
+                    <option value="hexagon" data-i18n="halftone.ui.shape_hexagon">Гексагон / Соты (Hexagon GT)</option>
 
-                    <option value="cross">Крест (Cross GT)</option>
+                    <option value="cross" data-i18n="halftone.ui.shape_cross">Крест (Cross GT)</option>
 
-                    <option value="ellipse">Эллипс (Ellipse GT)</option>
+                    <option value="ellipse" data-i18n="halftone.ui.shape_ellipse">Эллипс (Ellipse GT)</option>
 
-                    <option value="star">Звезда (Star GT)</option>
+                    <option value="star" data-i18n="halftone.ui.shape_star">Звезда (Star GT)</option>
 
-                    <option value="heart">Сердце (Heart GT)</option>
+                    <option value="heart" data-i18n="halftone.ui.shape_heart">Сердце (Heart GT)</option>
 
-                    <option value="triangle">Треугольник (Triangle GT)</option>
+                    <option value="triangle" data-i18n="halftone.ui.shape_triangle">Треугольник (Triangle GT)</option>
 
-                    <option value="concentric">Концентрические кольца (Concentric GT)</option>
+                    <option value="concentric" data-i18n="halftone.ui.shape_concentric">Концентрические кольца (Concentric GT)</option>
 
-                    <option value="ring">Одиночное кольцо (Ring GT)</option>
+                    <option value="ring" data-i18n="halftone.ui.shape_ring">Одиночное кольцо (Ring GT)</option>
 
-                    <option value="stipple">Стохастический пуантилизм (Stipple GT)</option>
+                    <option value="stipple" data-i18n="halftone.ui.shape_stipple">Стохастический пуантилизм (Stipple GT)</option>
 
                   </select>
 
@@ -2911,7 +2918,7 @@
 
                   <input type="checkbox" id="ht-sat-enabled" onchange="App.onHalftoneParamInput('satellite_enabled', this.checked)">
 
-                  <span>🪐 Планеты и Спутники (GenTonik)</span>
+                  <span data-i18n="halftone.ui.planets_title">🪐 Планеты и Спутники (GenTonik)</span>
 
                 </label>
 
@@ -2921,21 +2928,21 @@
 
                     <div class="studio-control-row">
 
-                      <label>Число спутников</label>
+                      <label data-i18n="halftone.ui.satellites_count">Число спутников</label>
 
                       <select id="ht-sat-count" class="studio-select" onchange="App.onHalftoneParamInput('satellite_count', parseInt(this.value, 10))">
 
-                        <option value="1">1 спутник</option>
+                        <option value="1" data-i18n="halftone.ui.sat_1">1 спутник</option>
 
-                        <option value="2">2 спутника (Ось)</option>
+                        <option value="2" data-i18n="halftone.ui.sat_2">2 спутника (Ось)</option>
 
-                        <option value="3">3 спутника</option>
+                        <option value="3" data-i18n="halftone.ui.sat_3">3 спутника</option>
 
-                        <option value="4" selected>4 спутника (Крест)</option>
+                        <option value="4" selected data-i18n="halftone.ui.sat_4">4 спутника (Крест)</option>
 
-                        <option value="6">6 спутников (Гексагон)</option>
+                        <option value="6" data-i18n="halftone.ui.sat_6">6 спутников (Гексагон)</option>
 
-                        <option value="8">8 спутников (Октагон)</option>
+                        <option value="8" data-i18n="halftone.ui.sat_8">8 спутников (Октагон)</option>
 
                       </select>
 
@@ -2943,31 +2950,31 @@
 
                     <div class="studio-control-row">
 
-                      <label>Форма спутника</label>
+                      <label data-i18n="halftone.ui.satellite_shape">Форма спутника</label>
 
                       <select id="ht-sat-shape" class="studio-select" onchange="App.onHalftoneParamInput('satellite_shape', this.value)">
 
-                        <option value="circle">Круг (Circle)</option>
+                        <option value="circle" data-i18n="halftone.ui.sat_shape_circle">Круг (Circle)</option>
 
-                        <option value="diamond">Ромб (Diamond)</option>
+                        <option value="diamond" data-i18n="halftone.ui.sat_shape_diamond">Ромб (Diamond)</option>
 
-                        <option value="square">Квадрат (Square)</option>
+                        <option value="square" data-i18n="halftone.ui.sat_shape_square">Квадрат (Square)</option>
 
-                        <option value="line">Линия (Line)</option>
+                        <option value="line" data-i18n="halftone.ui.sat_shape_line">Линия (Line)</option>
 
-                        <option value="crosshatch">Штриховка</option>
+                        <option value="crosshatch" data-i18n="halftone.ui.sat_shape_crosshatch">Штриховка</option>
 
-                        <option value="cross">Крест (Cross)</option>
+                        <option value="cross" data-i18n="halftone.ui.sat_shape_cross">Крест (Cross)</option>
 
-                        <option value="ellipse">Эллипс (Ellipse)</option>
+                        <option value="ellipse" data-i18n="halftone.ui.sat_shape_ellipse">Эллипс (Ellipse)</option>
 
-                        <option value="ring">Кольцо (Ring)</option>
+                        <option value="ring" data-i18n="halftone.ui.sat_shape_ring">Кольцо (Ring)</option>
 
-                        <option value="star">Звезда (Star)</option>
+                        <option value="star" data-i18n="halftone.ui.sat_shape_star">Звезда (Star)</option>
 
-                        <option value="hexagon">Гексагон</option>
+                        <option value="hexagon" data-i18n="halftone.ui.sat_shape_hexagon">Гексагон</option>
 
-                        <option value="heart">Сердце</option>
+                        <option value="heart" data-i18n="halftone.ui.sat_shape_heart">Сердце</option>
 
                       </select>
 
@@ -2977,7 +2984,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Размер спутников (от планеты)</label>
+                    <label data-i18n="halftone.ui.satellite_size">Размер спутников (от планеты)</label>
 
                     <div class="studio-slider-group">
 
@@ -2991,7 +2998,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Орбита / Дистанция (от ячейки)</label>
+                    <label data-i18n="halftone.ui.orbit_distance">Орбита / Дистанция (от ячейки)</label>
 
                     <div class="studio-slider-group">
 
@@ -3005,7 +3012,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Угол орбиты спутников (°)</label>
+                    <label data-i18n="halftone.ui.orbit_angle">Угол орбиты спутников (°)</label>
 
                     <div class="studio-slider-group">
 
@@ -3019,7 +3026,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Вытягивание к планете (Stretch)</label>
+                    <label data-i18n="halftone.ui.stretch">Вытягивание к планете (Stretch)</label>
 
                     <div class="studio-slider-group">
 
@@ -3033,7 +3040,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Слияние точек (Merge Factor)</label>
+                    <label data-i18n="halftone.ui.merge">Слияние точек (Merge Factor)</label>
 
                     <div class="studio-slider-group">
 
@@ -3053,13 +3060,13 @@
 
               <div class="studio-card">
 
-                <div class="studio-card-title">📐 Геометрия сетки и Градиент (GT)</div>
+                <div class="studio-card-title" data-i18n="halftone.ui.geometry_title">📐 Геометрия сетки и Градиент (GT)</div>
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
 
                   <div class="studio-control-row">
 
-                    <label>Пропорция X (Aspect X)</label>
+                    <label data-i18n="halftone.ui.aspect_x">Пропорция X (Aspect X)</label>
 
                     <input type="number" id="ht-aspect-x" class="studio-num-full" min="0.2" max="4.0" step="0.1" value="1.0" oninput="App.onHalftoneParamInput('aspect_x', this.value)" onchange="App.onHalftoneParamInput('aspect_x', this.value)">
 
@@ -3067,7 +3074,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Пропорция Y (Aspect Y)</label>
+                    <label data-i18n="halftone.ui.aspect_y">Пропорция Y (Aspect Y)</label>
 
                     <input type="number" id="ht-aspect-y" class="studio-num-full" min="0.2" max="4.0" step="0.1" value="1.0" oninput="App.onHalftoneParamInput('aspect_y', this.value)" onchange="App.onHalftoneParamInput('aspect_y', this.value)">
 
@@ -3077,7 +3084,7 @@
 
                 <div class="studio-control-row">
 
-                  <label>Сдвиг нечётных рядов (Row Offset / Brick)</label>
+                  <label data-i18n="halftone.ui.row_offset">Сдвиг нечётных рядов (Row Offset / Brick)</label>
 
                   <div class="studio-slider-group">
 
@@ -3093,7 +3100,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Джиттер позиции</label>
+                    <label data-i18n="halftone.ui.pos_jitter">Джиттер позиции</label>
 
                     <input type="number" id="ht-jitter-pos" class="studio-num-full" min="0.0" max="1.0" step="0.05" value="0.0" oninput="App.onHalftoneParamInput('jitter_pos', this.value)" onchange="App.onHalftoneParamInput('jitter_pos', this.value)">
 
@@ -3101,7 +3108,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Джиттер размера</label>
+                    <label data-i18n="halftone.ui.size_jitter">Джиттер размера</label>
 
                     <input type="number" id="ht-jitter-size" class="studio-num-full" min="0.0" max="1.0" step="0.05" value="0.0" oninput="App.onHalftoneParamInput('jitter_size', this.value)" onchange="App.onHalftoneParamInput('jitter_size', this.value)">
 
@@ -3113,17 +3120,17 @@
 
                   <div class="studio-control-row">
 
-                    <label>Градиент тона</label>
+                    <label data-i18n="halftone.ui.gradient">Градиент тона</label>
 
                     <select id="ht-grad-type" class="studio-select" onchange="App.onHalftoneParamInput('grad_type', this.value)">
 
-                      <option value="none">Без градиента</option>
+                      <option value="none" data-i18n="halftone.ui.grad_none">Без градиента</option>
 
-                      <option value="linear">Линейный</option>
+                      <option value="linear" data-i18n="halftone.ui.grad_linear">Линейный</option>
 
-                      <option value="radial">Радиальный</option>
+                      <option value="radial" data-i18n="halftone.ui.grad_radial">Радиальный</option>
 
-                      <option value="vignette">Виньетка (GT)</option>
+                      <option value="vignette" data-i18n="halftone.ui.grad_vignette">Виньетка (GT)</option>
 
                     </select>
 
@@ -3131,7 +3138,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Сила градиента</label>
+                    <label data-i18n="halftone.ui.gradient_strength">Сила градиента</label>
 
                     <input type="number" id="ht-grad-strength" class="studio-num-full" min="-1.0" max="1.0" step="0.05" value="0.0" oninput="App.onHalftoneParamInput('grad_strength', this.value)" onchange="App.onHalftoneParamInput('grad_strength', this.value)">
 
@@ -3139,7 +3146,7 @@
 
                   <div class="studio-control-row">
 
-                    <label>Угол (°)</label>
+                    <label data-i18n="halftone.ui.angle">Угол (°)</label>
 
                     <input type="number" id="ht-grad-angle" class="studio-num-full" min="0" max="360" step="5" value="45" oninput="App.onHalftoneParamInput('grad_angle', this.value)" onchange="App.onHalftoneParamInput('grad_angle', this.value)">
 
@@ -3273,13 +3280,13 @@
 
                   <select id="ht-antialias" class="studio-select" onchange="App.onHalftoneParamInput('antialias', parseInt(this.value, 10))">
 
-                    <option value="1">1x (Резкий пиксель)</option>
+                    <option value="1" data-i18n="halftone.ui.aa_1x">1x (Резкий пиксель)</option>
 
-                    <option value="2" selected>2x (Сглаженный)</option>
+                    <option value="2" selected data-i18n="halftone.ui.aa_2x">2x (Сглаженный)</option>
 
-                    <option value="3">3x (Высокое качество)</option>
+                    <option value="3" data-i18n="halftone.ui.aa_3x">3x (только экспорт)</option>
 
-                    <option value="4">4x (Ультра качество)</option>
+                    <option value="4" data-i18n="halftone.ui.aa_4x">4x (только экспорт)</option>
 
                   </select>
 
@@ -3363,7 +3370,7 @@
 
                 <div style="font-size: 11px; color: var(--text-dim); line-height: 1.4;">
 
-                  Используйте панель слева для выделения через <strong>➰ Лассо</strong> (Выделить / Добавить / Обрезать / Снять) или подправьте кистью:
+                    <span data-i18n="halftone.ui.lasso_hint_prefix">Используйте панель слева для выделения через</span> <strong>➰ <span data-i18n="halftone.ui.tool_lasso">Лассо</span></strong> <span data-i18n="halftone.ui.lasso_hint_suffix">(Выделить / Добавить / Обрезать / Снять) или подправьте кистью:</span>
 
                 </div>
 
@@ -3469,7 +3476,7 @@
 
             <div class="studio-fallback-banner" id="manga-fallback-banner" style="display: none;">
 
-              <span id="manga-fallback-msg">AI-режим недоступен. Вы можете продолжить обработку в алгоритмическом режиме Manga Lite на CPU.</span>
+              <span id="manga-fallback-msg" data-i18n="manga.fallback_msg">AI-режим недоступен. Вы можете продолжить обработку в алгоритмическом режиме Manga Lite на CPU.</span>
 
               <button type="button" class="studio-btn primary" onclick="App.selectMangaMode('manga_lite')" data-i18n="manga.fallback_lite">Перейти к Manga Lite (без GPU)</button>
 
@@ -3497,7 +3504,7 @@
 
                 <img id="manga-preview-img" alt="Manga Screen AI Preview">
 
-                <div class="studio-compare-badge" id="manga-compare-badge" style="display: none;">ОРИГИНАЛ (ДО)</div>
+                <div class="studio-compare-badge" id="manga-compare-badge" style="display: none;" data-i18n="manga.compare_original">ОРИГИНАЛ (ДО)</div>
 
                 <!-- Processing Animation Overlay -->
 
@@ -3511,7 +3518,7 @@
 
                   </div>
 
-                  <div class="studio-loading-text" id="manga-loading-text">Обработка манги...</div>
+                  <div class="studio-loading-text" id="manga-loading-text" data-i18n="manga.processing">Обработка манги...</div>
 
                 </div>
 
@@ -3521,15 +3528,15 @@
 
               <div class="viewport-zoom-hud" id="manga-zoom-hud">
 
-                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('manga', -1)" title="Отдалить">−</button>
+                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('manga', -1)" data-i18n-title="manga.zoom_out" title="Отдалить">−</button>
 
-                <span class="zoom-hud-label" id="manga-zoom-label" onclick="App.resetViewportZoom('manga')" title="Нажмите для сброса масштаба (100%)">🔍 100%</span>
+                <span class="zoom-hud-label" id="manga-zoom-label" onclick="App.resetViewportZoom('manga')" data-i18n-title="manga.zoom_reset_title" title="Нажмите для сброса масштаба (100%)">🔍 100%</span>
 
-                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('manga', 1)" title="Приблизить">+</button>
+                <button type="button" class="zoom-hud-btn" onclick="App.stepViewportZoom('manga', 1)" data-i18n-title="manga.zoom_in" title="Приблизить">+</button>
 
-                <button type="button" class="zoom-hud-reset" onclick="App.resetViewportZoom('manga')" title="Вписать в окно">⤢</button>
+                <button type="button" class="zoom-hud-reset" onclick="App.resetViewportZoom('manga')" data-i18n-title="manga.zoom_fit" title="Вписать в окно">⤢</button>
 
-              <button type="button" class="zoom-hud-btn zoom-hud-opacity" id="manga-zoom-opacity-btn" onclick="App.cycleViewportHudOpacity()" title="Настроить прозрачность блока (100% → 70% → 45% → 20%)">👁️</button>
+              <button type="button" class="zoom-hud-btn zoom-hud-opacity" id="manga-zoom-opacity-btn" onclick="App.cycleViewportHudOpacity()" data-i18n-title="manga.hud_opacity_title" title="Настроить прозрачность блока (100% → 70% → 45% → 20%)">👁️</button>
 
               </div>
 
@@ -3551,7 +3558,7 @@
 
               <div class="studio-card">
 
-                <div class="studio-card-title">Режим пайплайна</div>
+                <div class="studio-card-title" data-i18n="manga.pipeline_mode">Режим пайплайна</div>
 
                 <div class="studio-mode-pills" id="manga-mode-pills">
 
@@ -3791,17 +3798,17 @@
 
                   <select id="manga-finish-preset" class="studio-select" onchange="App.onMangaParamInput('finish_preset', this.value)">
 
-                    <option value="clean">Clean (Чистая печать)</option>
+                    <option value="clean" data-i18n="manga.style.clean">Clean (Чистая печать)</option>
 
-                    <option value="shonen">Shonen (Контрастный сёнэн)</option>
+                    <option value="shonen" data-i18n="manga.style.shonen">Shonen (Контрастный сёнэн)</option>
 
-                    <option value="seinen">Seinen (Детальный сэйнэн)</option>
+                    <option value="seinen" data-i18n="manga.style.seinen">Seinen (Детальный сэйнэн)</option>
 
-                    <option value="shojo">Shojo (Мягкий сёдзё)</option>
+                    <option value="shojo" data-i18n="manga.style.shojo">Shojo (Мягкий сёдзё)</option>
 
-                    <option value="newspaper">Newspaper (Газетный)</option>
+                    <option value="newspaper" data-i18n="manga.style.newspaper">Newspaper (Газетный)</option>
 
-                    <option value="custom">Custom (Ручной)</option>
+                    <option value="custom" data-i18n="manga.style.custom">Custom (Ручной)</option>
 
                   </select>
 
@@ -3827,13 +3834,13 @@
 
                   <select id="manga-finish-dot-shape" class="studio-select" onchange="App.onMangaParamInput('finish_dot_shape', this.value)">
 
-                    <option value="circle">Круг (Circle)</option>
+                    <option value="circle" data-i18n="manga.pattern.circle">Круг (Circle)</option>
 
-                    <option value="square">Квадрат (Square)</option>
+                    <option value="square" data-i18n="manga.pattern.square">Квадрат (Square)</option>
 
-                    <option value="diamond">Ромб (Diamond)</option>
+                    <option value="diamond" data-i18n="manga.pattern.diamond">Ромб (Diamond)</option>
 
-                    <option value="line">Линия (Line)</option>
+                    <option value="line" data-i18n="manga.pattern.line">Линия (Line)</option>
 
                   </select>
 
@@ -3929,15 +3936,15 @@
 
                   <select id="manga-panel-aspect" class="studio-select" onchange="App.onMangaParamInput('panel_aspect', this.value)">
 
-                    <option value="original">Original (Исходный)</option>
+                    <option value="original" data-i18n="manga.aspect.original">Original (Исходный)</option>
 
-                    <option value="3:4">3:4 (Вертикальный манга-лист)</option>
+                    <option value="3:4" data-i18n="manga.aspect.portrait">3:4 (Вертикальный манга-лист)</option>
 
-                    <option value="4:3">4:3 (Горизонтальный)</option>
+                    <option value="4:3" data-i18n="manga.aspect.landscape">4:3 (Горизонтальный)</option>
 
-                    <option value="1:1">1:1 (Квадрат)</option>
+                    <option value="1:1" data-i18n="manga.aspect.square">1:1 (Квадрат)</option>
 
-                    <option value="16:9">16:9 (Кинематографический)</option>
+                    <option value="16:9" data-i18n="manga.aspect.cinema">16:9 (Кинематографический)</option>
 
                   </select>
 
@@ -3977,11 +3984,11 @@
 
                   <select id="manga-panel-paper" class="studio-select" onchange="App.onMangaParamInput('panel_paper_tone', this.value)">
 
-                    <option value="white">White (Чисто белый)</option>
+                    <option value="white" data-i18n="manga.paper.white">White (Чисто белый)</option>
 
-                    <option value="off-white">Off-White (Журнальный)</option>
+                    <option value="off-white" data-i18n="manga.paper.offwhite">Off-White (Журнальный)</option>
 
-                    <option value="cream">Cream (Винтажная бумага)</option>
+                    <option value="cream" data-i18n="manga.paper.cream">Cream (Винтажная бумага)</option>
 
                   </select>
 
@@ -4029,7 +4036,7 @@
 
   <script src="/js/dropzone.js?v=20261022_01"></script>
 
-  <script src="/js/app.js?v=20261025_03"></script>
+  <script src="/js/app.js?v=20261027_10"></script>
 
   <script>
 
@@ -4661,9 +4668,9 @@
 
         qf17El.innerHTML = isInst
 
-          ? '<span class="state-badge installed">✓ installed (v0.0.17)</span>'
+          ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (v0.0.17)</span>`
 
-          : '<span class="state-badge missing">✗ missing</span>';
+          : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
 
       }
 
@@ -4677,9 +4684,9 @@
 
         qf12El.innerHTML = isInst
 
-          ? '<span class="state-badge installed">✓ installed (v0.0.12)</span>'
+          ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (v0.0.12)</span>`
 
-          : '<span class="state-badge missing">✗ missing</span>';
+          : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
 
       }
 
@@ -4695,9 +4702,9 @@
 
         sdCppEl.innerHTML = isInst
 
-          ? `<span class="state-badge installed">✓ installed (${ver})</span>`
+          ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (${escapeHtml(ver)})</span>`
 
-          : '<span class="state-badge missing">✗ missing</span>';
+          : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
 
       }
 
@@ -4713,9 +4720,9 @@
 
         sdnqEl.innerHTML = isInst
 
-          ? `<span class="state-badge installed">✓ installed (${ver})</span>`
+          ? `<span class="state-badge installed">✓ ${escapeHtml(t("common.installed"))} (${escapeHtml(ver)})</span>`
 
-          : '<span class="state-badge missing">✗ missing</span>';
+          : `<span class="state-badge missing">✗ ${escapeHtml(t("common.not_installed"))}</span>`;
 
       }
 
@@ -5027,9 +5034,9 @@
 
       <button class="modal-close" onclick="App.closeModelVisibilityModal()">✕</button>
 
-      <h3 style="margin: 0 0 6px; font-size: 16px;">👁️ Видимость модели</h3>
+      <h3 style="margin: 0 0 6px; font-size: 16px;" data-i18n="models.vis_modal_title">👁️ Видимость модели</h3>
 
-      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);" id="model-vis-title-desc">Настройка видимости модели для гостей и основного списка</p>
+      <p style="margin: 0 0 16px; font-size: 12px; color: var(--text-dim);" id="model-vis-title-desc" data-i18n="models.vis_modal_subtitle">Настройка видимости модели для гостей и основного списка</p>
 
       <input type="hidden" id="model-vis-id" value="">
 
@@ -5041,9 +5048,9 @@
 
           <div>
 
-            <div style="font-weight: 600; color: var(--text-bright);">🔒 Скрыть от гостей</div>
+            <div style="font-weight: 600; color: var(--text-bright);" data-i18n="models.vis_hide_guests">🔒 Скрыть от гостей</div>
 
-            <div style="font-size: 11px; color: var(--text-dim);">Удаленные клиенты и гости не видят эту модель в Хабе и не могут запускать с ней генерацию.</div>
+            <div style="font-size: 11px; color: var(--text-dim);" data-i18n="models.vis_hide_guests_hint">Удаленные клиенты и гости не видят эту модель в Хабе и не могут запускать с ней генерацию.</div>
 
           </div>
 
@@ -5055,9 +5062,9 @@
 
           <div>
 
-            <div style="font-weight: 600; color: var(--text-bright);">🙈 Скрыть из общего списка</div>
+            <div style="font-weight: 600; color: var(--text-bright);" data-i18n="models.vis_hide_host">🙈 Скрыть из общего списка</div>
 
-            <div style="font-size: 11px; color: var(--text-dim);">Модель не будет загромождать основной список и будет доступна только во вкладке «Скрытые».</div>
+            <div style="font-size: 11px; color: var(--text-dim);" data-i18n="models.vis_hide_host_hint">Модель не будет загромождать основной список и будет доступна только во вкладке «Скрытые».</div>
 
           </div>
 
@@ -5065,9 +5072,9 @@
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
 
-          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeModelVisibilityModal()">Отмена</button>
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeModelVisibilityModal()" data-i18n="common.cancel">Отмена</button>
 
-          <button type="button" class="generate-btn" style="width: auto; padding: 0 18px;" onclick="App.saveModelVisibility()">✓ Сохранить</button>
+          <button type="button" class="generate-btn" style="width: auto; padding: 0 18px;" onclick="App.saveModelVisibility()" data-i18n="common.save">✓ Сохранить</button>
 
         </div>
 
@@ -5093,7 +5100,7 @@
 
           <h2 style="margin: 0; font-size: 18px;" data-i18n="custom_model.title">Мастер добавления моделей</h2>
 
-          <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-dim);">Подключение локальных весов (.gguf / .safetensors) или прямой импорт из Hugging Face Hub</p>
+          <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-dim);" data-i18n="custom_model.subtitle">Подключение локальных весов (.gguf / .safetensors) или прямой импорт из Hugging Face Hub</p>
 
         </div>
 
@@ -5103,13 +5110,13 @@
 
       <div class="importer-tabs">
 
-        <button type="button" class="importer-tab-btn active" id="importer-tab-btn-local" onclick="App.switchCustomModelTab('local')">
+        <button type="button" class="importer-tab-btn active" id="importer-tab-btn-local" onclick="App.switchCustomModelTab('local')" data-i18n="custom_model.tab_local">
 
           📁 Локальный файл / Редактор
 
         </button>
 
-        <button type="button" class="importer-tab-btn" id="importer-tab-btn-hf" onclick="App.switchCustomModelTab('hf')">
+        <button type="button" class="importer-tab-btn" id="importer-tab-btn-hf" onclick="App.switchCustomModelTab('hf')" data-i18n="custom_model.tab_hf">
 
           🤗 Поиск и импорт с Hugging Face
 
@@ -5125,7 +5132,7 @@
 
           <label data-i18n="custom_model.name">Название модели</label>
 
-          <input type="text" id="custom-model-name" placeholder="например: My Flux Dev Q8 или Anime Illustrious" class="form-input">
+          <input type="text" id="custom-model-name" data-i18n-placeholder="custom_model.name_placeholder" placeholder="например: My Flux Dev Q8 или Anime Illustrious" class="form-input">
 
         </div>
 
@@ -5179,9 +5186,9 @@
 
         <div class="control-group">
 
-          <label>Папка модели на диске (в models/cache/)</label>
+          <label data-i18n="custom_model.local_folder">Папка модели на диске (в models/cache/)</label>
 
-          <input type="text" id="custom-model-local-folder" placeholder="например: My-Model-Folder (опционально, для организации файлов)" class="form-input">
+          <input type="text" id="custom-model-local-folder" data-i18n-placeholder="custom_model.local_folder_placeholder" placeholder="например: My-Model-Folder (опционально, для организации файлов)" class="form-input">
 
         </div>
 
@@ -5189,13 +5196,13 @@
 
         <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 6px; padding: 10px; font-size: 11.5px;">
 
-          <div style="font-weight: 600; color: #c7d2fe; margin-bottom: 6px;">🔍 Быстрое сканирование локальной папки или файла на диске:</div>
+          <div style="font-weight: 600; color: #c7d2fe; margin-bottom: 6px;" data-i18n="custom_model.scan_title">🔍 Быстрое сканирование локальной папки или файла на диске:</div>
 
           <div style="display: flex; gap: 8px;">
 
-            <input type="text" id="custom-model-scan-path" placeholder="Полный путь на диске (например: D:/AI/models/Flux-Dev)..." style="flex: 1; height: 30px; font-size: 11px;">
+            <input type="text" id="custom-model-scan-path" data-i18n-placeholder="custom_model.scan_placeholder" placeholder="Полный путь на диске (например: D:/AI/models/Flux-Dev)..." style="flex: 1; height: 30px; font-size: 11px;">
 
-            <button type="button" class="history-action-btn" onclick="App.scanLocalModelPath()" style="width: auto; height: 30px; font-size: 11px;">Сканировать</button>
+            <button type="button" class="history-action-btn" onclick="App.scanLocalModelPath()" style="width: auto; height: 30px; font-size: 11px;" data-i18n="custom_model.scan_btn">Сканировать</button>
 
           </div>
 
@@ -5209,13 +5216,13 @@
 
           <select id="custom-model-file-select" onchange="App.onCustomFileSelectChange('model')">
 
-            <option value="">— Выберите файл из models/custom/ —</option>
+            <option value="" data-i18n="custom_model.select_model_file">— Выберите файл из models/custom/ —</option>
 
-            <option value="__custom__">Указать произвольный путь на ПК...</option>
+            <option value="__custom__" data-i18n="custom_model.custom_path">Указать произвольный путь на ПК...</option>
 
           </select>
 
-          <input type="text" id="custom-model-file-input" placeholder="например: D:/AI/models/flux1-dev-q8_0.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
+          <input type="text" id="custom-model-file-input" data-i18n-placeholder="custom_model.model_path_placeholder" placeholder="например: D:/AI/models/flux1-dev-q8_0.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
 
         </div>
 
@@ -5225,13 +5232,13 @@
 
           <select id="custom-te-file-select" onchange="App.onCustomFileSelectChange('te')">
 
-            <option value="">— Не требуется / Встроен в модель —</option>
+            <option value="" data-i18n="custom_model.te_not_required">— Не требуется / Встроен в модель —</option>
 
-            <option value="__custom__">Указать произвольный путь на ПК...</option>
+            <option value="__custom__" data-i18n="custom_model.custom_path">Указать произвольный путь на ПК...</option>
 
           </select>
 
-          <input type="text" id="custom-te-file-input" placeholder="например: D:/AI/models/Qwen3-8B-Q8_0.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
+          <input type="text" id="custom-te-file-input" data-i18n-placeholder="custom_model.te_path_placeholder" placeholder="например: D:/AI/models/Qwen3-8B-Q8_0.gguf" style="display: none; margin-top: 4px; font-size: 12px;">
 
         </div>
 
@@ -5241,13 +5248,13 @@
 
           <select id="custom-vae-file-select" onchange="App.onCustomFileSelectChange('vae')">
 
-            <option value="">— Автоматический / Встроен в модель —</option>
+            <option value="" data-i18n="custom_model.vae_auto">— Автоматический / Встроен в модель —</option>
 
-            <option value="__custom__">Указать произвольный путь на ПК...</option>
+            <option value="__custom__" data-i18n="custom_model.custom_path">Указать произвольный путь на ПК...</option>
 
           </select>
 
-          <input type="text" id="custom-vae-file-input" placeholder="например: D:/AI/models/flux2-vae.safetensors" style="display: none; margin-top: 4px; font-size: 12px;">
+          <input type="text" id="custom-vae-file-input" data-i18n-placeholder="custom_model.vae_path_placeholder" placeholder="например: D:/AI/models/flux2-vae.safetensors" style="display: none; margin-top: 4px; font-size: 12px;">
 
         </div>
 
@@ -5275,7 +5282,7 @@
 
           <div style="display: flex; justify-content: space-between; align-items: center;">
 
-            <span>📁 Положите файлы в эту папку для автоопределения параметров:</span>
+            <span data-i18n="custom_model.folder_hint">📁 Положите файлы в эту папку для автоопределения параметров:</span>
 
             <code id="custom-models-dir-path" style="font-size: 10px; color: var(--accent);">models/custom</code>
 
@@ -5285,9 +5292,9 @@
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;">
 
-          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeCustomModelModal()">Отмена</button>
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeCustomModelModal()" data-i18n="common.cancel">Отмена</button>
 
-          <button type="button" class="generate-btn" onclick="App.saveCustomModel()" style="background: var(--accent);">✓ Сохранить и активировать</button>
+          <button type="button" class="generate-btn" onclick="App.saveCustomModel()" style="background: var(--accent);" data-i18n="custom_model.save">✓ Сохранить и активировать</button>
 
         </div>
 
@@ -5299,9 +5306,9 @@
 
         <div style="display: flex; gap: 8px;">
 
-          <input type="text" id="hf-search-input" placeholder="Поиск по Hugging Face (например: flux gguf, klein gguf) или author/repo..." style="flex: 1;" onkeydown="if(event.key==='Enter') App.onHfSearchOrInspect()">
+          <input type="text" id="hf-search-input" data-i18n-placeholder="custom_model.hf_search_placeholder" placeholder="Поиск по Hugging Face (например: flux gguf, klein gguf) или author/repo..." style="flex: 1;" onkeydown="if(event.key==='Enter') App.onHfSearchOrInspect()">
 
-          <button type="button" class="generate-btn" style="height: 36px; padding: 0 16px; font-size: 12px;" onclick="App.onHfSearchOrInspect()">🔍 Найти / Открыть</button>
+          <button type="button" class="generate-btn" style="height: 36px; padding: 0 16px; font-size: 12px;" onclick="App.onHfSearchOrInspect()" data-i18n="custom_model.hf_search_btn">🔍 Найти / Открыть</button>
 
         </div>
 
@@ -5309,7 +5316,7 @@
 
           <div style="font-size: 12px; color: var(--text-dim); text-align: center; padding: 14px;">
 
-            Введите запрос (например <code>flux gguf</code>) или прямой путь репозитория (например <code>unsloth/FLUX.2-klein-base-9B-GGUF</code>)
+            <span data-i18n="custom_model.hf_empty_prefix">Введите запрос (например</span> <code>flux gguf</code>) <span data-i18n="custom_model.hf_empty_or">или прямой путь репозитория (например</span> <code>unsloth/FLUX.2-klein-base-9B-GGUF</code>)
 
           </div>
 
@@ -5341,15 +5348,15 @@
 
             <div class="control-group" style="min-width: 0;">
 
-              <label>Название в LazySD UI</label>
+              <label data-i18n="custom_model.ui_name">Название в LazySD UI</label>
 
-              <input type="text" id="hf-import-name" placeholder="Название модели">
+              <input type="text" id="hf-import-name" data-i18n-placeholder="custom_model.ui_name_placeholder" placeholder="Название модели">
 
             </div>
 
             <div class="control-group" style="min-width: 0;">
 
-              <label>Движок запуска</label>
+              <label data-i18n="custom_model.engine">Движок запуска</label>
 
               <select id="hf-import-engine">
 
@@ -5369,7 +5376,7 @@
 
             <div class="control-group" style="min-width: 0;">
 
-              <label>Семейство</label>
+              <label data-i18n="custom_model.family">Семейство</label>
 
               <select id="hf-import-family">
 
@@ -5407,9 +5414,9 @@
 
           <div class="control-group">
 
-            <label>Папка сохранения на диске (в models/cache/)</label>
+            <label data-i18n="custom_model.save_folder">Папка сохранения на диске (в models/cache/)</label>
 
-            <input type="text" id="hf-import-folder" placeholder="Название папки (например: FLUX.2-klein-base-9B-GGUF)">
+            <input type="text" id="hf-import-folder" data-i18n-placeholder="custom_model.save_folder_placeholder" placeholder="Название папки (например: FLUX.2-klein-base-9B-GGUF)">
 
           </div>
 
@@ -5421,13 +5428,13 @@
 
           <div id="hf-import-manual-section" style="display: none; background: rgba(255, 255, 255, 0.02); border: 1px dashed var(--border); border-radius: 8px; padding: 10px; flex-direction: column; gap: 8px;">
 
-            <div style="font-weight: 600; font-size: 11.5px; color: #fcd34d;">⚙️ Дополнительные компоненты (энкодер, VAE, базовая модель):</div>
+            <div style="font-weight: 600; font-size: 11.5px; color: #fcd34d;" data-i18n="custom_model.extra_components">⚙️ Дополнительные компоненты (энкодер, VAE, базовая модель):</div>
 
             <div class="control-group">
 
-              <label style="font-size: 11px;">Базовый репозиторий Diffusers (конфиги, планировщик):</label>
+              <label style="font-size: 11px;" data-i18n="custom_model.base_repo">Базовый репозиторий Diffusers (конфиги, планировщик):</label>
 
-              <input type="text" id="hf-import-base-repo" placeholder="например: black-forest-labs/FLUX.1-dev (опционально)" style="font-size: 11.5px; height: 30px;">
+              <input type="text" id="hf-import-base-repo" data-i18n-placeholder="custom_model.base_repo_placeholder" placeholder="например: black-forest-labs/FLUX.1-dev (опционально)" style="font-size: 11.5px; height: 30px;">
 
             </div>
 
@@ -5435,17 +5442,17 @@
 
               <div class="control-group">
 
-                <label style="font-size: 11px;">Text Encoder / LLM (ссылка или author/repo::file):</label>
+                <label style="font-size: 11px;" data-i18n="custom_model.te_link">Text Encoder / LLM (ссылка или author/repo::file):</label>
 
-                <input type="text" id="hf-import-custom-te" placeholder="например: unsloth/Qwen3-VL-8B-Instruct-GGUF::Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf" style="font-size: 11px; height: 30px;">
+                <input type="text" id="hf-import-custom-te" data-i18n-placeholder="custom_model.te_link_placeholder" placeholder="например: unsloth/Qwen3-VL-8B-Instruct-GGUF::Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf" style="font-size: 11px; height: 30px;">
 
               </div>
 
               <div class="control-group">
 
-                <label style="font-size: 11px;">VAE (ссылка или author/repo::file):</label>
+                <label style="font-size: 11px;" data-i18n="custom_model.vae_link">VAE (ссылка или author/repo::file):</label>
 
-                <input type="text" id="hf-import-custom-vae" placeholder="например: madebyollin/texture-fix-vae-for-qwen-image-2.1::texture_fix_vae_for_qwen_image_2.1_bf16.safetensors" style="font-size: 11px; height: 30px;">
+                <input type="text" id="hf-import-custom-vae" data-i18n-placeholder="custom_model.vae_link_placeholder" placeholder="например: madebyollin/texture-fix-vae-for-qwen-image-2.1::texture_fix_vae_for_qwen_image_2.1_bf16.safetensors" style="font-size: 11px; height: 30px;">
 
               </div>
 
@@ -5453,13 +5460,13 @@
 
           </div>
 
-          <div style="font-size: 11px; color: var(--text-dim);">Выберите файлы модели для добавления в карточку (структура папок сохраняется):</div>
+          <div style="font-size: 11px; color: var(--text-dim);" data-i18n="custom_model.files_hint">Выберите файлы модели для добавления в карточку (структура папок сохраняется):</div>
 
           <div id="hf-repo-files-list" class="hf-files-checklist"></div>
 
           <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">
 
-            <button type="button" class="generate-btn" style="background: #6366f1;" onclick="App.registerHfModel()">
+            <button type="button" class="generate-btn" style="background: #6366f1;" onclick="App.registerHfModel()" data-i18n="custom_model.import_registry">
 
               🤗 Импортировать модель в реестр
 
@@ -5483,26 +5490,26 @@
 
       <button class="modal-close" onclick="App.closeModelCardEditor()">✕</button>
 
-      <h3 style="margin: 0 0 6px; font-size: 17px;">✎ Редактор карточки модели</h3>
+      <h3 style="margin: 0 0 6px; font-size: 17px;" data-i18n="models.card_editor.title">✎ Редактор карточки модели</h3>
 
-      <p id="model-card-editor-subtitle" style="margin: 0 0 14px; font-size: 12px; color: var(--text-dim);">Проверьте репозиторий, добавьте недостающий энкодер или VAE и сохраните карточку.</p>
+      <p id="model-card-editor-subtitle" style="margin: 0 0 14px; font-size: 12px; color: var(--text-dim);" data-i18n="models.card_editor.subtitle">Проверьте репозиторий, добавьте недостающий энкодер или VAE и сохраните карточку.</p>
 
       <input type="hidden" id="model-card-editor-id">
 
       <div class="card-editor-grid">
 
         <div class="control-group">
-          <label>Название</label>
+          <label data-i18n="models.card_editor.name">Название</label>
           <input type="text" id="model-card-editor-name" maxlength="160">
         </div>
 
         <div class="control-group">
-          <label>Семейство</label>
-          <input type="text" id="model-card-editor-family" placeholder="flux / qwen / sdxl / z-image" maxlength="40">
+          <label data-i18n="models.card_editor.family">Семейство</label>
+          <input type="text" id="model-card-editor-family" data-i18n-placeholder="models.card_editor.family_placeholder" placeholder="flux / qwen / sdxl / z-image" maxlength="40">
         </div>
 
         <div class="control-group">
-          <label>Движок</label>
+          <label data-i18n="models.card_editor.engine">Движок</label>
           <select id="model-card-editor-engine">
             <option value="sd_cpp">SD.CPP</option>
             <option value="sdnq">SDNQ</option>
@@ -5513,7 +5520,7 @@
         </div>
 
         <div class="control-group">
-          <label>Pipeline</label>
+          <label data-i18n="models.card_editor.pipeline">Pipeline</label>
           <select id="model-card-editor-pipeline">
             <option value="text_to_image">text_to_image</option>
             <option value="image_edit">image_edit</option>
@@ -5523,73 +5530,73 @@
         </div>
 
         <div class="control-group">
-          <label>Steps</label>
+          <label data-i18n="models.card_editor.steps">Steps</label>
           <input type="number" id="model-card-editor-steps" min="1" max="150" step="1">
         </div>
 
         <div class="control-group">
-          <label>CFG</label>
+          <label data-i18n="models.card_editor.cfg">CFG</label>
           <input type="number" id="model-card-editor-cfg" min="0" max="30" step="0.1">
         </div>
 
         <div class="control-group">
-          <label>Лицензия</label>
-          <input type="text" id="model-card-editor-license" maxlength="160" placeholder="cc-by-nc-4.0">
+          <label data-i18n="models.card_editor.license">Лицензия</label>
+          <input type="text" id="model-card-editor-license" maxlength="160" data-i18n-placeholder="models.card_editor.license_placeholder" placeholder="cc-by-nc-4.0">
         </div>
 
         <div class="control-group">
-          <label>Базовая модель (author/repo)</label>
-          <input type="text" id="model-card-editor-base-repo" maxlength="160" placeholder="briaai/Fibo-2.0-edit-turbo">
+          <label data-i18n="models.card_editor.base_repo">Базовая модель (author/repo)</label>
+          <input type="text" id="model-card-editor-base-repo" maxlength="160" data-i18n-placeholder="models.card_editor.base_repo_placeholder" placeholder="briaai/Fibo-2.0-edit-turbo">
         </div>
 
       </div>
 
       <div class="control-group">
-        <label>Описание</label>
+        <label data-i18n="models.card_editor.description">Описание</label>
         <textarea id="model-card-editor-description" rows="2" maxlength="2000"></textarea>
       </div>
 
       <div class="card-editor-repo-box">
         <div class="card-editor-repo-head">
-          <span>📦 Репозиторий модели: <code id="model-card-editor-repo">—</code></span>
-          <button type="button" class="dock-mini-btn" onclick="App.inspectCardRepo()">🔍 Проверить репозиторий</button>
+          <span><span data-i18n="models.card_editor.repo_label">📦 Репозиторий модели:</span> <code id="model-card-editor-repo">—</code></span>
+          <button type="button" class="dock-mini-btn" onclick="App.inspectCardRepo()" data-i18n="models.card_editor.inspect">🔍 Проверить репозиторий</button>
         </div>
-        <div id="model-card-editor-repo-status" class="card-editor-hint">Проверка покажет, какие энкодеры, VAE и sidecar-файлы уже лежат в репозитории.</div>
+        <div id="model-card-editor-repo-status" class="card-editor-hint" data-i18n="models.card_editor.repo_hint">Проверка покажет, какие энкодеры, VAE и sidecar-файлы уже лежат в репозитории.</div>
         <div id="model-card-editor-suggestions" class="card-editor-suggestions"></div>
       </div>
 
-      <details class="card-editor-section" open>
-        <summary>Текстовые энкодеры (<span id="model-card-editor-te-count">0</span>)</summary>
+      <details class="card-editor-section">
+        <summary><span data-i18n="models.card_editor.te_section">Текстовые энкодеры</span> (<span id="model-card-editor-te-count">0</span>)</summary>
         <div id="model-card-editor-te-list" class="card-editor-component-list"></div>
         <div class="card-editor-add-row">
           <input type="text" id="model-card-editor-te-ref" placeholder="author/repo::text_encoder/model.safetensors">
-          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('te')">Добавить по ссылке</button>
-          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.openComponentPicker('te')">🔎 Найти на HF</button>
-        </div>
-      </details>
-
-      <details class="card-editor-section" open>
-        <summary>VAE</summary>
-        <div id="model-card-editor-vae-list" class="card-editor-component-list"></div>
-        <div class="card-editor-add-row">
-          <input type="text" id="model-card-editor-vae-ref" placeholder="author/repo::vae/diffusion_pytorch_model.safetensors">
-          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('vae')">Добавить по ссылке</button>
-          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.openComponentPicker('vae')">🔎 Найти на HF</button>
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('te')" data-i18n="models.card_editor.add_by_ref">Добавить по ссылке</button>
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.openComponentPicker('te')" data-i18n="models.card_editor.find_hf">🔎 Найти на HF</button>
         </div>
       </details>
 
       <details class="card-editor-section">
-        <summary>Aux / sidecars (<span id="model-card-editor-aux-count">0</span>)</summary>
+        <summary>VAE</summary>
+        <div id="model-card-editor-vae-list" class="card-editor-component-list"></div>
+        <div class="card-editor-add-row">
+          <input type="text" id="model-card-editor-vae-ref" placeholder="author/repo::vae/diffusion_pytorch_model.safetensors">
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('vae')" data-i18n="models.card_editor.add_by_ref">Добавить по ссылке</button>
+          <button type="button" class="history-action-btn" style="width: auto;" onclick="App.openComponentPicker('vae')" data-i18n="models.card_editor.find_hf">🔎 Найти на HF</button>
+        </div>
+      </details>
+
+      <details class="card-editor-section">
+        <summary><span data-i18n="models.card_editor.aux_section">Aux / sidecars</span> (<span id="model-card-editor-aux-count">0</span>)</summary>
         <div id="model-card-editor-aux-list" class="card-editor-component-list"></div>
         <div class="card-editor-add-row">
           <input type="text" id="model-card-editor-aux-ref" placeholder="author/repo::transformer/orbitquant_codebooks.safetensors">
-          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('aux')">Добавить sidecar</button>
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('aux')" data-i18n="models.card_editor.add_sidecar">Добавить sidecar</button>
         </div>
       </details>
 
       <div class="card-editor-footer">
-        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeModelCardEditor()">Отмена</button>
-        <button type="button" class="generate-btn" style="background: var(--accent);" onclick="App.saveModelCard()">💾 Сохранить карточку</button>
+        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.closeModelCardEditor()" data-i18n="common.cancel">Отмена</button>
+        <button type="button" class="generate-btn" style="background: var(--accent);" onclick="App.saveModelCard()" data-i18n="models.card_editor.save">💾 Сохранить карточку</button>
       </div>
 
     </div>
@@ -5604,27 +5611,27 @@
 
       <button class="modal-close" onclick="App.closeComponentPicker()">✕</button>
 
-      <h3 id="component-picker-title" style="margin: 0 0 6px; font-size: 17px;">🔎 Найти компонент на Hugging Face</h3>
+      <h3 id="component-picker-title" style="margin: 0 0 6px; font-size: 17px;" data-i18n="models.component_picker.title">🔎 Найти компонент на Hugging Face</h3>
 
-      <p style="margin: 0 0 12px; font-size: 12px; color: var(--text-dim);">Сначала найдите репозиторий, затем выберите файл нужной роли. Фильтр работает по дереву выбранного репозитория.</p>
+      <p style="margin: 0 0 12px; font-size: 12px; color: var(--text-dim);" data-i18n="models.component_picker.subtitle">Сначала найдите репозиторий, затем выберите файл нужной роли. Фильтр работает по дереву выбранного репозитория.</p>
 
       <div class="card-editor-add-row">
-        <input type="text" id="component-picker-search" placeholder="Поиск репозиториев: flux text encoder, qwen vae..." onkeydown="if(event.key==='Enter') App.searchComponentRepos()">
-        <button type="button" class="dock-mini-btn" onclick="App.searchComponentRepos()">🔎 Найти репозитории</button>
+        <input type="text" id="component-picker-search" data-i18n-placeholder="models.component_picker.search_placeholder" placeholder="Поиск репозиториев: flux text encoder, qwen vae..." onkeydown="if(event.key==='Enter') App.searchComponentRepos()">
+        <button type="button" class="dock-mini-btn" onclick="App.searchComponentRepos()" data-i18n="models.component_picker.search">🔎 Найти репозитории</button>
       </div>
 
       <div id="component-picker-results" class="hf-results-box" style="display: none; max-height: 170px; overflow-y: auto;"></div>
 
       <div class="card-editor-add-row" style="margin-top: 12px;">
-        <input type="text" id="component-picker-repo" placeholder="author/repo (или вставьте ссылку Hugging Face)" onkeydown="if(event.key==='Enter') App.inspectComponentRepo()">
-        <button type="button" class="dock-mini-btn" onclick="App.inspectComponentRepo()">Проверить файлы</button>
+        <input type="text" id="component-picker-repo" data-i18n-placeholder="models.component_picker.repo_placeholder" placeholder="author/repo (или вставьте ссылку Hugging Face)" onkeydown="if(event.key==='Enter') App.inspectComponentRepo()">
+        <button type="button" class="dock-mini-btn" onclick="App.inspectComponentRepo()" data-i18n="models.component_picker.inspect">Проверить файлы</button>
       </div>
 
       <div id="component-picker-files" class="card-editor-component-list" style="margin-top: 10px;"></div>
 
       <div class="card-editor-add-row" style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px;">
         <input type="text" id="component-picker-manual" placeholder="author/repo::path/to/file.safetensors">
-        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.addComponentFromManual()">Добавить по ссылке</button>
+        <button type="button" class="history-action-btn" style="width: auto;" onclick="App.addComponentFromManual()" data-i18n="models.card_editor.add_by_ref">Добавить по ссылке</button>
       </div>
 
     </div>

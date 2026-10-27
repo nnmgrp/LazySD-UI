@@ -177,7 +177,7 @@ from backend.cache import CacheManager
 
 
 
-from backend.model_files import vae_download_refs, vae_payload
+from backend.model_files import vae_download_refs, vae_payload, vae_payload_list
 
 
 
@@ -2266,6 +2266,9 @@ def create_app() -> FastAPI:
                 "vae": vae_payload(m, repo_id, cache),
 
 
+                "vae_files": vae_payload_list(m, repo_id, cache),
+
+
 
                 "aux_files": [
 
@@ -3413,6 +3416,9 @@ def create_app() -> FastAPI:
 
 
                 "vae": vae_payload(m, repo_id, cache),
+
+
+                "vae_files": vae_payload_list(m, repo_id, cache),
 
 
 
@@ -4568,6 +4574,9 @@ def create_app() -> FastAPI:
             "vae": vae_payload(model, repo_id, cache),
 
 
+            "vae_files": vae_payload_list(model, repo_id, cache),
+
+
 
             "aux_files": [
 
@@ -5337,6 +5346,94 @@ def create_app() -> FastAPI:
             "protected_shared_count": len(protected),
             "skipped_shared": sorted(skipped_shared),
             "message": message,
+        }
+
+
+    @app.post("/api/models/{model_id}/component-delete")
+    async def api_model_component_delete(model_id: str, body: dict, request: Request = None):
+        """Delete one downloaded VAE, text encoder, or Aux/sidecar component.
+
+        Shared files are protected by default. The response ``shared`` status lets
+        the UI show which other models depend on the file; a second explicit
+        request with ``force=true`` is required to remove it anyway.
+        """
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot delete model components")
+
+        body = body or {}
+        role = str(body.get("role") or "").strip().lower()
+        if role not in ("text_encoder", "vae", "aux"):
+            raise HTTPException(400, "role must be text_encoder, vae, or aux")
+        force = bool(body.get("force", False))
+
+        registry = get_registry()
+        try:
+            model = registry.get(model_id)
+        except KeyError:
+            model = None
+        if not model:
+            raise HTTPException(404, f"Model '{model_id}' not found")
+
+        primary_repo = model.sources.primary.repo_id if (model.sources and model.sources.primary) else ""
+        from backend.model_files import (
+            aux_component_refs,
+            delete_targets,
+            encoder_component_refs,
+            split_shared_refs,
+            vae_component_refs,
+        )
+
+        refs: list[tuple[str, str]] = []
+        cache = CacheManager()
+        if role == "text_encoder":
+            encoders = getattr(model, "text_encoders", []) or []
+            enc_id = str(body.get("id") or "").strip()
+            index = int(body.get("index") or 0)
+            encoder = next((te for te in encoders if enc_id and str(te.get("id")) == enc_id), None)
+            if encoder is None and 0 <= index < len(encoders):
+                encoder = encoders[index]
+            if encoder is None:
+                raise HTTPException(404, "Text encoder not found in this model card")
+            refs = encoder_component_refs(encoder, primary_repo)
+        elif role == "vae":
+            refs = vae_component_refs(getattr(model, "engine_args", {}) or {}, primary_repo, cache)
+        else:
+            refs = aux_component_refs(
+                getattr(model, "engine_args", {}) or {},
+                primary_repo,
+                int(body.get("index") or 0),
+            )
+
+        if not refs:
+            raise HTTPException(404, "Component is not declared in this model card")
+
+        safe, shared = split_shared_refs(model, registry.list_all(), refs)
+        if shared and not force:
+            return {
+                "status": "shared",
+                "role": role,
+                "shared": [f"{repo}/{path}" for repo, path in shared],
+                "message": "Файл используется другими моделями. Подтвердите удаление ещё раз.",
+            }
+
+        result = delete_targets(cache, refs if force else safe)
+        if not result["deleted_files"]:
+            return {
+                "status": "not_found",
+                "role": role,
+                "shared": [f"{repo}/{path}" for repo, path in shared],
+                **result,
+                "message": "Файл не найден — возможно, он уже удалён",
+            }
+        return {
+            "status": "ok",
+            "role": role,
+            "shared": [f"{repo}/{path}" for repo, path in shared],
+            **result,
+            "message": "Компонент удалён из локального кэша",
         }
 
 
@@ -7240,6 +7337,102 @@ def create_app() -> FastAPI:
 
 
         return list(encoders_map.values())
+
+
+    @app.post("/api/encoders/delete")
+    async def api_delete_encoder(body: dict, request: Request = None):
+        """Delete a downloaded shared text encoder by repository + file reference.
+
+        Encoders are shared across model cards, so the endpoint gathers every
+        local copy referenced by matching cards. Files also used by an unrelated
+        model (for example as an Aux/sidecar) require ``force=true``.
+        """
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot delete encoders")
+
+        body = body or {}
+        repo_id = str(body.get("repo_id") or "").strip()
+        file_path = str(body.get("file_path") or body.get("file") or "").strip()
+        file_name = str(body.get("file") or "").strip()
+        enc_id = str(body.get("id") or "").strip()
+        force = bool(body.get("force", False))
+
+        from backend.model_files import (
+            delete_targets,
+            encoder_component_refs,
+            model_file_refs,
+            safe_repo_rel,
+        )
+
+        refs: list[tuple[str, str]] = []
+        for raw in (file_path, file_name):
+            rel = safe_repo_rel(raw)
+            if repo_id and rel:
+                refs.append((repo_id, rel))
+
+        registry = get_registry()
+        matched_ids: set[str] = set()
+        used_by: list[dict[str, str]] = []
+        for model in registry.list_all():
+            primary_repo = model.sources.primary.repo_id if (model.sources and model.sources.primary) else ""
+            for encoder in getattr(model, "text_encoders", []) or []:
+                source = encoder.get("source") if isinstance(encoder.get("source"), dict) else {}
+                enc_repo = str(source.get("repo_id") or encoder.get("repo") or primary_repo or "")
+                enc_file = str(encoder.get("file") or encoder.get("path") or "")
+                enc_remote = str(source.get("file_path") or enc_file)
+                enc_key = str(encoder.get("id") or "")
+                if repo_id and enc_repo != repo_id:
+                    continue
+                if not (
+                    (file_name and file_name in (enc_file, enc_remote))
+                    or (file_path and file_path in (enc_file, enc_remote))
+                    or (enc_id and enc_id == enc_key)
+                ):
+                    continue
+                matched_ids.add(model.id)
+                used_by.append({"id": model.id, "name": model.name})
+                for ref in encoder_component_refs(encoder, primary_repo):
+                    if ref not in refs:
+                        refs.append(ref)
+
+        if not refs:
+            raise HTTPException(404, "Encoder reference is empty")
+
+        protected: set[tuple[str, str]] = set()
+        for model in registry.list_all():
+            if model.id not in matched_ids:
+                protected.update(model_file_refs(model))
+
+        safe = [ref for ref in refs if ref not in protected]
+        shared = [ref for ref in refs if ref in protected]
+        if shared and not force:
+            return {
+                "status": "shared",
+                "shared": [f"{repo}/{path}" for repo, path in shared],
+                "used_by": used_by,
+                "message": "Энкодер используется другими моделями. Подтвердите удаление ещё раз.",
+            }
+
+        cache = CacheManager()
+        result = delete_targets(cache, refs if force else safe)
+        if not result["deleted_files"]:
+            return {
+                "status": "not_found",
+                "shared": [f"{repo}/{path}" for repo, path in shared],
+                "used_by": used_by,
+                **result,
+                "message": "Файл энкодера не найден — возможно, он уже удалён",
+            }
+        return {
+            "status": "ok",
+            "shared": [f"{repo}/{path}" for repo, path in shared],
+            "used_by": used_by,
+            **result,
+            "message": "Энкодер удалён из локального кэша",
+        }
 
 
 
@@ -9186,11 +9379,43 @@ def create_app() -> FastAPI:
 
 
 
+            "models_dir", "output_dir",
+
+
+
         }
 
 
 
         updates = {k: v for k, v in body.items() if k in allowed}
+
+
+
+        if "models_dir" in updates or "output_dir" in updates:
+
+            for path_key in ("models_dir", "output_dir"):
+
+                if path_key not in updates:
+
+                    continue
+
+                raw_path = str(updates[path_key] or "").strip()
+
+                if not raw_path:
+
+                    raise HTTPException(400, f"{path_key} cannot be empty")
+
+                resolved = Path(raw_path).expanduser()
+
+                try:
+
+                    resolved.mkdir(parents=True, exist_ok=True)
+
+                except OSError as exc:
+
+                    raise HTTPException(400, f"Cannot use {path_key}: {exc}") from exc
+
+                updates[path_key] = resolved
 
 
 
@@ -9447,6 +9672,36 @@ def create_app() -> FastAPI:
 
 
             raise HTTPException(500, f"Engine download failed: {e}")
+
+
+    @app.post("/api/engine/uninstall")
+    async def api_engine_uninstall(body: Optional[dict] = None, request: Request = None):
+        """Remove SD.CPP, SDNQ, Nunchaku, or OrbitQuant (QuantFunc stays intact)."""
+        if request:
+            from backend.accounts import resolve_account_from_scope
+            caller = request.scope.get("state", {}).get("account") or resolve_account_from_scope(request.scope)
+            if caller.get("is_guest", False):
+                raise HTTPException(403, "Guests cannot uninstall engines")
+
+        body = body or {}
+        engine_type = str(body.get("engine") or "").strip().lower()
+        try:
+            if engine_type == "sd_cpp":
+                from backend.sd_cpp import uninstall_sd_cpp
+                result = await asyncio.to_thread(uninstall_sd_cpp)
+            elif engine_type == "sdnq":
+                from backend.sdnq_engine import uninstall_sdnq
+                result = await asyncio.to_thread(uninstall_sdnq)
+            elif engine_type in ("nunchaku", "orbitquant"):
+                from backend.extras import uninstall_component
+                result = await asyncio.to_thread(uninstall_component, engine_type)
+            else:
+                raise HTTPException(400, "engine must be sd_cpp, sdnq, nunchaku, or orbitquant")
+            return {"status": "ok", **result}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Engine uninstall failed: {e}")
 
 
 
@@ -11855,11 +12110,23 @@ def create_app() -> FastAPI:
 
         orig_w, orig_h = src_img.size
 
-
-
-
-
-
+        roi_rect = None
+        roi_payload = body.get("roi")
+        if isinstance(roi_payload, dict):
+            try:
+                roi_x = int(round(float(roi_payload.get("x", 0))))
+                roi_y = int(round(float(roi_payload.get("y", 0))))
+                roi_w = int(round(float(roi_payload.get("width", roi_payload.get("w", 0)))))
+                roi_h = int(round(float(roi_payload.get("height", roi_payload.get("h", 0)))))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Invalid ROI: x/y/width/height must be numbers")
+            if roi_w <= 0 or roi_h <= 0:
+                raise HTTPException(400, "Invalid ROI: width and height must be positive")
+            roi_x = max(0, min(orig_w - 1, roi_x))
+            roi_y = max(0, min(orig_h - 1, roi_y))
+            roi_w = max(1, min(orig_w - roi_x, roi_w))
+            roi_h = max(1, min(orig_h - roi_y, roi_h))
+            roi_rect = (roi_x, roi_y, roi_w, roi_h)
 
         save = bool(body.get("save", False))
 
@@ -11873,16 +12140,9 @@ def create_app() -> FastAPI:
 
 
         if save:
-
-
-
             preview_max_side = 0  # Always full resolution on save/export
-
-
-
-
-
-
+            roi_rect = None  # Exports always use the complete source
+        roi_arg = roi_rect
 
         mask_data = body.get("mask")
 
@@ -11905,25 +12165,11 @@ def create_app() -> FastAPI:
 
 
                 out_img = await _run_cpu_tool(
-
-
-
                     process_halftone_layers,
-
-
-
                     src_img,
-
-
-
                     layers_data,
-
-
-
                     preview_max_side,
-
-
-
+                    roi=roi_arg,
                 )
 
 
@@ -11933,29 +12179,12 @@ def create_app() -> FastAPI:
 
 
                 out_img = await _run_cpu_tool(
-
-
-
                     process_halftone_image,
-
-
-
                     src_img,
-
-
-
                     ht_params,
-
-
-
                     mask_data,
-
-
-
                     preview_max_side,
-
-
-
+                    roi=roi_arg,
                 )
 
 
@@ -12145,13 +12374,12 @@ def create_app() -> FastAPI:
 
 
             "orig_width": orig_w,
-
-
-
             "orig_height": orig_h,
-
-
-
+            "preview_max_side": preview_max_side,
+            "roi": (
+                {"x": roi_rect[0], "y": roi_rect[1], "width": roi_rect[2], "height": roi_rect[3]}
+                if roi_rect else None
+            ),
             "params": ht_params.to_dict(),
 
 

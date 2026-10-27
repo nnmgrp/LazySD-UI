@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -186,6 +187,21 @@ def download_sd_cpp(
 
     logger.info("SD.CPP ready at %s", cli_path)
     return cli_path
+
+
+def uninstall_sd_cpp() -> dict:
+    """Remove the managed SD.CPP directory (binary, CUDA DLLs, downloads)."""
+    target_dir = get_sd_cpp_dir()
+    removed = target_dir.exists()
+    if removed:
+        shutil.rmtree(target_dir)
+        logger.info("Removed SD.CPP directory: %s", target_dir)
+    return {
+        "engine": "sd_cpp",
+        "removed": removed,
+        "path": str(target_dir),
+        "message": "SD.CPP удалён" if removed else "SD.CPP уже не установлен",
+    }
 
 
 # Progress matching regex for stable-diffusion.cpp

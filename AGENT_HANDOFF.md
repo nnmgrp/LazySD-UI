@@ -212,6 +212,24 @@ G:\QuantFunc-WebUI\
 > m_f = np.maximum(rgb_lum, alpha_chan)
 > ```
 
+### 4.5. ROI-рендер и экспорт (`POST /api/halftone/process`)
+
+- `render_halftone_screen(..., roi=(x, y, w, h))` рендерит только видимую область
+  источника. Маска обрезается тем же прямоугольником (`_crop_mask_to_roi`), а
+  фаза растра сохраняется через `_pattern_frame_for_roi`: в кадр передаются
+  `offset_x/offset_y`, поэтому точки в ROI лежат ровно там же, где в полном
+  рендере. Без этого при зуме растр «прыгал» бы относительно базового превью.
+- `roi` валидируется в `app.py`: координаты клампятся к источнику, нулевые
+  ширина/высота отклоняются. `preview_max_side` ограничивает рабочую сторону
+  ROI; если ROI меньше лимита, он рендерится в нативном разрешении.
+- `save: true` **игнорирует** `roi` и принудительно ставит
+  `preview_max_side = 0`. Сохранение в галерею, скачивание и передача в Manga
+  всегда пересчитывают полный кадр из оригинала, а не берут live-превью.
+- Ответ содержит фактический `roi` (после клампа) — фронтенд позиционирует по
+  нему оверлей, не полагаясь на запрошенный прямоугольник.
+- Галерея/History передают `/outputs/...` как `image_path`, а не как
+  `image_data`; иначе base64 раздувает запрос и теряется исходное разрешение.
+
 ---
 
 ## 5. Фронтенд: двойная архитектура и правила синхронизации
@@ -224,15 +242,18 @@ G:\QuantFunc-WebUI\
 > Перед завершением работы обязательно проверяй оба файла через `node --check`.
 
 ### 5.1. Иерархия Z-Index и Pointer Events на холсте
-Внутри `#ht-preview-wrap` размещены 4 слоя:
+Внутри `#ht-preview-wrap` размещены 5 слоёв:
 1. `<img>` (`#ht-preview-img`) — базовое превью CPU (`z-index: 1`).
 2. `<canvas id="ht-live-canvas">` — живой рендер WebGL2:
    `position: absolute; inset: 0; z-index: 2; pointer-events: none;` (**pointer-events ДОЛЖЕН БЫТЬ NONE**, иначе он перехватывает клики у маски!).
-3. `<canvas id="ht-mask-canvas">` — оверлей маски (рубиновый полупрозрачный слой):
+3. `<img id="ht-roi-img">` (`.ht-roi-img`) — детальный ROI-оверлей CPU:
+   `position: absolute; z-index: 3; pointer-events: none;` Показывается только в
+   CPU-режиме (`qualityMode === "full"`) при зуме ≥ `1.08`, не в compare.
+4. `<canvas id="ht-mask-canvas">` — оверлей маски (рубиновый полупрозрачный слой):
    `position: absolute; inset: 0; z-index: 15;`
    - `pointer-events: auto` в режимах `brush` и `eraser`.
    - `pointer-events: none` в режимах `view` и `lasso`.
-4. `<canvas id="ht-lasso-overlay">` — оверлей пунктирного контура лассо:
+5. `<canvas id="ht-lasso-overlay">` — оверлей пунктирного контура лассо:
    `position: absolute; inset: 0; z-index: 20;`
    - `pointer-events: auto` в режиме `lasso`.
    - `pointer-events: none` в остальных режимах.
@@ -246,6 +267,79 @@ G:\QuantFunc-WebUI\
 - Поэтому при вызове `gl.texImage2D` для `glMaskTexture` параметр `UNPACK_FLIP_Y_WEBGL` **ОБЯЗАТЕЛЬНО ДОЛЖЕН БЫТЬ `false`**:
   `gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);`  
   (Если поставить `true`, маска будет наложена вверх ногами, а глобальное состояние WebGL перевернёт последующие текстуры!).
+
+### 5.4. Качество превью, адаптивный CPU/GPU и ROI
+
+Превью Halftone не должно рендерить полный кадр на каждый чих. Есть **два
+независимых переключателя**:
+
+- `qualityMode` — движок: `full` = CPU Canvas 2D, `live` = WebGL2 GPU.
+- `previewQuality` — качество превью: `auto` (по умолчанию), `performance`,
+  `maximum`.
+
+Значения `previewQuality` (кнопки `#ht-preview-quality-*`):
+
+| Режим | CPU (`qualityMode="full"`) | GPU (`qualityMode="live"`) |
+|---|---|---|
+| `auto` | база: `max(fitW, fitH) × devicePixelRatio` (мин. 256 px); при зуме — детальный ROI | `fit × zoom × DPR`, но не больше `max(sourceMax, 2048)` и лимитов GPU |
+| `performance` | `min(sourceMax, 1920)` | `min(sourceMax, 1920)` — это **потолок, не апскейл** |
+| `maximum` | полное разрешение источника (`preview_max_side = 0`) | `sourceMax`, ограниченный только GPU |
+
+- **CPU Auto + зум.** Базовое превью остаётся дешёвым и растягивается
+  (`image-rendering: pixelated` при фактическом масштабе ≥ 1.15), а поверх него
+  запрашивается ROI видимой области. ROI считается в координатах источника:
+  видимый прямоугольник вьюпорта переводится в пиксели обёртки, затем в пиксели
+  источника, с запасом `HT_ROI_MARGIN = 14%`. Порог — `HT_ROI_MIN_ZOOM = 1.08`.
+  `preview_max_side` для ROI = `max(viewportW, viewportH) × DPR × 1.35`; если ROI
+  меньше этого лимита, он приходит в нативном разрешении и браузер его только
+  увеличивает — это честная детализация, а не пересчёт экранного приближения.
+- **Позиционирование ROI.** `#ht-roi-img` лежит внутри той же
+  `#ht-preview-wrap`, поэтому наследует её transform. Смещение и размер
+  считаются как `rect.x / sourceW × fitW` и т.д. Не добавляй ROI отдельный
+  transform/скролл — он разъедется с базой при пан/зуме.
+- **Асинхронность.** У ROI свои `_roiAbort`, `_roiSeq`, `_roiTimer` и
+  `_roiSignature`. Подпись включает `x,y,w,h | _editRevision | previewQuality`,
+  поэтому кэш автоматически инвалидируется при правке параметров, кисти или
+  смене качества. Старый ответ не должен перезаписывать новый — всегда
+  сравнивай `seq` после `await`. `setHalftonePreviewQuality()` очищает
+  `roiDataUrl/roiRect/_roiSignature` и скрывает оверлей.
+- **GPU sizing.** `resizeHalftoneGpuCanvas()` считает целевой максимум по
+  формуле режима, затем клампит к `MAX_TEXTURE_SIZE`, `MAX_RENDERBUFFER_SIZE` и
+  `MAX_VIEWPORT_DIMS` (`getHalftoneGpuLimits`). В Auto/Performance размер
+  округляется до 64 px. Никакого искусственного потолка 2048 нет: 4K-источник
+  в Auto растёт до `fit × zoom × DPR` и упирается только в железо. При
+  Performance 1536-источник остаётся 1536 (никакого апскейла до 1920).
+- **Маски.** На каждом слое есть `_maskRevision`, `_maskDataUrl`,
+  `_maskDataUrlRevision` и `_glMaskRevision`. Data URL маски кэшируется и
+  пересобирается только при росте ревизии; GPU-текстура маски один раз
+  даунскейлится до `HT_GPU_MASK_MAX_SIDE = 2048` на ревизию. Не вызывай
+  `toDataURL()` маски в каждом кадре — это главный источник фризов кисти.
+- **AA.** В live-превью AA клампится до 2 (`AA2`). `AA4` допустим только в
+  экспорте: `buildHalftoneParamsPayload(st, forPreview)` и
+  `buildHalftoneLayersPayload(st, forPreview)` не должны резать параметры при
+  `forPreview = false`.
+- **Экспорт.** Сохранение/скачивание/передача в Manga вызывают backend с
+  `save: true` (для download/handoff — `preview_max_side: 0`), поэтому всегда
+  получают полный кадр исходного разрешения. Не экспортируй `ht-preview-img`
+  или `resultDataUrl`: там adaptive-превью.
+
+#### Ловушки адаптивной вёрстки
+
+- `#ht-preview-wrap` — единственный блок с абсолютно позиционированными
+  слоями. Правила `#ht-preview-wrap img { position:absolute; inset:0; ... }`
+  **нельзя** переносить на общий `.studio-preview-wrap`: Manga использует тот
+  же класс и ожидает обычный `img` в потоке (иначе картинка обрезается/прыгает).
+- Ширина `#ht-meta-info` фиксирована (`190px`). Текст «CPU 123 ms · 568×379 px»
+  не должен менять высоту тулбара. Если убрать фиксацию, `ResizeObserver`
+  увидит изменение `#ht-dropzone`, перезапустит превью, снова поменяет
+  метку — и получится бесконечный цикл, который обрывает ROI-запросы.
+- `scheduleHalftoneLayout()` обязан выходить, если `fitWidth/fitHeight` не
+  изменились. Оверлей «⏳ Обработка...» показывай только когда реально показан
+  loading-overlay, и снимай его в `finally` активного превью — иначе после
+  отменённого `maximum`-рендера он залипает.
+- `#ht-preview-wrap` задаёт явные `width/height` из `fit size`; `flex: 0 0 auto`
+  и `contain: layout paint` обязательны, иначе wrapper растягивается под
+  контейнер и координаты ROI/маски уезжают.
 
 ---
 
@@ -391,7 +485,8 @@ G:\QuantFunc-WebUI\
   варианты другой модели. Это проверяет `test_custom_model_delete_uses_safe_helpers`.
 - UI: кнопки `.btn-download` / `.btn-delete-files` — настоящие `<button>` с SVG;
   установленный вариант получает `.variant-state installed` → «На диске» и
-  отдельную кнопку удаления. `<details id="downloads-panel">` хранит open-state,
+  отдельную кнопку удаления. `<details id="downloads-panel">` всегда стартует
+  закрытой, open-state не сохраняется (localStorage больше не используется),
   показывает счётчик, прогресс, отмену и «Очистить завершённые»
   (`App.registerDownload`, `App.renderDownloads`, `App.clearFinishedDownloads`).
   `App.deleteModelFiles(modelId, variantId, btnEl)` подтверждает удаление,
@@ -421,12 +516,13 @@ G:\QuantFunc-WebUI\
 
 ### 6.7. Редактируемые карточки и скачивание компонентов
 
-- Редактировать можно **все** модели реестра, включая встроенные:
+- Редактировать и **удалять** можно все модели реестра, включая встроенные:
   `_find_custom_manifest()` больше не отказывает манифестам без `is_custom`,
   `GET/PATCH /api/models/{id}/card` возвращают `editable: true`. Гость
-  получает 403 на оба метода. Удаление встроенных моделей через UI
-  по-прежнему скрыто (кнопка только у `is_custom`), а защита базовых
-  системных моделей в `delete_custom_model()` не менялась.
+  получает 403. `delete_custom_model()` больше не содержит
+  `protected_system_models`: удаление встроенной карточки убирает её манифест
+  из `backend/registry/models/`, а `delete_files=true` дополнительно удаляет
+  только файлы из манифеста (общие TE/VAE/aux защищены).
 - `PATCH /api/models/{id}/card` принимает поля `name`, `description`, `family`,
   `pipeline`, `engine`, `steps`, `cfg`, `license`, `base_repo_id`, `tags`,
   `text_encoders`, `vae`, `aux_files`. Валидация в
@@ -445,6 +541,11 @@ G:\QuantFunc-WebUI\
   `llm/llm_repo/llm_file`, VAE — `vae/vae_repo/vae_file/vae_remote`, aux —
   `aux_files/aux_repo`. Если список очищен, старые ключи удаляются; иначе
   движок продолжит искать удалённый файл.
+- `_reconcile_engine_args()` при смене `engine` переносит основной вес в
+  `diffusion_model` (SDNQ/Nunchaku/OrbitQuant), в `checkpoint` для SDXL
+  (SD.CPP) или `diffusion_model` для остальных SD.CPP-моделей, удаляет
+  устаревшие ключи и гарантирует `base_models` для Extras-движков. Без этого
+  карточка после переключения движка продолжала бы искать старый checkpoint.
 - VAE-резолвер живёт в `backend/model_files.py`:
   - `vae_payload()` / `vae_payload_from_args()` возвращают `repo_id`, `path`,
     `installed`, `local_repo_id`, `local_path`, `inferred` и (при найденном
@@ -466,6 +567,14 @@ G:\QuantFunc-WebUI\
   источник берётся из `vae_repo`/`vae_remote`, а файл кладётся в
   `primary_repo/vae` (или `vae_file`) — как в `backend/sd_cpp.py`; если
   source-копия уже есть, она копируется без сети. Гость получает 403.
+- `POST /api/models/{id}/component-delete` удаляет один TE/VAE/aux:
+  `{role, index, id?, force?}`. `POST /api/encoders/delete` удаляет общий
+  энкодер: `{repo_id, file_path, file?, id?, force?}`. Оба endpoint'а сначала
+  считают ссылки **других** моделей (`split_shared_refs`) и при пересечении
+  возвращают `status="shared"` + список файлов, ничего не удаляя. Только
+  повторный запрос с `force=true` удаляет общий файл. Inferred repo-VAE
+  (`vae_component_refs(..., cache)`) тоже можно удалить, даже если он не
+  объявлен в манифесте.
 - `/api/models` и `/api/models/{id}/state` обязаны отдавать TE с `repo_id`,
   `path`, `precision`, `size_gb`, `installed`, VAE с `repo_id`, `path`,
   `installed`, `inferred`, `local_path`, и полный `aux_files`. Раньше Fibo
@@ -473,11 +582,22 @@ G:\QuantFunc-WebUI\
   `engine_args.llm*`, а не в repo-local путях манифеста.
 - UI: секции карточки — `<details class="model-card-section">`
   (Transformers / TE / VAE / Aux), у компонентов кнопки
-  `App.downloadModelComponent()` и удаления. Секция VAE рендерится у каждой
-  карточки, даже если VAE не объявлен (тогда — подсказка открыть редактор).
-  Кнопка «Редактировать» доступна всем, кроме гостя. Модалки —
-  `#model-card-editor-modal` и `#component-picker-modal`; состояние лежит в
-  `App.state.modelCardEditor` и `App.state.componentPicker`.
+  `App.downloadModelComponent()` и `App.deleteModelComponent()`. Секция VAE
+  рендерится у каждой карточки, даже если VAE не объявлен (тогда — подсказка
+  открыть редактор). Кнопки «Редактировать» и «Удалить» доступны всем, кроме
+  гостя; гость не видит и «Видимость». Вкладка «Энкодеры» показывает Delete
+  для скачанных и Download для отсутствующих (`App.deleteSharedEncoder`).
+- Все `<details>` (инспектор, карточки, редактор карточки, downloads-panel)
+  по умолчанию закрыты и не сохраняют open-state: пользователь открывает то,
+  что ему нужно. Не возвращай `open` в разметку и не добавляй localStorage
+  для аккордеонов.
+- Модалки управления моделями — `#model-card-editor-modal`,
+  `#component-picker-modal`, `#model-visibility-modal`,
+  `#custom-model-modal`; состояние редактора лежит в
+  `App.state.modelCardEditor` и `App.state.componentPicker`. Весь новый UI
+  (карточки, редактор, picker, видимость, энкодеры, движки) использует
+  `data-i18n`/`t()` и ключи `models.*`/`settings.engine.*`; не добавляй
+  русские строки прямо в JS.
 - Выбор компонента: HF не умеет искать репозитории по роли файла. Поэтому
   сначала ищется репозиторий (`/api/hf/search`), затем инспектируется его
   дерево, а найденные файлы фильтруются по TE/VAE/aux. Не обещай фильтр
@@ -486,7 +606,28 @@ G:\QuantFunc-WebUI\
   `frontend/index.html`; иначе браузер может показать старую карточку и
   спрятать новые кнопки/секции.
 
-### 6.8. Явная привязка LoRA к моделям
+### 6.8. Управление движками: Install / Update / Delete
+
+- В Settings → «Движки» у SD.CPP, SDNQ, Nunchaku и OrbitQuant есть три
+  действия: Install (повторная установка), Update (переустановка/обновление)
+  и Delete. У QuantFunc Delete нет — его бинарник и кейс обновляются отдельно.
+  Кнопки `.setting-btn.danger` локализованы (`settings.engine.*`).
+- `POST /api/engine/uninstall` с `{engine}`:
+  - `sd_cpp` — удаляет каталог движка (`get_sd_cpp_dir()`);
+  - `sdnq` — удаляет локальный source (`get_local_sdnq_dir()`) и пытается
+    `pip uninstall sdnq` в найденном окружении;
+  - `nunchaku` / `orbitquant` — только `pip uninstall` в управляемом
+    `envs/extras` venv.
+  Внешний `extras_python` не модифицируется: endpoint возвращает отказ, чтобы
+  не сломать чужой SD.Next/venv. Удаление движка не трогает кэш весов и
+  карточки моделей.
+- Extras install/update принимает `force`: Nunchaku переустанавливает wheel с
+  `--force-reinstall --no-deps`, OrbitQuant — `pip install --upgrade`.
+  Общий `envs/extras` (torch/diffusers) при удалении компонента сохраняется.
+- После uninstall/установки UI обновляет `refreshConfig()` и, для
+  Nunchaku/OrbitQuant, `refreshExtrasStatus(false)`.
+
+### 6.9. Явная привязка LoRA к моделям
 
 - Модельно-независимая LoRA — неправильная модель поведения. В метаданных
   `.loras_meta.json` хранятся `architecture`, `compatible_models`, `engine`,

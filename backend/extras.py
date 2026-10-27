@@ -417,7 +417,11 @@ def _job_main(job: dict, component: str) -> None:
             wheel = hf_hub_download(NUNCHAKU_REPO, plan["wheel"], local_dir=str(WHEELS_DIR),
                                     token=get_settings().huggingface_token or None)
             _step(job, "Installing Nunchaku wheel")
-            _pip(job, py, "install", wheel)
+            install_args = ["install"]
+            if job.get("force"):
+                install_args += ["--force-reinstall", "--no-deps"]
+            install_args.append(wheel)
+            _pip(job, py, *install_args)
             _step(job, "Verifying")
             invalidate_probe()
             env = inspect_env(force=True)
@@ -427,7 +431,10 @@ def _job_main(job: dict, component: str) -> None:
 
         elif component == "orbitquant":
             _step(job, "Installing OrbitQuant")
-            _pip(job, py, "install", ORBITQUANT_REQ)
+            if job.get("force"):
+                _pip(job, py, "install", "--upgrade", ORBITQUANT_REQ)
+            else:
+                _pip(job, py, "install", ORBITQUANT_REQ)
             _step(job, "Provisioning native kernels (optional)")
             cli = py.parent / ("orbitquant.exe" if IS_WINDOWS else "orbitquant")
             if cli.is_file():
@@ -466,7 +473,7 @@ def _public(job: dict) -> dict:
     return {k: v for k, v in job.items() if k not in ("cancel",)}
 
 
-def start_install(component: str) -> dict:
+def start_install(component: str, force: bool = False) -> dict:
     comp = str(component or "").lower().strip()
     if comp not in ("runtime", "nunchaku", "orbitquant"):
         raise ValueError(f"Неизвестный компонент '{comp}'. Допустимы: runtime | nunchaku | orbitquant")
@@ -476,11 +483,61 @@ def start_install(component: str) -> dict:
         job = {
             "id": uuid.uuid4().hex[:8], "component": comp, "state": "queued", "step": 0,
             "steps_total": 1, "step_label": "Queued", "log": [], "error": None,
-            "started": time.time(), "ended": None, "plan": None, "cancel": threading.Event(),
+            "started": time.time(), "ended": None, "plan": None, "force": bool(force),
+            "cancel": threading.Event(),
         }
         _JOBS[job["id"]] = job
     threading.Thread(target=_job_main, args=(job, comp), daemon=True).start()
     return _public(job)
+
+
+def uninstall_component(component: str) -> dict:
+    """Uninstall Nunchaku or OrbitQuant from the managed extras venv.
+
+    The shared torch/diffusers runtime is kept: the other quantized engine may
+    still need it. External environments are deliberately not modified
+    automatically because they are owned by the user.
+    """
+    comp = str(component or "").lower().strip()
+    if comp not in ("nunchaku", "orbitquant"):
+        raise ValueError(f"Неизвестный компонент '{comp}'. Допустимы: nunchaku | orbitquant")
+    if (get_settings().extras_python or "").strip():
+        raise RuntimeError(
+            "Extras Python указывает на внешнее окружение. Удалите пакет вручную "
+            "или очистите путь Extras Python, чтобы использовать управляемое окружение."
+        )
+    with _JOBS_LOCK:
+        if any(j["state"] in ("queued", "running") for j in _JOBS.values()):
+            raise RuntimeError("Дождитесь завершения текущей установки перед удалением")
+    py = venv_python()
+    if not py.is_file():
+        invalidate_probe()
+        return {
+            "engine": comp,
+            "removed": False,
+            "message": "Управляемое окружение Extras не создано — удалять нечего",
+        }
+
+    package = "nunchaku" if comp == "nunchaku" else "orbitquant"
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
+    proc = subprocess.run(
+        [str(py), "-m", "pip", "uninstall", "-y", package],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        creationflags=flags,
+    )
+    invalidate_probe()
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()[-2000:]
+    if proc.returncode != 0:
+        raise RuntimeError(f"pip uninstall {package} failed: {output or proc.returncode}")
+    return {
+        "engine": comp,
+        "removed": True,
+        "package": package,
+        "output": output,
+        "message": f"{comp} удалён из окружения Extras",
+    }
 
 
 def get_job(job_id: str) -> Optional[dict]:
@@ -535,7 +592,7 @@ def register_extras_routes(app) -> None:
         if not comp:
             raise HTTPException(400, "Параметр 'component' или 'target' обязателен (runtime | nunchaku | orbitquant)")
         try:
-            job = start_install(comp)
+            job = start_install(comp, force=bool(body.get("force", False)))
             return {"status": "ok", "job": job, "id": job["id"], "state": job["state"], **job}
         except ValueError as e:
             raise HTTPException(400, str(e))

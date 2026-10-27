@@ -27,6 +27,7 @@ from backend.halftone import (
     image_to_data_url,
     load_image_safe,
     process_halftone_image,
+    process_halftone_layers,
 )
 from backend.manga_pipeline import (
     MangaPipelineParams,
@@ -231,8 +232,83 @@ def test_halftone_validation():
     print("  ✓ Parameter validation & GenTonik (dither=none, satellites, layers) OK")
 
 
+def test_halftone_roi_parity():
+    print("[5/8] Testing Halftone ROI crop dimensions, screen phase, masks, and layer parity...")
+    h, w = 600, 800
+    y, x = np.mgrid[0:h, 0:w]
+    arr = np.stack([
+        (128 + 100 * np.sin(x / 37.0)).astype(np.uint8),
+        (128 + 100 * np.cos(y / 41.0)).astype(np.uint8),
+        (128 + 80 * np.sin((x + y) / 53.0)).astype(np.uint8),
+    ], axis=2)
+    source = Image.fromarray(arr, mode="RGB")
+    params = HalftoneParams.from_dict({
+        "mode": "manga",
+        "cell_size": 9,
+        "angle": 37,
+        "antialias": 2,
+        "dot_shape": "circle",
+        "pre_blur": 0.0,
+        "preserve_lines": False,
+    })
+    roi_payload = {"x": 200, "y": 100, "width": 300, "height": 200}
+    # Full preview is 0.5x; the ROI preview is also 0.5x, so both results are
+    # directly comparable after cropping the full render at (100, 50).
+    full = process_halftone_image(source, params, max_side=400)
+    roi = process_halftone_image(source, params, max_side=150, roi=roi_payload)
+    assert roi.size == (150, 100), f"Expected ROI preview 150x100, got {roi.size}"
+    full_arr = np.asarray(full.convert("RGB"))
+    roi_arr = np.asarray(roi.convert("RGB"))
+    expected = full_arr[50:150, 100:250]
+    diff = np.abs(expected.astype(np.int16) - roi_arr.astype(np.int16))
+    assert diff.mean() < 1.0, f"ROI phase mismatch: mean abs diff {diff.mean():.3f}"
+    assert (diff.max(axis=2) > 64).mean() < 0.002, "ROI phase mismatch: too many strongly different pixels"
+
+    # A full-size mask must be cropped to the ROI instead of resized as a whole.
+    mask_arr = np.zeros((h, w), dtype=np.uint8)
+    mask_arr[:, :400] = 255
+    mask_img = Image.fromarray(mask_arr, mode="L")
+    full_masked = process_halftone_image(source, params, mask_source=mask_img, max_side=400)
+    roi_masked = process_halftone_image(
+        source, params, mask_source=mask_img, max_side=150, roi=roi_payload,
+    )
+    if roi_masked.size != (150, 100):
+        raise AssertionError(f"Expected masked ROI preview 150x100, got {roi_masked.size}")
+    masked_diff = np.abs(
+        np.asarray(full_masked.convert("RGB"))[50:150, 100:250].astype(np.int16)
+        - np.asarray(roi_masked.convert("RGB")).astype(np.int16)
+    )
+    assert masked_diff.mean() < 1.0, f"ROI mask mismatch: mean abs diff {masked_diff.mean():.3f}"
+
+    # Layer compositing must use the same ROI crop and preserve mask alignment.
+    layers = [{
+        "visible": True,
+        "opacity": 0.9,
+        "blend_mode": "multiply",
+        "params": {
+            "mode": "manga",
+            "cell_size": 9,
+            "angle": 37,
+            "antialias": 2,
+            "dot_shape": "circle",
+            "pre_blur": 0.0,
+            "preserve_lines": False,
+        },
+        "mask": mask_img,
+    }]
+    full_layers = process_halftone_layers(source, layers, max_side=400)
+    roi_layers = process_halftone_layers(source, layers, max_side=150, roi=roi_payload)
+    assert roi_layers.size == (150, 100), f"Expected ROI layer preview 150x100, got {roi_layers.size}"
+    layer_diff = np.abs(
+        np.asarray(full_layers.convert("RGB"))[50:150, 100:250].astype(np.int16)
+        - np.asarray(roi_layers.convert("RGB")).astype(np.int16)
+    )
+    assert layer_diff.mean() < 1.0, f"ROI layer mismatch: mean abs diff {layer_diff.mean():.3f}"
+    print("  OK ROI crop dimensions, screen phase, masks, and layer parity")
+
+
 def test_manga_pipeline_stages():
-    print("[5/8] Testing Manga Screen AI stages (Levels, Line Extraction, Manga Finish, Manga Panel)...")
+    print("[6/8] Testing Manga Screen AI stages (Levels, Line Extraction, Manga Finish, Manga Panel)...")
     rgb = _make_sample_rgb(160, 120)
 
     # Stage B: Manga Levels
@@ -274,7 +350,7 @@ def test_manga_pipeline_stages():
 
 
 def test_lora_audit_and_compatibility():
-    print("[6/8] Testing backend/lora.py compatibility, architecture detection, and prompt tag isolation...")
+    print("[7/8] Testing backend/lora.py compatibility, architecture detection, and prompt tag isolation...")
     registry = get_registry()
     models = {m.id: m for m in registry.list_all()}
 
@@ -306,7 +382,7 @@ def test_lora_audit_and_compatibility():
 
 
 def test_fastapi_endpoints():
-    print("[7/8] Testing FastAPI endpoints (/api/halftone/*, /api/manga/*, /api/loras/check-compatibility, /api/history)...")
+    print("[8/8] Testing FastAPI endpoints (/api/halftone/*, /api/manga/*, /api/loras/check-compatibility, /api/history)...")
     from fastapi.testclient import TestClient
     from app import create_app, init_state
     from backend.settings import get_settings
@@ -342,16 +418,39 @@ def test_fastapi_endpoints():
         assert data_prev["status"] == "ok"
         assert data_prev["preview_data_url"].startswith("data:image/png;base64,")
         assert data_prev["saved"] is None
+        assert data_prev["width"] == 180 and data_prev["height"] == 140
+        assert data_prev["roi"] is None
 
-        # 4. Save Halftone to Gallery (save=True)
+        # 3b. ROI preview: crop source pixels and downscale only that region.
+        r_roi = client.post("/api/halftone/process", json={
+            "image_path": "uploads/ref_test_halftone_src.png",
+            "params": {"mode": "manga", "cell_size": 8, "dot_shape": "circle"},
+            "preview_max_side": 90,
+            "roi": {"x": 40, "y": 30, "width": 100, "height": 80},
+            "save": False,
+        })
+        assert r_roi.status_code == 200, r_roi.text
+        data_roi = r_roi.json()
+        assert data_roi["width"] == 90 and data_roi["height"] == 72, (
+            f"Unexpected ROI preview size: {data_roi['width']}x{data_roi['height']}"
+        )
+        assert data_roi["orig_width"] == 180 and data_roi["orig_height"] == 140
+        assert data_roi["roi"] == {"x": 40, "y": 30, "width": 100, "height": 80}
+
+        # 4. Save Halftone to Gallery (save=True). ROI and preview caps must be
+        # ignored so the exported gallery image always uses the full source.
         r_save = client.post("/api/halftone/process", json={
             "image_path": "uploads/ref_test_halftone_src.png",
             "params": {"mode": "newspaper", "cell_size": 10, "dot_shape": "diamond"},
+            "preview_max_side": 64,
+            "roi": {"x": 10, "y": 10, "width": 80, "height": 60},
             "save": True,
         })
         assert r_save.status_code == 200, r_save.text
         data_save = r_save.json()
         assert data_save["saved"] is not None
+        assert data_save["width"] == 180 and data_save["height"] == 140
+        assert data_save["roi"] is None and data_save["preview_max_side"] == 0
         saved_ht_path = Path(data_save["saved"]["path"])
         saved_files_to_cleanup.append(saved_ht_path)
         saved_files_to_cleanup.append(saved_ht_path.with_suffix(".json"))
@@ -406,6 +505,13 @@ def test_fastapi_endpoints():
         })
         assert r_bad_param.status_code == 400, "Invalid cell_size must be rejected with HTTP 400"
 
+        r_bad_roi = client.post("/api/halftone/process", json={
+            "image_path": "uploads/ref_test_halftone_src.png",
+            "params": {"mode": "manga"},
+            "roi": {"x": 5, "y": 5, "width": 0, "height": 20},
+        })
+        assert r_bad_roi.status_code == 400, "Invalid ROI dimensions must be rejected with HTTP 400"
+
     finally:
         for p in saved_files_to_cleanup:
             try:
@@ -422,6 +528,7 @@ if __name__ == "__main__":
     test_halftone_modes_shapes_and_decoupled_radius()
     test_halftone_mask_and_determinism()
     test_halftone_validation()
+    test_halftone_roi_parity()
     test_manga_pipeline_stages()
     test_lora_audit_and_compatibility()
     test_fastapi_endpoints()
