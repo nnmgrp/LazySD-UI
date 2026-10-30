@@ -677,6 +677,8 @@
   "dock.pinned_new": "Новый док закреплён снизу",
   "dock.unpin_new": "Открепить новый док",
   "dock.unpin_new_short": "Открепить",
+  "dock.lora_add": "+ Добавить LoRA",
+  "dock.lora_empty": "В библиотеке пока нет LoRA. Нажмите «+ Добавить LoRA».",
   "dock.model_details": "Показать детали модели",
   "dock.add_model_catalog": "Добавить модель",
   "dock.minimize_new": "Свернуть новый док",

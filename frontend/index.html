@@ -786,6 +786,20 @@
         <input type="file" id="dock-ref-file-input" accept="image/png,image/jpeg,image/webp" style="display: none;" onchange="App.onDockFileSelected(this)">
         <div class="new-dock-wrap" id="new-dock-wrap">
           <div class="new-dock-panel">
+            <div class="new-dock-ref-bar" id="new-dock-ref-bar" style="display: none;">
+              <div class="new-dock-ref-main">
+                <img id="new-dock-ref-thumb" class="new-dock-ref-thumb" alt="Ref">
+                <select id="new-dock-ref-mode" class="new-dock-ref-mode" onchange="App.onNewDockRefModeChange(this.value)"></select>
+                <div class="new-dock-ref-strength" title="Сила контроля / референса">
+                  <span id="new-dock-ref-strength-val">0.85</span>
+                  <input type="range" id="new-dock-ref-strength" min="0.05" max="1.00" step="0.05" value="0.85" oninput="App.onNewDockRefStrengthChange(this.value)">
+                </div>
+                <button type="button" class="new-dock-ref-btn" id="new-dock-ref-cn-btn" onclick="App.toggleNewDockControlNet()" title="Указать внешний файл ControlNet (.gguf)">+ ControlNet</button>
+                <button type="button" class="new-dock-ref-btn new-dock-ref-clear" onclick="App.clearImg2ImgRef()" title="Удалить референс" aria-label="Удалить референс">✕</button>
+              </div>
+              <input type="text" id="new-dock-ref-cn-path" class="new-dock-ref-cn-path" style="display: none;" placeholder="Опционально: путь к внешнему ControlNet .gguf (для Flux/Qwen нативный режим работает автоматически)" oninput="App.onNewDockControlNetPath(this.value)">
+            </div>
+
             <div class="new-dock-prompt-row">
               <button type="button" class="new-dock-grip" id="new-dock-drag-handle" title="Перетащить док в режиме Float" aria-label="Перетащить док">⠿</button>
               <textarea id="new-dock-prompt" rows="1" data-i18n-placeholder="prompt.placeholder" placeholder="Опишите изображение для генерации..."></textarea>
@@ -856,6 +870,14 @@
                   <span data-i18n="controls.vae">VAE</span>
                   <select id="new-dock-vae" onchange="App.onDockVaeSelect(this.value)"></select>
                 </label>
+                <div class="new-dock-model-section new-dock-lora-section" id="new-dock-lora-section">
+                  <div class="new-dock-model-section-heading">
+                    <span>LoRA <span id="new-dock-lora-count" class="new-dock-model-current">0</span></span>
+                    <button type="button" class="new-dock-popover-link" onclick="App.openLoraModal()" data-i18n="dock.lora_add">+ Add LoRA</button>
+                  </div>
+                  <div class="new-dock-lora-empty" id="new-dock-lora-empty" data-i18n="dock.lora_empty">No LoRA in the library yet.</div>
+                  <div class="new-dock-lora-list" id="new-dock-lora-list"></div>
+                </div>
                 <div class="new-dock-vram-card">
                   <div>
                     <strong id="new-dock-vram-value">—</strong>

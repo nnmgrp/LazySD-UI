@@ -677,6 +677,8 @@
   "dock.pinned_new": "The new dock is pinned to the bottom",
   "dock.unpin_new": "Unpin the new dock",
   "dock.unpin_new_short": "Unpin",
+  "dock.lora_add": "+ Add LoRA",
+  "dock.lora_empty": "No LoRA in the library yet. Use \"+ Add LoRA\".",
   "dock.model_details": "Show model details",
   "dock.add_model_catalog": "Add Model",
   "dock.minimize_new": "Minimize the new dock",

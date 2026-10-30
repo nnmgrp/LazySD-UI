@@ -408,6 +408,8 @@ export function updateNewDock(appRef) {
 
   if (activeNewDockPopover === "model") renderModelPopover(app);
 
+  syncNewDockRef(app);
+
   const negativeSummary = document.getElementById("new-dock-negative-summary");
   const negativePill = document.getElementById("new-dock-negative-pill");
   if (negativeSummary && negativePill) {
@@ -415,6 +417,84 @@ export function updateNewDock(appRef) {
     negativeSummary.textContent = `${tr("dock.negative_label_short", "Neg")} (${hasNegative ? tr("dock.on_short", "On") : tr("dock.off_short", "Off")})`;
     negativePill.classList.toggle("active", hasNegative || newDockShutterOpen && document.getElementById("new-dock-negative")?.style.display !== "none");
   }
+}
+
+// ---------- Reference / ControlNet bar ----------
+// The classic dock owns the real controls (#img2img-mode, #img2img-strength,
+// #controlnet-custom-path) that generation reads; the new dock mirrors and drives them.
+export function syncNewDockRef(appRef) {
+  const app = getApp(appRef);
+  const bar = document.getElementById("new-dock-ref-bar");
+  if (!app || !bar) return;
+  const ref = app.state?.img2imgRef;
+  const visible = Boolean(ref && ref.url);
+  bar.style.display = visible ? "flex" : "none";
+  if (!visible) return;
+
+  const thumb = document.getElementById("new-dock-ref-thumb");
+  if (thumb && thumb.getAttribute("src") !== ref.url) thumb.src = ref.url;
+
+  syncSelect("img2img-mode", "new-dock-ref-mode");
+
+  const srcStrength = document.getElementById("img2img-strength");
+  const strength = document.getElementById("new-dock-ref-strength");
+  const strengthVal = document.getElementById("new-dock-ref-strength-val");
+  if (srcStrength && strength) {
+    strength.max = srcStrength.max;
+    if (strength !== document.activeElement) strength.value = srcStrength.value;
+    if (strengthVal) strengthVal.textContent = Number(srcStrength.value).toFixed(2);
+  }
+
+  const srcCn = document.getElementById("controlnet-custom-path");
+  const cn = document.getElementById("new-dock-ref-cn-path");
+  const cnBtn = document.getElementById("new-dock-ref-cn-btn");
+  if (srcCn && cn) {
+    const active = srcCn.style.display !== "none";
+    if (cn !== document.activeElement) cn.value = srcCn.value;
+    cn.style.display = active ? "block" : "none";
+    if (cnBtn) cnBtn.classList.toggle("active", active && Boolean(srcCn.value.trim()));
+  }
+}
+
+export function onNewDockRefModeChange(value, appRef) {
+  const app = getApp(appRef);
+  const mode = document.getElementById("img2img-mode");
+  if (!mode) return;
+  mode.value = value;
+  app?.onRefModeChange?.();
+  syncNewDockRef(app);
+}
+
+export function onNewDockRefStrengthChange(value, appRef) {
+  const app = getApp(appRef);
+  const slider = document.getElementById("img2img-strength");
+  const label = document.getElementById("img2img-strength-val");
+  if (slider) slider.value = value;
+  if (label) label.textContent = Number(value).toFixed(2);
+  const ownLabel = document.getElementById("new-dock-ref-strength-val");
+  if (ownLabel) ownLabel.textContent = Number(value).toFixed(2);
+  if (app?.state) app.state.newDockRefDirty = true;
+}
+
+export function toggleNewDockControlNet(appRef) {
+  const app = getApp(appRef);
+  const srcCn = document.getElementById("controlnet-custom-path");
+  const cn = document.getElementById("new-dock-ref-cn-path");
+  if (!srcCn || !cn) return;
+  const show = srcCn.style.display === "none";
+  // Generation reads the classic input only while it is not display:none.
+  srcCn.style.display = show ? "block" : "none";
+  syncNewDockRef(app);
+  if (show) cn.focus();
+}
+
+export function onNewDockControlNetPath(value, appRef) {
+  const app = getApp(appRef);
+  const srcCn = document.getElementById("controlnet-custom-path");
+  if (srcCn) srcCn.value = value;
+  const cnBtn = document.getElementById("new-dock-ref-cn-btn");
+  if (cnBtn) cnBtn.classList.toggle("active", Boolean(String(value).trim()));
+  void app;
 }
 
 export function applyNewDockSettings(appRef) {
@@ -680,7 +760,10 @@ export function toggleNewDockPopover(name) {
   button?.setAttribute("aria-expanded", "true");
   if (name === "model") {
     window.requestAnimationFrame(() => {
-      if (activeNewDockPopover === "model") renderModelPopover(getApp());
+      if (activeNewDockPopover === "model") {
+        renderModelPopover(getApp());
+        getApp()?.renderLoraUI?.();
+      }
     });
   }
 }

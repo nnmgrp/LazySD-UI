@@ -3712,12 +3712,14 @@ const App = {
     } else {
       if (container) container.style.display = "none";
     }
+    this.updateNewDock?.(this);
   },
 
   clearImg2ImgRef() {
     this.state.img2imgRef = null;
     const container = document.getElementById("img2img-container");
     if (container) container.style.display = "none";
+    this.updateNewDock?.(this);
   },
 
   updateStrengthLabel(val) {
@@ -4182,6 +4184,7 @@ const App = {
       if (strSld) strSld.value = preset.strength;
       if (strVal) strVal.textContent = Number(preset.strength).toFixed(2);
     }
+    this.updateNewDock?.(this);
 
     this.updateModelTrigger();
     if (this.state.currentTab !== "generate") {
@@ -5911,6 +5914,34 @@ const App = {
       }
     }
 
+    const ndList = document.getElementById("new-dock-lora-list");
+    const ndEmpty = document.getElementById("new-dock-lora-empty");
+    const ndCount = document.getElementById("new-dock-lora-count");
+    if (ndCount) ndCount.textContent = String(count);
+    if (ndList && ndEmpty) {
+      ndEmpty.style.display = this.state.loraLibrary.length ? "none" : "block";
+      ndList.innerHTML = this.state.loraLibrary.map(item => {
+        const activeItem = this.state.activeLoras.find(l => l.name === item.name);
+        const isActive = !!activeItem;
+        const incompatible = !this.isLoraCompatible(item);
+        const strength = activeItem ? activeItem.strength : (Number(item.scale_default) || 1.0);
+        const safe = escapeHtml(item.name);
+        return `
+          <div class="new-dock-lora-row ${isActive ? "active" : ""} ${incompatible ? "incompatible" : ""}">
+            <div class="new-dock-lora-head" onclick="App.toggleLora('${safe}')">
+              <input type="checkbox" ${isActive ? "checked" : ""} ${incompatible && !isActive ? "disabled" : ""} onclick="event.stopPropagation(); App.toggleLora('${safe}')">
+              <span class="new-dock-lora-name" title="${safe}">${safe}</span>
+              ${this.loraCompatBadge(item)}
+            </div>
+            ${isActive ? `
+              <div class="new-dock-lora-slider">
+                <input type="range" min="-2.0" max="2.0" step="0.05" value="${strength}" oninput="App.setLoraStrength('${safe}', this.value)">
+                <span id="lora-weight-nd-${safe}">${Number(strength).toFixed(2)}</span>
+              </div>` : ""}
+          </div>`;
+      }).join("");
+    }
+
     const inspectorList = document.getElementById("lora-inspector-list");
     if (inspectorList) {
       if (this.state.activeLoras.length === 0) {
@@ -6092,6 +6123,8 @@ const App = {
       const el2 = document.getElementById(`lora-weight-insp-${name}`);
       if (el1) el1.textContent = item.strength.toFixed(2);
       if (el2) el2.textContent = item.strength.toFixed(2);
+      const el3 = document.getElementById(`lora-weight-nd-${name}`);
+      if (el3) el3.textContent = item.strength.toFixed(2);
     }
   },
 
