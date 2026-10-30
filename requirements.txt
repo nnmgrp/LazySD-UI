@@ -16,6 +16,8 @@ python-multipart>=0.0.9        # For FastAPI form data
 # hf_hub_download, HfApi). huggingface_hub 1.x changed the API significantly.
 huggingface_hub>=0.24.0,<1.0.0
 modelscope>=1.18.0,<2.0.0
+# Optional: multi-threaded downloads (enabled via HF_HUB_ENABLE_HF_TRANSFER=1 in start.bat)
+hf-transfer>=0.1.6
 
 # HTTP for engine binary download + verify.json
 requests>=2.31.0

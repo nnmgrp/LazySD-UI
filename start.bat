@@ -7,7 +7,10 @@ chcp 65001 >nul
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 set HF_HUB_DISABLE_XET=1
-set HF_HUB_ENABLE_HF_TRANSFER=0
+REM Multi-threaded Rust downloader (needs: pip install hf-transfer, see requirements.txt)
+set HF_HUB_ENABLE_HF_TRANSFER=1
+REM Optional mirror if huggingface.co CDN is slow. WARNING: HF_TOKEN would be sent to the mirror.
+REM set HF_ENDPOINT=https://hf-mirror.com
 cd /d "%~dp0"
 
 echo === LazySD UI ===
