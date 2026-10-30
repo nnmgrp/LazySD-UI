@@ -370,31 +370,38 @@ const App = {
   },
 
   async refreshConfig() {
-    // Re-fetch config from backend after a state change (e.g. engine download).
+    // Re-fetch config from backend after a state change (e.g. engine download, model card edit).
+    // Each UI step is isolated so one failing renderer can never leave the Hub showing stale data.
+    let config;
     try {
-      const config = await this.apiGet("/api/config");
-      this.state.config = config;
-      this.state.account = config.account || { role: "host", id: "host", username: t("common.host"), is_guest: false };
-      this.state.settings = config.settings;
-      this.state.gpuInfo = config.gpu;
-      this.state.engineStatus = config.engine_status;
-      this.state.models = this.sortModelsList(config.models || []);
-      this.renderPaths(config);
-      if (config.settings?.qwen_vae_type) {
-        this.state.selectedVae = config.settings.qwen_vae_type;
-      }
-      window.QF_INITIAL_CONFIG = config;
-      window.QF_SETTINGS = config.settings;
-      this.updateAccountRoleUI();
-      this.renderGpuIndicator();
-      this.renderSystemStats(config.system_stats);
-      this.renderModels();
-      this.updateEngineStatusUI();
-      this.updateDockPills();
-      if (config.presence) this.applyPresence(config.presence);
+      const res = await this._fetchWithRetry("/api/config", { cache: "no-store" }, 2);
+      config = await res.json();
     } catch (e) {
       console.error("[app] Failed to refresh config:", e);
+      return;
     }
+    const step = (name, fn) => {
+      try { fn(); } catch (e) { console.error(`[app] refreshConfig step '${name}' failed:`, e); }
+    };
+    this.state.config = config;
+    this.state.account = config.account || { role: "host", id: "host", username: t("common.host"), is_guest: false };
+    this.state.settings = config.settings;
+    this.state.gpuInfo = config.gpu;
+    this.state.engineStatus = config.engine_status;
+    this.state.models = this.sortModelsList(config.models || []);
+    // Shared-encoder list is derived from model cards; force a refetch on next Encoders view.
+    this.state.encoders = null;
+    window.QF_INITIAL_CONFIG = config;
+    window.QF_SETTINGS = config.settings;
+    step("paths", () => this.renderPaths(config));
+    step("vae", () => { if (config.settings?.qwen_vae_type) this.state.selectedVae = config.settings.qwen_vae_type; });
+    step("account", () => this.updateAccountRoleUI());
+    step("gpu", () => this.renderGpuIndicator());
+    step("stats", () => this.renderSystemStats(config.system_stats));
+    step("models", () => this.renderModels());
+    step("engine", () => this.updateEngineStatusUI());
+    step("dock", () => this.updateDockPills());
+    step("presence", () => { if (config.presence) this.applyPresence(config.presence); });
   },
 
   // ---------- Connected users / presence ----------
@@ -5158,6 +5165,7 @@ const App = {
       if (this.state.selectedModel === editor.modelId) {
         await this.onModelChange(this.state.selectedVariant || null);
       }
+      await this.renderModelsTab();
     } catch (e) {
       this.toast("error", e.message);
     }
