@@ -5606,6 +5606,19 @@ body:not(.role-guest) #guest-mode-banner {
 .new-dock-pill-caret { color: #64748b; font-size: 12px; }
 .new-dock-mono-pill #new-dock-resolution-summary,
 .new-dock-mono-pill #new-dock-params-summary { font-family: var(--font-mono, monospace); font-size: 11px; }
+#new-dock-model-pill {
+  flex: 0 0 min(260px, 42vw);
+  min-width: 0;
+  max-width: min(260px, 42vw);
+}
+#new-dock-model-summary {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .new-dock-negative-pill { color: #94a3b8; }
 .new-dock-negative-pill.active { color: #fda4af; background: rgba(244, 63, 94, 0.12); }
 .new-dock-negative-pill .new-dock-pill-icon { color: #fb7185; }
@@ -5750,12 +5763,14 @@ body:not(.role-guest) #guest-mode-banner {
 #new-dock-popover-model.details-open {
   grid-template-columns: 188px minmax(0, 1fr);
   width: min(420px, calc(100vw - 28px));
+  height: min(440px, calc(100vh - 120px));
 }
 .new-dock-model-list-pane {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 10px 8px 8px;
   background: #141b27;
 }
@@ -5766,7 +5781,7 @@ body:not(.role-guest) #guest-mode-banner {
 }
 .new-dock-model-list {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 2px;
   min-height: 0;
@@ -5842,10 +5857,11 @@ body:not(.role-guest) #guest-mode-banner {
 }
 .new-dock-model-vram-link {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 7px;
   min-height: 30px;
-  margin-top: 6px;
+  margin-top: auto;
   padding: 0 9px;
   border: 0;
   border-radius: 8px;
@@ -6109,7 +6125,11 @@ body:not(.role-guest) #guest-mode-banner {
 .new-dock-resolution-manual > button:hover { color: #fff; background: #1e293b; }
 @media (max-width: 520px) {
   #new-dock-popover-model:not(.details-open) { width: min(208px, calc(100vw - 24px)); }
-  #new-dock-popover-model.details-open { grid-template-columns: 132px minmax(0, 1fr); width: calc(100vw - 24px); }
+  #new-dock-popover-model.details-open {
+    grid-template-columns: 132px minmax(0, 1fr);
+    width: calc(100vw - 24px);
+    height: min(440px, calc(100vh - 120px));
+  }
   .new-dock-model-list-pane { padding-inline: 5px; }
   .new-dock-model-detail { padding: 9px; }
   .new-dock-model-select { padding-left: 6px; font-size: 10px; }
