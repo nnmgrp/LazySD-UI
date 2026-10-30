@@ -5781,13 +5781,16 @@ body:not(.role-guest) #guest-mode-banner {
 }
 .new-dock-model-list {
   display: flex;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   flex-direction: column;
   gap: 2px;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #2a374a transparent;
+}
+#new-dock-popover-model.details-open .new-dock-model-list {
+  flex: 1 1 0;
 }
 .new-dock-model-row {
   display: flex;
