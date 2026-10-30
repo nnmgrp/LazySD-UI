@@ -86,7 +86,12 @@ os.environ["HF_HUB_DISABLE_XET"] = "1"
 
 
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+try:
+    import hf_transfer as _hf_transfer_probe  # noqa: F401
+    _HF_TRANSFER_OK = os.environ.get("HF_HUB_ENABLE_HF_TRANSFER", "0") == "1"
+except Exception:
+    _HF_TRANSFER_OK = False
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1" if _HF_TRANSFER_OK else "0"
 
 
 
@@ -102,7 +107,7 @@ try:
 
 
 
-    _hfc.HF_HUB_ENABLE_HF_TRANSFER = False
+    _hfc.HF_HUB_ENABLE_HF_TRANSFER = _HF_TRANSFER_OK
 
 
 
