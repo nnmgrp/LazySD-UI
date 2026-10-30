@@ -2108,6 +2108,29 @@
 
           </div>
 
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong data-i18n="settings.hf_transfer">Fast HF downloads (hf_transfer)</strong><br>
+              <small id="setting-hf-transfer-hint" style="color: var(--text-dim);" data-i18n="settings.hf_transfer_hint">Multi-threaded downloader. Requires the hf-transfer package.</small>
+            </div>
+            <div class="setting-value" style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="setting-hf-transfer" onchange="saveHfDownloadSettings()" style="width: 18px; height: 18px; cursor: pointer;">
+              <label for="setting-hf-transfer" style="font-size: 13px; cursor: pointer; color: var(--text-main);" data-i18n="settings.hf_transfer_label">Enable</label>
+            </div>
+            <div></div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <strong data-i18n="settings.hf_endpoint">HF mirror (endpoint)</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.hf_endpoint_hint">Empty = huggingface.co. Example: https://hf-mirror.com. The HF token is sent to this host.</small>
+            </div>
+            <div class="setting-value">
+              <input type="text" id="setting-hf-endpoint" placeholder="https://hf-mirror.com" onchange="saveHfDownloadSettings()" style="width: 100%; font-family: monospace; font-size: 12px;">
+            </div>
+            <div></div>
+          </div>
+
           <div class="setting-row" id="setting-row-hf-token">
 
             <div class="setting-label">
@@ -4500,6 +4523,19 @@
 
     }
 
+    async function saveHfDownloadSettings() {
+      const body = {
+        hf_transfer: document.getElementById("setting-hf-transfer").checked,
+        hf_endpoint: document.getElementById("setting-hf-endpoint").value.trim(),
+      };
+      try {
+        await App.apiPatch("/api/settings", body);
+        App.toast("success", t("toast.settings_saved"));
+      } catch (e) {
+        App.toast("error", e.message);
+      }
+    }
+
     async function saveSettings() {
 
       const body = {
@@ -4902,6 +4938,20 @@
 
         document.getElementById("setting-vram-mode").value = config.settings.vram_mode;
 
+      }
+
+      // HF download options
+      {
+        const htChk = document.getElementById("setting-hf-transfer");
+        const epInp = document.getElementById("setting-hf-endpoint");
+        const htHint = document.getElementById("setting-hf-transfer-hint");
+        if (htChk) {
+          htChk.checked = Boolean(config.settings.hf_transfer);
+          const avail = config.settings.hf_transfer_available !== false;
+          htChk.disabled = !avail;
+          if (htHint && !avail) htHint.textContent = (config.settings.hf_fast_backend === "xet") ? "hf_xet is not installed: pip install hf_xet" : "hf-transfer is not installed: pip install hf-transfer";
+        }
+        if (epInp) epInp.value = config.settings.hf_endpoint || "";
       }
 
       // Qwen VAE selection

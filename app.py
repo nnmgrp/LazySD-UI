@@ -118,9 +118,61 @@ except Exception:
     pass
 
 
+def hf_fast_backend():
+    """Which fast-download backend the installed huggingface_hub supports.
+
+    huggingface_hub 1.x dropped hf_transfer (Xet replaced it); 0.x still uses hf_transfer.
+    Returns (backend_name, package_installed).
+    """
+    import importlib.util
+    try:
+        import huggingface_hub
+        major = int(str(huggingface_hub.__version__).split(".")[0])
+    except Exception:
+        major = 0
+    if major >= 1:
+        return "xet", importlib.util.find_spec("hf_xet") is not None
+    return "hf_transfer", importlib.util.find_spec("hf_transfer") is not None
 
 
+def apply_hf_download_settings(fast_enabled=False, endpoint=None):
+    """Apply fast-download toggle + HF mirror to env and huggingface_hub constants.
 
+    Safe to call at runtime: huggingface_hub reads these constants per call.
+    Returns (fast_active, backend, endpoint_in_use).
+    """
+    backend, installed = hf_fast_backend()
+    active = bool(fast_enabled) and installed
+    if backend == "xet":
+        # Xet was disabled by default after an allocator crash (see git f26a624),
+        # so it is strictly opt-in via the Settings toggle.
+        os.environ["HF_HUB_DISABLE_XET"] = "0" if active else "1"
+        if active:
+            os.environ["HF_XET_HIGH_PERFORMANCE"] = "1"
+        else:
+            os.environ.pop("HF_XET_HIGH_PERFORMANCE", None)
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+    else:
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1" if active else "0"
+    ep = str(endpoint or "").strip().rstrip("/")
+    if ep and not ep.lower().startswith(("http://", "https://")):
+        ep = ""
+    used = ep or "https://huggingface.co"
+    if ep:
+        os.environ["HF_ENDPOINT"] = ep
+    else:
+        os.environ.pop("HF_ENDPOINT", None)
+    try:
+        import huggingface_hub.constants as hfc
+        if backend == "xet":
+            hfc.HF_HUB_DISABLE_XET = not active
+        else:
+            hfc.HF_HUB_ENABLE_HF_TRANSFER = active
+        hfc.ENDPOINT = used
+        hfc.HUGGINGFACE_CO_URL_TEMPLATE = used + "/{repo_id}/resolve/{revision}/{filename}"
+    except Exception:
+        pass
+    return active, backend, used
 
 
 import sys
@@ -582,6 +634,9 @@ def init_state() -> None:
 
 
     print(f"[startup] Settings loaded from: {settings.settings_file_path}")
+    _hf_on, _hf_be, _hf_ep = apply_hf_download_settings(
+        getattr(settings, "hf_transfer", False), getattr(settings, "hf_endpoint", None))
+    print(f"[startup] HF downloads: fast={'on' if _hf_on else 'off'} ({_hf_be}), endpoint={_hf_ep}")
 
 
 
@@ -2608,6 +2663,10 @@ def create_app() -> FastAPI:
 
 
                 "download_source_priority": settings.download_source_priority,
+                "hf_transfer": bool(getattr(settings, "hf_transfer", False)),
+                "hf_fast_backend": hf_fast_backend()[0],
+                "hf_transfer_available": hf_fast_backend()[1],
+                "hf_endpoint": getattr(settings, "hf_endpoint", None) or "",
 
 
 
@@ -9341,6 +9400,7 @@ def create_app() -> FastAPI:
 
 
             "download_source_priority", "auto_update_engine",
+            "hf_transfer", "hf_endpoint",
 
 
 
@@ -9428,7 +9488,15 @@ def create_app() -> FastAPI:
 
 
 
+            if "hf_endpoint" in updates:
+                _ep = str(updates["hf_endpoint"] or "").strip()
+                if _ep and not _ep.lower().startswith(("http://", "https://")):
+                    raise HTTPException(400, "hf_endpoint must start with http:// or https://")
+                updates["hf_endpoint"] = _ep.rstrip("/")
             settings.update(**updates)
+            if "hf_transfer" in updates or "hf_endpoint" in updates:
+                apply_hf_download_settings(
+                    getattr(settings, "hf_transfer", False), getattr(settings, "hf_endpoint", None))
 
 
 

@@ -99,6 +99,12 @@ class Settings(BaseModel):
     auto_update_engine: bool = False      # Offline-first — disabled by default
     huggingface_token: Optional[str] = None
     modelscope_token: Optional[str] = None
+    # Fast HF downloads: hf_transfer (huggingface_hub 0.x) or Xet high-performance (1.x).
+    # Off by default: Xet previously crashed with an allocator error on this setup.
+    hf_transfer: bool = False
+    # Optional HF mirror base URL (e.g. https://hf-mirror.com). Empty = official.
+    # NOTE: the HF token is sent to this host too.
+    hf_endpoint: Optional[str] = None
 
     # ---------- QuantFunc auth ----------
     # Optional user API key (format "qf_..."). Passed to the engine as --apikey.
@@ -254,7 +260,7 @@ class Settings(BaseModel):
         to avoid accidental resets when a caller omits a key.
         """
         clearable = {"quantfunc_api_key", "huggingface_token", "modelscope_token",
-                     "share_token", "extras_python"}
+                     "share_token", "extras_python", "hf_endpoint"}
         for key, value in kwargs.items():
             if key not in ("models_dir", "output_dir", "cache_dir", "engine_dir"):
                 if not hasattr(self, key):
