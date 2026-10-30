@@ -10,7 +10,7 @@
 
   <title>LazySD UI</title>
 
-  <link rel="stylesheet" href="/css/styles.css?v=20261027_03">
+  <link rel="stylesheet" href="/css/styles.css?v=20261030_01">
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EL%3C/text%3E%3C/svg%3E">
 
@@ -163,8 +163,10 @@
       </div>
 
       <div class="nav-section">
-
-        <div class="nav-section-title" data-i18n="nav.section.tools">Tools</div>
+        <div class="nav-section-title nav-tools-heading">
+          <span data-i18n="nav.section.tools">Tools</span>
+          <button type="button" class="nav-float-toggle" id="new-dock-float-toggle" onclick="App.toggleNewDockFloat()" data-i18n-title="dock.float_toggle_title" title="Переключить закреплённый / плавающий новый док">↗ Float</button>
+        </div>
 
         <button class="nav-item" data-tab="models">
 
@@ -715,8 +717,6 @@
 
               <div class="dock-bottom-bar">
 
-                <input type="file" id="dock-ref-file-input" accept="image/png,image/jpeg,image/webp" style="display: none;" onchange="App.onDockFileSelected(this)">
-
                 <div class="dock-pills-left">
 
                   <button type="button" class="dock-pill" onclick="document.getElementById('dock-ref-file-input').click()" title="Прикрепить референс / ControlNet изображение">
@@ -782,6 +782,134 @@
             </div>
 
           </div>
+
+        <input type="file" id="dock-ref-file-input" accept="image/png,image/jpeg,image/webp" style="display: none;" onchange="App.onDockFileSelected(this)">
+        <div class="new-dock-wrap" id="new-dock-wrap">
+          <div class="new-dock-panel">
+            <div class="new-dock-prompt-row">
+              <button type="button" class="new-dock-grip" id="new-dock-drag-handle" title="Перетащить док в режиме Float" aria-label="Перетащить док">⠿</button>
+              <textarea id="new-dock-prompt" rows="1" data-i18n-placeholder="prompt.placeholder" placeholder="Опишите изображение для генерации..."></textarea>
+              <button type="button" class="new-dock-shutter-toggle" onclick="App.toggleNewDockShutter()" id="new-dock-shutter-toggle" data-i18n-title="dock.open_parameters" title="Open parameters" aria-label="Open parameters" aria-expanded="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M13 4v6M7 14v6"/></svg>
+                <span class="new-dock-shutter-caret">⌃</span>
+              </button>
+              <button type="button" class="new-dock-minimize" onclick="App.toggleDockMinimized()" data-i18n-title="dock.minimize_new" title="Свернуть новый док" aria-label="Свернуть новый док">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+              </button>
+              <button type="button" class="new-dock-generate" id="new-dock-generate" onclick="App.onGenerate()" title="Сгенерировать изображение (Ctrl+Enter)">
+                <span class="new-dock-generate-sparkle">✣</span><span data-i18n="dock.run_short">Пуск</span>
+              </button>
+            </div>
+
+            <div class="new-dock-negative" id="new-dock-negative" style="display: none;">
+              <span aria-hidden="true">🚫</span>
+              <textarea id="new-dock-negative-prompt" rows="1" data-i18n-placeholder="prompt.negative_placeholder" placeholder="Негативный промпт (blurry, low quality, deformed, watermark)..."></textarea>
+              <button type="button" onclick="document.getElementById('new-dock-negative-prompt').value = ''; document.getElementById('new-dock-negative-prompt').dispatchEvent(new Event('input', { bubbles: true }));" title="Очистить негативный промпт">Очистить</button>
+            </div>
+
+            <div class="new-dock-settings-row" id="new-dock-settings-row" style="display: none;">
+              <button type="button" class="new-dock-setting-pill" id="new-dock-model-pill" onclick="App.toggleNewDockPopover('model')">
+                <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 13h6l-1 8 9-12h-6l1-6Z"/></svg></span><span id="new-dock-model-summary">Модель: —</span><span class="new-dock-pill-caret">⌄</span>
+              </button>
+              <button type="button" class="new-dock-setting-pill new-dock-mono-pill" id="new-dock-resolution-pill" onclick="App.toggleNewDockPopover('resolution')">
+                <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M9 5v4H4m16 6h-5v4"/></svg></span><span id="new-dock-resolution-summary">1:1 · 1024×1024</span><span class="new-dock-pill-caret">⌄</span>
+              </button>
+              <button type="button" class="new-dock-setting-pill new-dock-mono-pill" id="new-dock-params-pill" onclick="App.toggleNewDockPopover('params')">
+                <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.14 12.94a7.5 7.5 0 0 0 0-1.88l2.03-1.58-2-3.46-2.39.96a7.5 7.5 0 0 0-1.63-.94L14.79 3h-4l-.36 3.04a7.5 7.5 0 0 0-1.63.94l-2.39-.96-2 3.46 2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58 2 3.46 2.39-.96a7.5 7.5 0 0 0 1.63.94L10.79 21h4l.36-3.04a7.5 7.5 0 0 0 1.63-.94l2.39.96 2-3.46z"/></svg></span><span id="new-dock-params-summary">Euler · 4 st · CFG 3.0</span><span class="new-dock-pill-caret">⌄</span>
+              </button>
+              <button type="button" class="new-dock-setting-pill new-dock-negative-pill" id="new-dock-negative-pill" onclick="App.toggleNewDockNegative()">
+                <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/></svg></span><span id="new-dock-negative-summary">Neg (Off)</span>
+              </button>
+              <button type="button" class="new-dock-setting-pill new-dock-pin-pill" id="new-dock-pin-toggle" onclick="App.toggleNewDockFloat()" data-i18n-title="dock.pin_new" title="Закрепить новый док снизу" aria-pressed="false">
+                <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 4h8l-1 5 3 3v2H6v-2l3-3-1-5Z"/><path d="M12 14v7"/></svg></span><span id="new-dock-pin-label" data-i18n="dock.pin_new_short">Закрепить</span>
+              </button>
+            </div>
+
+            <div class="new-dock-popover" id="new-dock-popover-model" style="display: none;">
+              <div class="new-dock-model-list-pane">
+                <div class="new-dock-model-pane-title" data-i18n="dock.model_prefix">Model</div>
+                <div class="new-dock-model-list" id="new-dock-model-list"></div>
+                <button type="button" class="new-dock-model-vram-link" onclick="App.openModelPickerModal()">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14"/></svg><span data-i18n="dock.add_model_catalog">Add Model</span><span>›</span>
+                </button>
+              </div>
+              <div class="new-dock-model-detail" id="new-dock-model-detail">
+                <div class="new-dock-model-detail-header">
+                  <div>
+                    <strong id="new-dock-model-name">—</strong>
+                    <span id="new-dock-model-architecture"></span>
+                  </div>
+                  <button type="button" class="new-dock-popover-link" onclick="App.openCustomModelModal()" data-i18n="dock.add_model_short">+ Add</button>
+                </div>
+                <div class="new-dock-model-section">
+                  <div class="new-dock-model-section-heading">
+                    <span data-i18n="dock.weights_quantization">Weight quantization</span>
+                    <span class="new-dock-model-current" id="new-dock-quant-current"></span>
+                  </div>
+                  <div class="new-dock-quant-grid" id="new-dock-quant-options"></div>
+                </div>
+                <div class="new-dock-model-section" id="new-dock-encoder-section">
+                  <div class="new-dock-model-section-heading" data-i18n="dock.text_encoder">Text Encoder (CLIP/T5)</div>
+                  <div class="new-dock-encoder-list" id="new-dock-encoder-options"></div>
+                </div>
+                <label class="new-dock-model-section new-dock-popover-field" id="new-dock-vae-control" style="display: none;">
+                  <span data-i18n="controls.vae">VAE</span>
+                  <select id="new-dock-vae" onchange="App.onDockVaeSelect(this.value)"></select>
+                </label>
+                <div class="new-dock-vram-card">
+                  <div>
+                    <strong id="new-dock-vram-value">—</strong>
+                    <span id="new-dock-vram-caption"></span>
+                  </div>
+                  <span class="new-dock-vram-meter">•</span>
+                </div>
+              </div>
+              <select id="new-dock-model" class="new-dock-sync-select" aria-hidden="true" tabindex="-1"></select>
+              <select id="new-dock-variant" class="new-dock-sync-select" aria-hidden="true" tabindex="-1"></select>
+              <select id="new-dock-te-sync" class="new-dock-sync-select" aria-hidden="true" tabindex="-1"></select>
+            </div>
+
+            <div class="new-dock-popover new-dock-popover-resolution" id="new-dock-popover-resolution" style="display: none;">
+              <div class="new-dock-resolution-heading">
+                <strong data-i18n="dock.frame_resolution">Frame resolution</strong>
+                <span id="new-dock-resolution-meta">1:1 · 1.05 MP</span>
+              </div>
+              <div class="new-dock-resolution-grid" id="new-dock-resolution-presets"></div>
+              <div class="new-dock-resolution-manual-label" data-i18n="dock.manual_size">Manual (W × H)</div>
+              <div class="new-dock-resolution-manual">
+                <label><span>W</span><input id="new-dock-width" type="number" min="256" max="2048" step="64" onchange="App.updateNewDockResolutionFromInputs()"></label>
+                <button type="button" onclick="App.swapNewDockResolution()" data-i18n-title="dock.swap_dimensions" title="Swap width and height">↔</button>
+                <label><span>H</span><input id="new-dock-height" type="number" min="256" max="2048" step="64" onchange="App.updateNewDockResolutionFromInputs()"></label>
+              </div>
+              <select id="new-dock-resolution" class="new-dock-sync-select" aria-hidden="true" tabindex="-1"></select>
+            </div>
+
+            <div class="new-dock-popover new-dock-popover-params" id="new-dock-popover-params" style="display: none;">
+              <div class="new-dock-params-heading"><span>☷</span><strong data-i18n="dock.sampling_parameters">Sampling parameters</strong></div>
+              <label class="new-dock-popover-field"><span data-i18n="controls.sampler">Sampler</span><select id="new-dock-sampler" onchange="App.onNewDockParamChange('sampler', this.value)"></select></label>
+              <div class="new-dock-range-field">
+                <div><span data-i18n="dock.steps_bilingual">Steps (Шаги)</span><strong id="new-dock-steps-value">4</strong></div>
+                <input id="new-dock-steps" type="range" min="1" max="50" step="1" oninput="App.onNewDockParamChange('steps', this.value)">
+              </div>
+              <div class="new-dock-range-field">
+                <div><span>CFG Scale</span><strong id="new-dock-cfg-value">3.0</strong></div>
+                <input id="new-dock-cfg" type="range" min="1" max="20" step="0.1" oninput="App.onNewDockParamChange('cfg', this.value)">
+              </div>
+              <input id="new-dock-noise" class="new-dock-sync-select" type="hidden">
+              <div class="new-dock-seed-field">
+                <label for="new-dock-seed" data-i18n="dock.seed_bilingual">Seed (Зерно генерации)</label>
+                <div>
+                  <input id="new-dock-seed" type="text" onchange="App.onNewDockParamChange('seed', this.value)">
+                  <button type="button" onclick="App.randomizeNewDockSeed()" title="Random seed">♧ <span>Dice</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="new-dock-minimized-pill" onclick="App.toggleDockMinimized()" data-i18n-title="dock.expand_new" title="Развернуть новый док">
+            <span class="new-dock-minimized-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 13h6l-1 8 9-12h-6l1-6Z"/></svg></span>
+            <span data-i18n="dock.minimized_new">LazySD · Развернуть</span>
+          </button>
+        </div>
 
         </div>
 
@@ -2141,6 +2269,20 @@
           <h3 data-i18n="settings.dock.title">Интерфейс и Коробка (Gemini Dock)</h3>
 
           <div class="setting-row">
+            <div class="setting-label">
+              <strong data-i18n="settings.dock.variant">Версия дока</strong><br>
+              <small style="color: var(--text-dim);" data-i18n="settings.dock.variant_hint">Можно в любой момент вернуться к старому доку.</small>
+            </div>
+            <div class="setting-value">
+              <select id="setting-dock-variant" onchange="App.setDockVariant(this.value)">
+                <option value="legacy" data-i18n="settings.dock.variant_legacy">Старый док</option>
+                <option value="new" data-i18n="settings.dock.variant_new">Новый LazySD Studio</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+
+          <div class="setting-row">
 
             <div class="setting-label">
 
@@ -2162,7 +2304,7 @@
 
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" id="setting-dock-position-row">
 
             <div class="setting-label">
 
@@ -2192,7 +2334,7 @@
 
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" id="setting-dock-legacy-drag-row">
 
             <div class="setting-label">
 
@@ -4036,7 +4178,7 @@
 
   <script src="/js/dropzone.js?v=20261022_01"></script>
 
-  <script src="/js/app.js?v=20261027_10"></script>
+  <script src="/js/app.js?v=20261030_01"></script>
 
   <script>
 
@@ -6073,4 +6215,3 @@
 </body>
 
 </html>
-

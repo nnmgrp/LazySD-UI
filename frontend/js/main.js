@@ -8,6 +8,7 @@ import { state } from "./state.js";
 import { escapeHtml, toast, apiGet, apiPost, apiPatch, apiDelete, apiUpload } from "./api.js";
 import * as zoomPan from "./modules/zoom-pan.js";
 import * as dock from "./modules/dock.js";
+import * as newDock from "./modules/new-dock.js";
 import * as modelsHub from "./modules/models-hub.js";
 import * as loraHub from "./modules/lora-hub.js";
 import * as settings from "./modules/settings.js";
@@ -305,6 +306,7 @@ export const App = {
       }
     }
     this.closeAllDockPopovers();
+    this.updateDockPills();
     this.toast("info", `Шаблон "${p.name}" применён`);
   },
 
@@ -518,7 +520,8 @@ export const App = {
     document.addEventListener("click", (e) => {
       if (!this.state.activeDockPopover) return;
       const dockWrap = document.getElementById("gemini-dock-wrap");
-      if (dockWrap && !dockWrap.contains(e.target)) {
+      const newDockWrap = document.getElementById("new-dock-wrap");
+      if (dockWrap && !dockWrap.contains(e.target) && !newDockWrap?.contains(e.target)) {
         this.closeAllDockPopovers();
       }
     });
@@ -572,6 +575,7 @@ export const App = {
   // --- Delegate to Modules ---
   ...zoomPan,
   ...dock,
+  ...newDock,
   ...modelsHub,
   ...loraHub,
   ...settings,
