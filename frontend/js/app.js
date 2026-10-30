@@ -53,6 +53,7 @@ const App = {
     pollInterval: null,
     selectedModel: null,
     selectedVariant: null,
+    modelChangeRequestId: 0,
     historyItems: [],
     selectedHistoryItem: null,
     historyPage: 1,
@@ -96,6 +97,10 @@ const App = {
     dockDragEnabled: false,
     dockCustomX: null,
     dockCustomY: null,
+    dockVariant: "legacy",
+    newDockFloat: false,
+    newDockCustomX: null,
+    newDockCustomY: null,
     shareStatus: null,
     extrasStatus: null,
     account: null,
@@ -121,6 +126,7 @@ const App = {
 
   // ---------- Init ----------
   async init() {
+    Object.assign(this, await import("./modules/new-dock.js"));
     console.log("[app] LazySD UI initializing...");
 
     try { this.initSidebar(); } catch (e) { console.warn("[init] initSidebar error:", e); }
@@ -1684,7 +1690,8 @@ const App = {
     document.addEventListener("click", (e) => {
       if (!this.state.activeDockPopover) return;
       const dockWrap = document.getElementById("gemini-dock-wrap");
-      if (dockWrap && !dockWrap.contains(e.target)) {
+      const newDockWrap = document.getElementById("new-dock-wrap");
+      if (dockWrap && !dockWrap.contains(e.target) && !newDockWrap?.contains(e.target)) {
         this.closeAllDockPopovers();
       }
     });
@@ -1914,18 +1921,22 @@ const App = {
     const select = document.getElementById("model-select");
     if (!select || !select.value) return;
 
-    this.state.selectedModel = select.value;
+    const modelId = select.value;
+    const requestId = ++this.state.modelChangeRequestId;
+    this.state.selectedModel = modelId;
 
     // Fetch model state (cache check)
     try {
-      const state = await this.apiGet(`/api/models/${select.value}/state`);
+      const state = await this.apiGet(`/api/models/${modelId}/state`);
+      if (requestId !== this.state.modelChangeRequestId || select.value !== modelId) return;
       this.renderVariants(state, preferredVariantId);
     } catch (e) {
       console.error("[app] Failed to fetch model state:", e);
     }
+    if (requestId !== this.state.modelChangeRequestId || select.value !== modelId) return;
 
     // Dynamic CFG recommendation sync
-    const activeModel = this.state.models.find(m => m.id === select.value);
+    const activeModel = this.state.models.find(m => m.id === modelId);
     let recCfg = 1.0;
     if (activeModel && typeof activeModel.default_cfg === "number") {
       recCfg = activeModel.default_cfg;
@@ -1946,7 +1957,9 @@ const App = {
       cfgSlider.value = recCfg.toFixed(1);
     }
 
+    if (requestId !== this.state.modelChangeRequestId || select.value !== modelId) return;
     await this.loadLoras(true);
+    if (requestId !== this.state.modelChangeRequestId || select.value !== modelId) return;
     this.updateModelTrigger();
   },
 
@@ -2823,6 +2836,7 @@ const App = {
         statusMsg.textContent = "";
       }
     }
+    this.updateNewDock(this);
   },
 
   showPreview(imagePath) {
@@ -3843,6 +3857,7 @@ const App = {
     if (dockNoiseLbl) dockNoiseLbl.textContent = noiseVal;
     const dockSeed = document.getElementById("dock-seed-quick");
     if (dockSeed) dockSeed.value = seedVal;
+    this.updateNewDock(this);
   },
 
   toggleDockPopover(name, event) {
@@ -5462,7 +5477,15 @@ const App = {
       if (Number.isFinite(Number(cfg.blur))) this.state.dockBlur = Number(cfg.blur);
       if (typeof cfg.minimized === "boolean") this.state.dockMinimized = cfg.minimized;
       if (typeof cfg.dragEnabled === "boolean") this.state.dockDragEnabled = cfg.dragEnabled;
-      if (Number.isFinite(Number(cfg.customX)) && Number.isFinite(Number(cfg.customY))) {
+      if (["legacy", "new"].includes(cfg.variant)) this.state.dockVariant = cfg.variant;
+      if (typeof cfg.newDockFloat === "boolean") this.state.newDockFloat = cfg.newDockFloat;
+      if (cfg.newDockCustomX != null && cfg.newDockCustomY != null
+        && Number.isFinite(Number(cfg.newDockCustomX)) && Number.isFinite(Number(cfg.newDockCustomY))) {
+        this.state.newDockCustomX = Number(cfg.newDockCustomX);
+        this.state.newDockCustomY = Number(cfg.newDockCustomY);
+      }
+      if (cfg.customX != null && cfg.customY != null
+        && Number.isFinite(Number(cfg.customX)) && Number.isFinite(Number(cfg.customY))) {
         this.state.dockCustomX = Number(cfg.customX);
         this.state.dockCustomY = Number(cfg.customY);
       }
@@ -5479,6 +5502,7 @@ const App = {
     this.clampDockPosition();
     this.applyDockSettings();
     this.initDockDrag();
+    this.initNewDock();
   },
 
   applyDockSettings() {
@@ -5507,6 +5531,16 @@ const App = {
       }
     }
     if (this.state.dockMinimized) wrap.classList.add("dock-minimized");
+
+    const stage = document.getElementById("canvas-stage");
+    if (stage) stage.classList.toggle("dock-variant-new", this.state.dockVariant === "new");
+    this.applyNewDockSettings();
+
+    const legacyPositionRow = document.getElementById("setting-dock-position-row");
+    const legacyDragRow = document.getElementById("setting-dock-legacy-drag-row");
+    const legacySettingsVisible = this.state.dockVariant !== "new";
+    if (legacyPositionRow) legacyPositionRow.style.display = legacySettingsVisible ? "" : "none";
+    if (legacyDragRow) legacyDragRow.style.display = legacySettingsVisible ? "" : "none";
 
     const root = document.documentElement;
     root.style.setProperty("--dock-opacity", this.state.dockOpacity);
@@ -5552,6 +5586,10 @@ const App = {
         dragEnabled: this.state.dockDragEnabled,
         customX: this.state.dockCustomX,
         customY: this.state.dockCustomY,
+        variant: this.state.dockVariant,
+        newDockFloat: this.state.newDockFloat,
+        newDockCustomX: this.state.newDockCustomX,
+        newDockCustomY: this.state.newDockCustomY,
       }));
     } catch (_) {}
   },
@@ -10919,4 +10957,3 @@ if (document.readyState === "loading") {
 
 // Export for inline scripts
 window.App = App;
-

@@ -395,6 +395,7 @@ export function reuseHistoryItem(appRef) {
     const seedInp = document.getElementById("seed-input");
     if (seedInp) seedInp.value = String(item.seed);
   }
+  if (app.updateDockPills) app.updateDockPills();
   toast("success", "Параметры скопированы в генератор ✓");
 }
 

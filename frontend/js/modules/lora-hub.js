@@ -221,6 +221,7 @@ export function insertLoraTrigger(trigger) {
   if (!promptInput || !trigger) return;
   const cur = promptInput.value.trim();
   promptInput.value = cur ? `${cur}, ${trigger}` : trigger;
+  if (window.App?.updateDockPills) window.App.updateDockPills();
   toast("info", `Триггер добавлен: ${trigger}`);
 }
 

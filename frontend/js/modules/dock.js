@@ -4,6 +4,7 @@
    ============================================================ */
 
 import { toast } from "../api.js";
+import * as newDock from "./new-dock.js";
 
 export function autoResizePrompt(textarea) {
   if (!textarea) return;
@@ -109,6 +110,8 @@ export function updateDockPills(appRef) {
 
   const dockSeed = document.getElementById("dock-seed-quick");
   if (dockSeed) dockSeed.value = seedVal;
+
+  newDock.updateNewDock(app);
 }
 
 export function toggleDockPopover(name, event, appRef) {
@@ -256,7 +259,15 @@ export function initDockSettings(appRef) {
     if (Number.isFinite(Number(cfg.blur))) app.state.dockBlur = Number(cfg.blur);
     if (typeof cfg.minimized === "boolean") app.state.dockMinimized = cfg.minimized;
     if (typeof cfg.dragEnabled === "boolean") app.state.dockDragEnabled = cfg.dragEnabled;
-    if (Number.isFinite(Number(cfg.customX)) && Number.isFinite(Number(cfg.customY))) {
+    if (["legacy", "new"].includes(cfg.variant)) app.state.dockVariant = cfg.variant;
+    if (typeof cfg.newDockFloat === "boolean") app.state.newDockFloat = cfg.newDockFloat;
+    if (cfg.newDockCustomX != null && cfg.newDockCustomY != null
+      && Number.isFinite(Number(cfg.newDockCustomX)) && Number.isFinite(Number(cfg.newDockCustomY))) {
+      app.state.newDockCustomX = Number(cfg.newDockCustomX);
+      app.state.newDockCustomY = Number(cfg.newDockCustomY);
+    }
+    if (cfg.customX != null && cfg.customY != null
+      && Number.isFinite(Number(cfg.customX)) && Number.isFinite(Number(cfg.customY))) {
       app.state.dockCustomX = Number(cfg.customX);
       app.state.dockCustomY = Number(cfg.customY);
     }
@@ -273,6 +284,7 @@ export function initDockSettings(appRef) {
   clampDockPosition(app);
   applyDockSettings(app);
   initDockDrag(app);
+  newDock.initNewDock(app);
 }
 
 export function applyDockSettings(appRef) {
@@ -305,6 +317,17 @@ export function applyDockSettings(appRef) {
   if (app.state.dockMinimized) {
     wrap.classList.add("dock-minimized");
   }
+  const stage = document.getElementById("canvas-stage");
+  if (stage) {
+    stage.classList.toggle("dock-variant-new", app.state.dockVariant === "new");
+  }
+  newDock.applyNewDockSettings(app);
+
+  const legacyPositionRow = document.getElementById("setting-dock-position-row");
+  const legacyDragRow = document.getElementById("setting-dock-legacy-drag-row");
+  const legacySettingsVisible = app.state.dockVariant !== "new";
+  if (legacyPositionRow) legacyPositionRow.style.display = legacySettingsVisible ? "" : "none";
+  if (legacyDragRow) legacyDragRow.style.display = legacySettingsVisible ? "" : "none";
 
   const root = document.documentElement;
   root.style.setProperty("--dock-opacity", app.state.dockOpacity);
@@ -351,6 +374,10 @@ export function saveDockSettings(appRef) {
       dragEnabled: app.state.dockDragEnabled,
       customX: app.state.dockCustomX,
       customY: app.state.dockCustomY,
+      variant: app.state.dockVariant,
+      newDockFloat: app.state.newDockFloat,
+      newDockCustomX: app.state.newDockCustomX,
+      newDockCustomY: app.state.newDockCustomY,
     }));
   } catch (_) {}
 }
