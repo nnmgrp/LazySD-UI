@@ -131,9 +131,10 @@ def get_ollama_status_dict(url: str = DEFAULT_OLLAMA_URL) -> Dict[str, Any]:
                 text=True,
                 timeout=5,
             )
+            import re as _re
             out = (res.stdout or res.stderr or "").strip()
-            # e.g. "ollama version is 0.4.0"
-            version = out.replace("ollama version is", "").replace("ollama", "").strip() or out
+            m = _re.search(r"(\d+\.\d+\.\d+)", out)
+            version = m.group(1) if m else (out.replace("ollama version is", "").replace("ollama", "").strip() or out)
         except Exception:
             pass
 

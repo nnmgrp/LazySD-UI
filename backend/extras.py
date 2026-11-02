@@ -889,10 +889,14 @@ class ExtrasWorker:
             raw_crop = crop_array(raw_mask, crop_box)
             engine_crop = crop_array(engine_mask, crop_box)
 
-            from .masking import scale_crop_for_safe_inference
+            from .masking import heal_masked_image, scale_crop_for_safe_inference
             safe_init, safe_engine_mask, _ = scale_crop_for_safe_inference(
                 init_crop, engine_crop, max_dim=1024
             )
+            _req_ms = getattr(request, "mask_strength", None)
+            _ms_val = 1.0 if _req_ms is None else float(_req_ms)
+            if _ms_val >= 0.75:
+                safe_init = heal_masked_image(safe_init, safe_engine_mask, dilate_px=8)
 
             mask_file = save_mask_file(
                 safe_engine_mask,
@@ -1124,10 +1128,12 @@ class ExtrasWorker:
                 with Image.open(output_path) as gen_file:
                     generated_rgb = gen_file.convert("RGB")
                 source_image = mask_ctx["source_image"]
+                from .masking import prepare_compositing_mask
+                _comp_mask = prepare_compositing_mask(mask_ctx["crop_array"], blur=3.5)
                 composite = composite_crop_into_image(
                     generated_rgb,
                     source_image,
-                    mask_ctx["crop_array"],
+                    _comp_mask,
                     mask_ctx["box"],
                 )
                 composite.save(output_path, format="PNG")

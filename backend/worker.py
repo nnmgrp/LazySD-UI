@@ -1112,10 +1112,12 @@ class Worker:
                 with Image.open(final_path) as gen_file:
                     generated_rgb = gen_file.convert("RGB")
                 source_image = mask_ctx["source_image"]
+                from .masking import prepare_compositing_mask
+                _comp_mask = prepare_compositing_mask(mask_ctx["crop_array"], blur=3.5)
                 composite = composite_crop_into_image(
                     generated_rgb,
                     source_image,
-                    mask_ctx["crop_array"],
+                    _comp_mask,
                     mask_ctx["box"],
                 )
                 composite.save(final_path, format="PNG")
@@ -1305,10 +1307,14 @@ class Worker:
         raw_crop_arr = crop_array(mask_array, crop_box)
         raw_init_img = crop_image(source_image, crop_box)
 
-        from .masking import scale_crop_for_safe_inference
+        from .masking import heal_masked_image, scale_crop_for_safe_inference
         safe_img, safe_mask, _ = scale_crop_for_safe_inference(
             raw_init_img, raw_crop_arr, max_dim=1024
         )
+        _req_ms = getattr(request, "mask_strength", None)
+        _ms_val = 1.0 if _req_ms is None else float(_req_ms)
+        if _ms_val >= 0.75:
+            safe_img = heal_masked_image(safe_img, safe_mask, dilate_px=8)
 
         mask_file = save_mask_file(
             safe_mask,

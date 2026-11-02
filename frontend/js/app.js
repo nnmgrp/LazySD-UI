@@ -3391,7 +3391,7 @@ const App = {
             <span class="history-author-badge">${authorBadge}</span>
             ${sharedBadge}
           </div>
-          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(promptDisplay)}" loading="lazy">
+          <img src="${escapeHtml(item.thumb_url || item.url)}" alt="${escapeHtml(promptDisplay)}" loading="lazy">
           <div class="history-item-overlay">
             <div class="history-item-prompt-preview">${escapeHtml(promptDisplay)}</div>
           </div>
@@ -13778,6 +13778,7 @@ Object.assign(App, {
       model_id: modelId,
       variant_id: selectedVariantId || undefined,
       prompt,
+      negative_prompt: document.getElementById("inpaint-negative-prompt")?.value?.trim() || undefined,
       width: state.source.width,
       height: state.source.height,
       steps: Number.isFinite(steps) ? steps : 4,
@@ -14576,9 +14577,16 @@ Object.assign(App, {
       return;
     }
     try {
+      const localUrl = URL.createObjectURL(file);
+      await this.loadInpaintSource(localUrl, file.name, file.name);
+      this.toast("info", "Загрузка на сервер...");
       const data = await this.apiUpload(file);
-      const loaded = await this.loadInpaintSource(data.url, data.path, file.name || data.path);
-      if (loaded) this.toast("success", this.maskT("inpaint.hint.loaded", "Изображение загружено"));
+      const st = this.getInpaintState();
+      if (st && st.source) {
+        st.source.path = data.path;
+        st.source.url = data.url;
+      }
+      this.toast("success", this.maskT("inpaint.hint.loaded", "Изображение загружено ✓"));
     } catch (e) {
       this.toast("error", e.message || "Ошибка загрузки");
     }

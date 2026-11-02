@@ -1612,6 +1612,8 @@ def create_app() -> FastAPI:
 
 
 
+    from starlette.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(ShareAccessMiddleware)
 
 
@@ -1641,13 +1643,10 @@ def create_app() -> FastAPI:
 
 
         p = request.url.path
-
-
-
-        if p in ("/", "/index.html") or p.startswith(("/js/", "/css/", "/locale/")):
-
-
-
+        from backend.share import is_remote_scope
+        if is_remote_scope(request.scope) and p.startswith(("/js/", "/css/", "/locale/")):
+            response.headers["Cache-Control"] = "public, max-age=300"
+        elif p in ("/", "/index.html") or p.startswith(("/js/", "/css/", "/locale/")):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
 
@@ -10765,6 +10764,7 @@ def create_app() -> FastAPI:
 
 
                 "url": f"/outputs/{p.name}",
+                "thumb_url": f"/api/history/thumb/{p.name}",
 
 
 
@@ -10904,6 +10904,38 @@ def create_app() -> FastAPI:
 
         return result
 
+
+    @app.get("/api/history/thumb/{filename}")
+    async def api_history_thumb(filename: str):
+        from starlette.responses import FileResponse
+        from backend.security import validate_filename
+        try:
+            validate_filename(filename)
+        except ValueError as e:
+            raise HTTPException(400, f"Invalid filename: {e}")
+
+        output_dir = get_settings().output_dir
+        source_file = output_dir / filename
+        if not source_file.is_file():
+            raise HTTPException(404, "Image not found")
+
+        thumbs_dir = output_dir / ".thumbs"
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
+        thumb_name = f"{source_file.stem}_384.webp"
+        thumb_path = thumbs_dir / thumb_name
+
+        try:
+            if not thumb_path.is_file() or thumb_path.stat().st_mtime < source_file.stat().st_mtime:
+                from PIL import Image
+                with Image.open(source_file) as im:
+                    im_rgb = im.convert("RGB")
+                    im_rgb.thumbnail((384, 384), Image.Resampling.LANCZOS)
+                    thumb_tmp = thumb_path.with_suffix(".tmp.webp")
+                    im_rgb.save(thumb_tmp, format="WEBP", quality=80)
+                    thumb_tmp.replace(thumb_path)
+            return FileResponse(thumb_path, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})
+        except Exception:
+            return FileResponse(source_file)
 
     @app.delete("/api/history/{filename}")
 
@@ -14370,6 +14402,7 @@ def create_app() -> FastAPI:
         project_root = Path(__file__).resolve().parent
         allowed_dirs = [
             (project_root / "uploads").resolve(),
+            (settings.output_dir / "uploads").resolve(),
             settings.output_dir.resolve(),
             settings.cache_dir.resolve(),
         ]
@@ -14416,6 +14449,7 @@ def create_app() -> FastAPI:
         project_root = Path(__file__).resolve().parent
         allowed_dirs = [
             (project_root / "uploads").resolve(),
+            (settings.output_dir / "uploads").resolve(),
             settings.output_dir.resolve(),
             settings.cache_dir.resolve(),
         ]

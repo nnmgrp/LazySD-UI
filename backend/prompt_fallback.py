@@ -213,12 +213,30 @@ def analyze_region(
     ring_crop = rgb_img.crop((rx0, ry0, rx1, ry1))
     mask_crop = np.asarray(mask_array, dtype=np.float32)[ry0:ry1, rx0:rx1]
 
-    # Surrounding ring = outside the active mask (or whole box if mask covers 100%)
-    ring_selector = (mask_crop <= 0.25).astype(np.float32)
+    # Dilate active mask (mask > 0.02) by 6px so soft-brush SFX/text outlines are excluded from the context ring
+    from PIL import ImageFilter
+    mask_bin_pil = Image.fromarray(((mask_crop > 0.02).astype(np.uint8) * 255), mode="L").filter(
+        ImageFilter.MaxFilter(13)
+    )
+    mask_dilated = np.asarray(mask_bin_pil, dtype=np.float32) / 255.0
+
+    # Surrounding ring = strictly outside the dilated mask (or whole box if mask covers 100%)
+    ring_selector = (mask_dilated <= 0.10).astype(np.float32)
+    if float(ring_selector.sum()) < 24.0:
+        ring_selector = (mask_crop <= 0.25).astype(np.float32)
     if float(ring_selector.sum()) < 24.0:
         ring_selector = np.ones_like(mask_crop, dtype=np.float32)
 
     dominant_colors = extract_dominant_colors(ring_crop, sample_mask=ring_selector, max_colors=5)
+    color_names: List[str] = []
+    for h in dominant_colors:
+        cname = rgb_to_color_name(hex_to_rgb(h))
+        if cname not in color_names:
+            color_names.append(cname)
+    # Prefer rich chromatic background colours over residual black/white ink lines when available
+    chromatic_names = [c for c in color_names if c not in ("black", "white", "dark grey", "light grey", "neutral grey")]
+    if chromatic_names:
+        color_names = chromatic_names + [c for c in color_names if c not in chromatic_names]
 
     small_rgb = np.asarray(
         ring_crop.resize((64, 64), Image.Resampling.BILINEAR),
@@ -258,6 +276,7 @@ def analyze_region(
 
     return {
         "dominant_colors": dominant_colors,
+        "color_names": color_names,
         "region_type": region_type,
         "mask_box": [int(x0), int(y0), int(x1), int(y1)],
         "brightness": round(mean_brightness, 4),

@@ -267,6 +267,33 @@ def _sanitize_positive_prompt(prompt_raw: str) -> str:
     p = (prompt_raw or "").strip()
     # Strip any CJK (Japanese/Chinese/Korean) characters so the diffusion model never renders text
     p = re.sub(r'["\'«„“”\(\[]*[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]+["\'»“”\)\]]*', "", p)
+    # Strip CSS hex color codes (#030522, #fefefe, etc.) that confuse diffusion text encoders
+    p = re.sub(r"#[0-9a-fA-F]{3,8}\b", "", p)
+    # Strip multi-image / mask meta-instructions if a prompt upsampler emitted them
+    p = re.sub(
+        r"^(?:Create|Generate|Render|Paint)\s+a\s+[^,.]*?\bpatch\s+that\s+fills\s+(?:only\s+)?the\s+[^,.]*?(?:from\s+the\s+first\s+image)?(?:,\s*removing\s+[^,.]*?)?[,.]\s*",
+        "",
+        p,
+        flags=re.IGNORECASE,
+    )
+    p = re.sub(
+        r"\bReconstruct\s+the\s+(?:entire\s+)?masked\s+area\s+as\s+a\s+",
+        "",
+        p,
+        flags=re.IGNORECASE,
+    )
+    p = re.sub(
+        r",?\s*using\s+the\s+second\s+image\s+(?:only\s+)?as\s+a\s+guide(?:\s+for\s+[^,.]*)?",
+        "",
+        p,
+        flags=re.IGNORECASE,
+    )
+    p = re.sub(
+        r"\s+from\s+the\s+(?:first|second)\s+image\b",
+        "",
+        p,
+        flags=re.IGNORECASE,
+    )
     # Remove any meta-references to the red mask overlay so the diffusion model doesn't paint red shapes
     p = re.sub(
         r"\s*(?:to\s+seamlessly\s+fill|filling|inside|within|in)\s+the\s+(?:bright\s+)?(?:red[-\s]+)?(?:masked|highlighted)\s+(?:shapes|area|region|pixels|zone)s?\.?$",
@@ -274,8 +301,10 @@ def _sanitize_positive_prompt(prompt_raw: str) -> str:
         p,
         flags=re.IGNORECASE,
     )
-    p = re.sub(r"\bbright\s+red\s+(?:masked|highlighted)\s+(?:shapes|area|region|pixels)\b", "surrounding area", p, flags=re.IGNORECASE)
-    p = re.sub(r"\bred\s+(?:masked|highlighted)\s+(?:shapes|area|region|pixels)\b", "surrounding area", p, flags=re.IGNORECASE)
+    p = re.sub(r"\bbright\s+red[-\s]+(?:masked|highlighted)\s+(?:vertical\s+|horizontal\s+)?(?:mask\s+)?(?:shapes|area|region|pixels)\b", "surrounding area", p, flags=re.IGNORECASE)
+    p = re.sub(r"\bred[-\s]+(?:masked|highlighted|selection)\s+(?:vertical\s+|horizontal\s+)?(?:mask\s+)?(?:shapes|area|region|pixels|border)\b", "surrounding area", p, flags=re.IGNORECASE)
+    p = re.sub(r"\s+,", ",", p)
+    p = re.sub(r",\s*,+", ", ", p)
     p = re.sub(r"\s{2,}", " ", p)
     return p.strip().rstrip(",").strip()
 
@@ -325,6 +354,21 @@ def parse_vlm_response_text(raw_text: str, instruction: str = "") -> Tuple[str, 
     raise ValueError("Could not extract prompt from vision model response")
 
 
+INPAINT_PUP_SYSTEM_PROMPT = (
+    "You write direct, vivid visual scene descriptions for an image inpainting diffusion model.\n"
+    "The bright red highlight in the image marks the area to be repainted.\n"
+    "CRITICAL RULES:\n"
+    "1. Output ONLY a direct visual description (20–40 words) of the clean surface, background, "
+    "lighting, colors, and brushwork texture that should appear inside that area after the edit.\n"
+    "2. NEVER mention 'the first image', 'the second image', 'red highlight', 'mask', 'patch', "
+    "'remove', 'delete', 'replace', or CSS hex color codes like #030522.\n"
+    "3. NEVER describe characters, faces, hair, or clothing outside the red area.\n"
+    "4. Write ONLY the final visual appearance as a single descriptive phrase (e.g., "
+    "'Dark crimson and deep burgundy manga background with rough vertical ink brushwork, "
+    "subtle plum shadows, painterly anime illustration texture, clean seamless surface')."
+)
+
+
 def run_nunchaku_pup_inference(
     *,
     model_dir: Path,
@@ -333,6 +377,8 @@ def run_nunchaku_pup_inference(
     images_b64: Optional[List[str]] = None,
     timeout_sec: int = 120,
     max_new_tokens: int = 180,
+    system_prompt: Optional[str] = None,
+    inpaint_mode: bool = False,
 ) -> str:
     """Run ``tonera/flux-3-image-klein-pup-nunchaku`` inside the ``envs/extras`` Python environment."""
     from .extras import extras_python
@@ -387,6 +433,8 @@ quant_path = req["quant_path"]
 prompt = req["prompt"]
 images_b64 = req.get("images_b64") or []
 max_new_tokens = int(req.get("max_new_tokens") or 512)
+custom_sys = req.get("system_prompt")
+inpaint_mode = bool(req.get("inpaint_mode"))
 
 sys_prompts = json.loads((Path(model_dir) / "system_prompts.json").read_text(encoding="utf-8"))
 processor = AutoProcessor.from_pretrained(model_dir)
@@ -401,14 +449,19 @@ for b64_str in images_b64:
     pil_images.append(im)
 
 if pil_images:
-    text = (
-        "Reference images follow in order (the first image, the second image, ...).\n"
-        f"User request: {prompt}\nOutput the caption."
-    )
+    if inpaint_mode:
+        text = prompt
+    else:
+        text = (
+            "Reference images follow in order (the first image, the second image, ...).\n"
+            f"User request: {prompt}\nOutput the caption."
+        )
     content = [{"type": "image", "image": im} for im in pil_images] + [{"type": "text", "text": text}]
-    messages = [{"role": "system", "content": sys_prompts["i2i"]}, {"role": "user", "content": content}]
+    sys_msg = custom_sys or sys_prompts["i2i"]
+    messages = [{"role": "system", "content": sys_msg}, {"role": "user", "content": content}]
 else:
-    messages = [{"role": "system", "content": sys_prompts["t2i"]}, {"role": "user", "content": prompt}]
+    sys_msg = custom_sys or sys_prompts["t2i"]
+    messages = [{"role": "system", "content": sys_msg}, {"role": "user", "content": prompt}]
 
 inputs = processor.apply_chat_template(
     messages,
@@ -437,6 +490,8 @@ print("PUP_RESULT_JSON:" + json.dumps({"caption": caption}, ensure_ascii=True), 
                 "prompt": prompt_text,
                 "images_b64": images_b64 or [],
                 "max_new_tokens": int(max_new_tokens or 180),
+                "system_prompt": system_prompt,
+                "inpaint_mode": inpaint_mode,
             }),
             encoding="utf-8",
         )
@@ -482,35 +537,39 @@ def generate_vlm_prompt(
 ) -> Tuple[str, str]:
     """Generate ``(prompt, negative_prompt)`` for Inpaint via Nunchaku PUP, FLUX 3 PUP GGUF, or Ollama VLM."""
     entry = get_catalog_entry(model_id)
+    color_list = (analysis_hint or {}).get("color_names") or []
+    colors = ", ".join(color_list[:3])
     if entry and entry.get("provider") == "nunchaku":
         base_models_dir = (models_dir or (Path(__file__).resolve().parent.parent / "models" / "cache")).resolve()
         model_dir = base_models_dir / entry["local_dir"]
         instr_clean = (instruction or "").strip()
-        colors = ", ".join((analysis_hint or {}).get("dominant_colors") or [])
         if _is_removal_instruction(instr_clean):
             req_text = (
-                f"In the bright red-highlighted mask region: {instr_clean}. "
-                "Do NOT describe any unmasked character, face, hair, or outfit standing next to the red mask. "
-                f"Describe ONLY the clean background surface, lighting, colors ({colors or 'matching surroundings'}), "
-                "and manga/anime brush texture that should seamlessly fill the red masked area after removal (max 45 words)."
+                f"Task: {instr_clean}. "
+                "Write ONLY a direct visual description (20-35 words) of the clean background surface, "
+                f"colors ({colors or 'matching surrounding tones'}), lighting, and manga/anime brush texture "
+                "that should fill this area. Do NOT mention characters, red masks, images, or hex codes."
             )
         elif instr_clean:
             req_text = (
-                f"In the bright red-highlighted mask region: {instr_clean}. "
-                "Focus strictly on what should appear inside the red mask, matching surrounding art style (max 45 words)."
+                f"Task: {instr_clean}. "
+                "Write ONLY a direct visual description (20-35 words) of what should appear in the marked area, "
+                "matching surrounding art style and lighting. Do NOT mention red masks, images, or hex codes."
             )
         else:
             req_text = (
-                "Seamlessly restore the background texture, lighting, and colors inside the bright red-highlighted mask region, "
-                "ignoring unmasked characters outside the red mask (max 45 words)."
+                "Write ONLY a direct visual description (20-35 words) of the clean surrounding background surface, "
+                f"colors ({colors or 'matching surrounding tones'}), lighting, and brush texture to restore this area."
             )
         caption = run_nunchaku_pup_inference(
             model_dir=model_dir,
             quant_file=entry["primary_file"],
             prompt_text=req_text,
-            images_b64=[overview_b64, crop_b64],
+            images_b64=[crop_b64],
             timeout_sec=timeout_sec,
-            max_new_tokens=140,
+            max_new_tokens=90,
+            system_prompt=INPAINT_PUP_SYSTEM_PROMPT,
+            inpaint_mode=True,
         )
         p_out, n_out = parse_vlm_response_text(caption, instruction=instruction)
         return _sanitize_positive_prompt(p_out), _sanitize_negative_prompt(n_out, instruction=instruction)
@@ -522,42 +581,51 @@ def generate_vlm_prompt(
     _LAST_ACTIVE_OLLAMA_MODEL = model_id
 
     if use_flux3_pup:
-        sys_prompts = get_flux3_pup_system_prompts()
-        req_text = instruction.strip() if (instruction and instruction.strip()) else (
-            "Seamlessly restore the area marked in red in the first image and shown close-up in the second image."
-        )
-        user_content = (
-            "Reference images follow in order (the first image, the second image). "
-            "Only the bright RED highlighted mask area is being repainted; ignore unmasked characters outside the red area.\n"
-            f"User request for the red masked area: {req_text}\nOutput the caption."
-        )
+        instr_clean = (instruction or "").strip()
+        if _is_removal_instruction(instr_clean):
+            user_content = (
+                f"Task: {instr_clean}. "
+                "Write ONLY a direct visual description (20-35 words) of the clean background surface, "
+                f"colors ({colors or 'matching surrounding tones'}), lighting, and manga/anime brush texture "
+                "that should fill this area. Do NOT mention characters, red masks, images, or hex codes."
+            )
+        elif instr_clean:
+            user_content = (
+                f"Task: {instr_clean}. "
+                "Write ONLY a direct visual description (20-35 words) of what should appear in the marked area, "
+                "matching surrounding art style and lighting. Do NOT mention red masks, images, or hex codes."
+            )
+        else:
+            user_content = (
+                "Write ONLY a direct visual description (20-35 words) of the clean surrounding background surface, "
+                f"colors ({colors or 'matching surrounding tones'}), lighting, and brush texture to restore this area."
+            )
         payload = {
             "model": model_id,
             "stream": False,
             "keep_alive": effective_keep_alive,
             "think": False,
             "messages": [
-                {"role": "system", "content": sys_prompts["i2i"]},
+                {"role": "system", "content": INPAINT_PUP_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": user_content,
-                    "images": [overview_b64, crop_b64],
+                    "images": [crop_b64],
                 },
             ],
             "options": {
-                "temperature": 0.7,
+                "temperature": 0.4,
                 "top_k": 1,
                 "top_p": 0.95,
                 "presence_penalty": 0.0,
                 "repeat_penalty": 1.0,
-                "num_predict": 220,
+                "num_predict": 100,
             },
         }
     else:
         user_parts = []
         instr_clean = (instruction or "").strip()[:500]
         is_removal = _is_removal_instruction(instr_clean)
-        colors = ", ".join((analysis_hint or {}).get("dominant_colors") or [])
         rtype = (analysis_hint or {}).get("region_type") or "colored_art"
 
         if instr_clean:

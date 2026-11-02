@@ -765,10 +765,22 @@ class SDCppWorker:
             raw_crop = crop_array(raw_mask, crop_box)
             engine_crop = crop_array(engine_mask, crop_box)
 
-            from .masking import scale_crop_for_safe_inference
+            from .masking import heal_masked_image, scale_crop_for_safe_inference
             safe_init, safe_engine_mask, _ = scale_crop_for_safe_inference(
                 init_crop, engine_crop, max_dim=1024
             )
+
+            # Pre-heal the masked area when doing full replacement (strength >= 0.75) so
+            # high-contrast SFX/text borders do not leak through VAE convs & self-attention.
+            _req_ms = getattr(request, "mask_strength", None)
+            _ms_val = 1.0 if _req_ms is None else float(_req_ms)
+            if _ms_val >= 0.75:
+                safe_init = heal_masked_image(safe_init, safe_engine_mask, dilate_px=8)
+
+            # stable-diffusion.cpp applies sd::ops::round(mask_image_tensor) at 0.5, which
+            # clips off soft brush edges (0.04..0.49 -> 0.0). Boost any painted/grown pixels
+            # above 0.5 threshold so sd-cli regenerates the entire stroke + soft border.
+            safe_engine_mask = np.where(safe_engine_mask > 0.04, 1.0, 0.0).astype(np.float32)
 
             mask_file = save_mask_file(
                 safe_engine_mask,
@@ -1117,10 +1129,11 @@ class SDCppWorker:
         # compositing to avoid visible seams at crop boundaries.
         raw_fragment_rel = None
         if mask_ctx is not None:
-            from PIL import Image, ImageFilter
+            from PIL import Image
             from .masking import (
                 composite_crop_into_image,
                 paste_crop_into_image,
+                prepare_compositing_mask,
             )
 
             try:
@@ -1128,14 +1141,9 @@ class SDCppWorker:
                     generated_rgb = gen_file.convert("RGB")
                 source_image = mask_ctx["source_image"]
 
-                # Soft-edge mask: blur the raw crop mask for seamless blending
-                _soft_mask = mask_ctx["crop_array"]
-                _blur_radius = int(getattr(request, "mask_composite_blur", 3) or 3)
-                if _blur_radius > 0 and _soft_mask is not None:
-                    _mask_uint8 = (np.clip(_soft_mask, 0.0, 1.0) * 255.0).astype(np.uint8)
-                    _mask_pil = Image.fromarray(_mask_uint8, mode="L")
-                    _blurred_pil = _mask_pil.filter(ImageFilter.GaussianBlur(radius=_blur_radius))
-                    _soft_mask = np.asarray(_blurred_pil, dtype=np.float32) / 255.0
+                # Solidify soft-brush interior and feather outer boundary so original SFX never bleeds through
+                _blur_radius = float(getattr(request, "mask_composite_blur", 3.5) or 3.5)
+                _soft_mask = prepare_compositing_mask(mask_ctx["crop_array"], blur=_blur_radius)
 
                 composite = composite_crop_into_image(
                     generated_rgb,

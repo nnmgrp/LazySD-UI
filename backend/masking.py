@@ -682,6 +682,145 @@ def scale_crop_for_safe_inference(
     return scaled_img, scaled_mask, True
 
 
+def prepare_compositing_mask(
+    raw_mask: np.ndarray,
+    blur: float = 3.5,
+) -> np.ndarray:
+    """Prepare a soft-brush mask for final compositing over the source image.
+
+    When a user paints with brush softness (e.g. 50%), a large portion of the
+    stroke has fractional alpha (0.25..0.80).  Using those fractional values
+    directly in ``generated * mask + original * (1 - mask)`` blends 20..75% of
+    the original un-erased text/SFX back into the result.  This helper solidifies
+    the painted stroke core to 1.0, dilates by 2px to cover anti-aliased SFX
+    halos, and feathers only the outer edge for a seamless transition while
+    keeping untouched regions strictly 0.0.
+    """
+    arr = np.clip(np.asarray(raw_mask, dtype=np.float32), 0.0, 1.0)
+    if arr.ndim != 2 or arr.size == 0:
+        return arr
+    # Solidify stroke interior where user intentionally painted (alpha > 0.04 -> ramps to 1.0 by 0.38)
+    boosted = np.clip((arr - 0.03) / 0.35, 0.0, 1.0).astype(np.float32)
+    # Dilate by 2px so high-contrast white/black SFX borders at the brush edge are fully covered
+    grown = feather_mask(boosted, grow=2, blur=max(0.0, float(blur)))
+    # Ensure core stays 1.0 while outer edge feathers smoothly to 0.0
+    core = feather_mask((arr >= 0.25).astype(np.float32), grow=1, blur=0.0)
+    result = np.maximum(grown, core)
+    # Zero out tiny sub-1% tail so pixels far outside the mask stay bit-identical
+    result = np.where(result < 0.005, 0.0, result)
+    return np.clip(result, 0.0, 1.0)
+
+
+def heal_masked_image(
+    image: Image.Image,
+    mask: np.ndarray,
+    dilate_px: int = 8,
+) -> Image.Image:
+    """Pre-heal the masked region of ``image`` using multi-scale pyramid boundary diffusion.
+
+    Diffusion engines (especially GGUF ``stable-diffusion.cpp`` and FlowMatch DiTs)
+    encode ``init_image`` through a convolutional VAE and attend across boundary
+    latents.  If high-contrast text/SFX outlines remain inside ``init_image``,
+    the VAE receptive field and self-attention leak dark silhouettes and white
+    specks into the generated patch.  Replacing the masked pixels with a smooth,
+    grain-matched continuation of the surrounding unmasked context eliminates
+    ghosting completely.
+    """
+    arr_mask = np.clip(np.asarray(mask, dtype=np.float32), 0.0, 1.0)
+    if arr_mask.ndim != 2 or arr_mask.size == 0:
+        return image
+
+    w, h = image.size
+    if arr_mask.shape[:2] != (h, w):
+        m_pil = Image.fromarray((arr_mask * 255.0).astype(np.uint8), "L").resize((w, h), Image.BILINEAR)
+        arr_mask = np.asarray(m_pil, dtype=np.float32) / 255.0
+
+    # Include soft brush fringes (mask > 0.03) and dilate by dilate_px so no SFX border pixel survives
+    hole_bin = (arr_mask > 0.03).astype(np.float32)
+    if float(hole_bin.mean()) <= 0.001 or float(hole_bin.mean()) >= 0.96:
+        return image
+
+    hole_dilated = (feather_mask(hole_bin, grow=max(2, int(dilate_px)), blur=0.0) > 0.25).astype(np.float32)
+    if float(hole_dilated.mean()) >= 0.98:
+        hole_dilated = hole_bin
+
+    rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
+    valid = (1.0 - hole_dilated)[:, :, None]  # [H, W, 1]: 1 outside mask, 0 inside mask
+
+    # Compute fallback global mean of unmasked pixels
+    valid_sum = float(valid.sum())
+    if valid_sum < 16.0:
+        return image
+    mean_color = (rgb * valid).sum(axis=(0, 1), keepdims=True) / valid_sum
+
+    # Multi-scale pull-push pyramid fill
+    levels = []
+    cur_rgb = rgb * valid
+    cur_w = valid.copy()
+    cw, ch = w, h
+    for _ in range(7):
+        levels.append((cur_rgb, cur_w, cw, ch))
+        nw, nh = max(1, cw // 2), max(1, ch // 2)
+        if nw == cw and nh == ch:
+            break
+        # Downsample weighted RGB and weight map via PIL Box/Bilinear
+        w_2d = np.squeeze(cur_w, axis=2)
+        w_pil = Image.fromarray(np.clip(w_2d * 255.0, 0, 255).astype(np.uint8), "L").resize((nw, nh), Image.BILINEAR)
+        w_Wait = (np.asarray(w_pil, dtype=np.float32) / 255.0)[:, :, None]
+
+        # Normalise known pixels before downsampling to avoid dark premultiplied fringes
+        norm_cur = np.where(cur_w > 1e-3, cur_rgb / np.maximum(cur_w, 1e-3), mean_color)
+        rgb_pil = Image.fromarray(np.clip(norm_cur, 0, 255).astype(np.uint8), "RGB").resize((nw, nh), Image.BILINEAR)
+        rgb_pil = rgb_pil.filter(ImageFilter.GaussianBlur(radius=1.5))
+        w_pil_blur = w_pil.filter(ImageFilter.GaussianBlur(radius=1.5))
+        w_next = (np.asarray(w_pil_blur, dtype=np.float32) / 255.0)[:, :, None]
+        rgb_next = np.asarray(rgb_pil, dtype=np.float32) * np.where(w_next > 0.02, 1.0, 0.0)
+        cur_rgb = rgb_next
+        cur_w = np.where(w_next > 0.02, 1.0, 0.0)
+        cw, ch = nw, nh
+
+    # Push phase: upsample from coarsest to finest
+    filled = np.broadcast_to(mean_color, (ch, cw, 3)).copy()
+    for lev_rgb, lev_w, lw, lh in reversed(levels):
+        if filled.shape[1] != lw or filled.shape[0] != lh:
+            up_pil = Image.fromarray(np.clip(filled, 0, 255).astype(np.uint8), "RGB").resize((lw, lh), Image.BILINEAR)
+            up_pil = up_pil.filter(ImageFilter.GaussianBlur(radius=2.0))
+            filled = np.asarray(up_pil, dtype=np.float32)
+        known_rgb = np.where(lev_w > 1e-3, lev_rgb / np.maximum(lev_w, 1e-3), filled)
+        alpha = np.clip(lev_w, 0.0, 1.0)
+        filled = known_rgb * alpha + filled * (1.0 - alpha)
+
+    # Refine boundary transition with iterative Gaussian diffusion inside the hole
+    work = rgb * valid + filled * (1.0 - valid)
+    for radius in (8.0, 4.0, 2.0):
+        blurred = np.asarray(
+            Image.fromarray(np.clip(work, 0, 255).astype(np.uint8), "RGB").filter(ImageFilter.GaussianBlur(radius=radius)),
+            dtype=np.float32,
+        )
+        work = rgb * valid + blurred * (1.0 - valid)
+
+    # Match subtle local grain/texture variance from the unmasked context ring so VAE sees natural variance
+    ring_mask = (feather_mask(hole_dilated, grow=16, blur=0.0) > 0.1) & (hole_dilated < 0.5)
+    if int(ring_mask.sum()) >= 32:
+        high_freq = rgb - np.asarray(
+            Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8), "RGB").filter(ImageFilter.GaussianBlur(radius=2.0)),
+            dtype=np.float32,
+        )
+        ring_std = np.std(high_freq[ring_mask], axis=0, keepdims=True)
+        ring_std = np.clip(ring_std, 1.0, 14.0)
+        rng = np.random.default_rng(seed=42)
+        noise = rng.normal(0.0, 1.0, size=(h, w, 1)).astype(np.float32) * (ring_std * 0.45)
+        work = work + noise * (1.0 - valid)
+
+    blend_m = feather_mask(hole_dilated, grow=1, blur=3.0)[:, :, None]
+    out_arr = np.clip(work * blend_m + rgb * (1.0 - blend_m), 0, 255).astype(np.uint8)
+    out_img = Image.fromarray(out_arr, "RGB")
+    if image.mode == "RGBA":
+        out_img = out_img.convert("RGBA")
+        out_img.putalpha(image.getchannel("A"))
+    return out_img
+
+
 def composite_crop_into_image(
     generated: Image.Image,
     original: Image.Image,
