@@ -29,12 +29,14 @@ from PIL import Image
 
 from .masking import (
     decode_mask_to_float,
+    heal_masked_image,
     mask_bbox,
     normalize_crop_mode,
     prepare_mask_arrays,
     resolve_crop_box,
 )
 from .prompt_fallback import generate_heuristic_prompt
+from .surface_profile import build_surface_profile, measure_surface
 from .vision_models import get_catalog_entry, is_local_vision_model_installed, is_tag_matching
 from .vision_runtime import (
     VisionRuntimeError,
@@ -48,6 +50,11 @@ logger = logging.getLogger("quantfunc.prompt_gen")
 MAX_CACHE_ENTRIES = 50
 MAX_SOURCE_PIXELS = 64_000_000  # 64 MP safety limit (e.g. 8000x8000)
 MAX_ENCODED_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB per image payload
+
+# Bump whenever a prompt template / sanitizer changes.  It is part of the cache
+# key so a stale prompt produced by an older template can never be served again
+# (see docs/INPAINT_INK_BRUSH_INVESTIGATION.md, gap G4).
+PROMPT_TEMPLATE_VERSION = "2026-11-03-ink-brush-fix-v2"
 
 _CACHE_LOCK = threading.Lock()
 _PROMPT_CACHE: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
@@ -182,6 +189,26 @@ def _apply_red_mask_highlight(
     return Image.fromarray(blended.astype(np.uint8), mode="RGB")
 
 
+def _heal_masked_area(img: Image.Image, mask_pil: Image.Image) -> Image.Image:
+    """Replace the masked pixels with a smooth continuation of the surrounding art.
+
+    The VLM must never see the raw SFX/text under the red mask highlight: a red
+    tint turns the removed element into a flat red shape, and the model then
+    describes *that placeholder* instead of the surrounding background.  This is
+    exactly what produced "A completely flat, smooth, uniform dark crimson-red
+    background" (see docs/INPAINT_INK_BRUSH_INVESTIGATION.md, §9).
+    """
+    try:
+        mask = np.asarray(
+            mask_pil.resize(img.size, Image.Resampling.BILINEAR),
+            dtype=np.float32,
+        ) / 255.0
+        return heal_masked_image(img, mask, dilate_px=6)
+    except Exception as exc:  # pragma: no cover - defensive, never break the request
+        logger.warning("[prompt-gen] Could not heal masked area for the VLM: %s", exc)
+        return img
+
+
 def build_vlm_images(
     source_image: Image.Image,
     raw_mask: np.ndarray,
@@ -195,10 +222,12 @@ def build_vlm_images(
     mask_full_pil = Image.fromarray(mask_u8, mode="L")
 
     over_img = _resize_max_dim(rgb, vlm_dim)
+    # Heal the masked area first so the placeholder shows the surrounding
+    # surface rather than the SFX that is about to be removed.
     overview_composited = _apply_red_mask_highlight(
-        over_img,
+        _heal_masked_area(over_img, mask_full_pil),
         mask_full_pil,
-        alpha_strength=0.42,
+        alpha_strength=0.30,
         dim_outside=0.0,
     )
 
@@ -208,10 +237,10 @@ def build_vlm_images(
     # Highlight the masked pixels in the close-up crop too so VLM never confuses an unmasked character
     # inside the crop bounding box with the masked SFX/background around them!
     crop_composited = _apply_red_mask_highlight(
-        crop_rgb,
+        _heal_masked_area(crop_rgb, crop_mask_pil),
         crop_mask_pil,
-        alpha_strength=0.45,
-        dim_outside=0.18,
+        alpha_strength=0.22,
+        dim_outside=0.12,
     )
 
     return _encode_image_b64(overview_composited), _encode_image_b64(crop_composited)
@@ -227,6 +256,7 @@ def _compute_cache_key(
     crop_box: Tuple[int, int, int, int],
     crop_padding: int,
     use_vlm: bool,
+    flat_fill: bool = False,
 ) -> str:
     try:
         mtime = f"{resolved_source.stat().st_mtime_ns}"
@@ -238,6 +268,7 @@ def _compute_cache_key(
     mask_hash = hashlib.sha1(np.asarray(small_mask, dtype=np.uint8).tobytes()).hexdigest()
 
     raw_key = "|".join([
+        PROMPT_TEMPLATE_VERSION,
         str(resolved_source),
         mtime,
         mask_hash,
@@ -247,6 +278,7 @@ def _compute_cache_key(
         f"{crop_box[0]},{crop_box[1]},{crop_box[2]},{crop_box[3]}",
         str(crop_padding),
         "vlm" if use_vlm else "heur",
+        "flat" if flat_fill else "noflat",
     ])
     return hashlib.sha1(raw_key.encode("utf-8")).hexdigest()
 
@@ -262,6 +294,7 @@ def generate_inpaint_prompt(
     vision_model: Optional[str] = None,
     vision_provider: Optional[str] = None,
     use_vlm: bool = True,
+    flat_fill: bool = False,
     settings: Any = None,
     project_root: Optional[Path] = None,
     allowed_dirs: Optional[List[Path]] = None,
@@ -338,6 +371,7 @@ def generate_inpaint_prompt(
         crop_box=resolved_box,
         crop_padding=int(crop_padding or 64),
         use_vlm=effective_use_vlm,
+        flat_fill=bool(flat_fill),
     )
 
     with _CACHE_LOCK:
@@ -354,7 +388,12 @@ def generate_inpaint_prompt(
         mask_array=raw_mask,
         mask_box=bbox,
         instruction=instruction_clean,
+        flat_fill=bool(flat_fill),
     )
+    # Measured surface profile around the mask.  For removal tasks this is the
+    # source of truth for the colours/tone: the VLM caption is only allowed to
+    # contribute whitelisted surface wording (see backend/surface_profile.py).
+    surface_profile = build_surface_profile(measure_surface(source_image, raw_mask))
 
     models_dir = getattr(settings, "models_dir", None) if settings is not None else None
     cat_entry = get_catalog_entry(selected_model)
@@ -421,6 +460,8 @@ def generate_inpaint_prompt(
                     timeout_sec=timeout_sec,
                     keep_alive=keep_alive,
                     models_dir=models_dir,
+                    flat_fill=bool(flat_fill),
+                    surface_profile=surface_profile,
                 )
                 result = {
                     "prompt": vlm_prompt,

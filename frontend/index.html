@@ -1440,6 +1440,10 @@
                 <span class="inpaint-prompt-source-badge" id="inpaint-prompt-source-badge" style="display: none;"></span>
               </div>
               <input type="text" id="inpaint-instruction" maxlength="500" data-i18n-placeholder="inpaint.assistant.instruction_placeholder" placeholder="Что сделать в этой области? (напр.: убрать текст, восстановить фон)">
+              <label class="inpaint-flat-fill-row" for="inpaint-flat-fill" title="Залить область ровным однотонным цветом вместо продолжения окружающего фона. По умолчанию выключено: продолжение фона выглядит естественнее.">
+                <input type="checkbox" id="inpaint-flat-fill">
+                <span data-i18n="inpaint.assistant.flat_fill">Плоская однотонная заливка (вместо продолжения фона)</span>
+              </label>
               <div class="inpaint-vision-provider-row" style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
                 <span style="font-size: 11px; color: var(--text-dim); white-space: nowrap;">⚙ Провайдер:</span>
                 <select id="inpaint-vision-provider-select" title="Выбор провайдера VLM / Prompt Upsampler" onchange="App.onInpaintVisionProviderChange(this.value)" style="flex: 1; height: 26px; font-size: 11.5px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px;">
@@ -1466,7 +1470,7 @@
 
             <textarea id="inpaint-prompt" rows="2" data-i18n-placeholder="inpaint.prompt_placeholder" placeholder="Что должно быть на месте маски?"></textarea>
 
-            <textarea id="inpaint-negative-prompt" rows="1" data-i18n-placeholder="prompt.negative_placeholder" placeholder="Негативный промпт (опционально)..."></textarea>
+            <textarea id="inpaint-negative-prompt" rows="1" data-i18n-placeholder="prompt.negative_placeholder" placeholder="Негативный промпт (опционально)...">text, japanese, kanji, kana, letters, sfx, ink, brush strokes, splatter, streaks, dark spots, speech bubble outline, watermark, signature, visible seams</textarea>
 
             <div class="inpaint-params">
 

@@ -73,7 +73,9 @@ def test_prompt_gen_api_heuristic_fallback_and_cache():
             assert "red" in data["prompt"]
             assert len(data["warnings"]) >= 1
 
-            # Second identical call hits LRU cache
+            # A VLM-error fallback is deliberately NOT cached (commit 3d717cb),
+            # so a repeated request re-runs the pipeline instead of serving a
+            # possibly degraded prompt.
             resp2 = client.post("/api/inpaint/prompt", json={
                 "source_path": src_rel,
                 "mask": _make_mask_data_url(),
@@ -81,7 +83,28 @@ def test_prompt_gen_api_heuristic_fallback_and_cache():
                 "use_vlm": True,
             })
             assert resp2.status_code == 200
-            assert resp2.json()["cached"] is True
+            assert resp2.json()["cached"] is False
+
+            # Explicit heuristic mode IS cached - the second identical call hits
+            # the LRU cache.
+            resp3 = client.post("/api/inpaint/prompt", json={
+                "source_path": src_rel,
+                "mask": _make_mask_data_url(),
+                "instruction": "убрать японский текст, восстановить красный фон",
+                "use_vlm": False,
+                "vision_provider": "heuristic",
+            })
+            assert resp3.status_code == 200
+            assert resp3.json()["cached"] is False
+            resp4 = client.post("/api/inpaint/prompt", json={
+                "source_path": src_rel,
+                "mask": _make_mask_data_url(),
+                "instruction": "убрать японский текст, восстановить красный фон",
+                "use_vlm": False,
+                "vision_provider": "heuristic",
+            })
+            assert resp4.status_code == 200
+            assert resp4.json()["cached"] is True
     finally:
         sample_path.unlink(missing_ok=True)
 

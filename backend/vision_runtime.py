@@ -29,7 +29,12 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .prompt_fallback import DEFAULT_NEGATIVE_PROMPT
+from .prompt_fallback import DEFAULT_NEGATIVE_PROMPT, MANDATORY_INK_NEGATIVES
+from .surface_profile import (
+    SURFACE_CONTINUATION_MARKER,
+    build_removal_prompt,
+    build_surface_profile,
+)
 from .vision_models import (
     clear_download_state,
     get_catalog_entry,
@@ -44,13 +49,15 @@ SYSTEM_PROMPT = (
     "You are a prompt engineer for Stable Diffusion / FLUX Inpainting.\n"
     "In both images, the BRIGHT RED highlighted shapes mark the EXACT masked pixels to be repainted.\n"
     "CRITICAL RULES:\n"
-    "1. Describe ONLY what should appear INSIDE the bright red masked shapes AFTER the edit.\n"
+    "1. Describe ONLY the background surface that should appear INSIDE the bright red masked shapes "
+    "AFTER the edit.\n"
     "2. NEVER describe characters, faces, hair, hats, or clothing that are OUTSIDE the red mask, "
     "even if a character stands next to or between red masked shapes!\n"
     "3. If the user asks to delete/remove/clean text, SFX, sound effects, speech bubbles, or objects: "
-    "do NOT mention the removed text/object and do NOT describe nearby characters. Describe ONLY the "
-    "underlying background surface, colors, lighting, gradients, and brush texture that should seamlessly "
-    "fill the red shapes behind the removed element.\n"
+    "do NOT mention the removed text/object and do NOT describe nearby characters. The red masked "
+    "shapes are only an EMPTY PLACEHOLDER - describe the background surface AROUND them (its colour, "
+    "tone, texture and lighting) and state that the same surface continues into them. Never describe "
+    "the masked shapes themselves as a flat, smooth, uniform or solid colour field.\n"
     "4. negative_prompt MUST be a comma-separated list of forbidden artifacts (e.g. "
     '"japanese text, sfx, kanji, katakana, letters, speech bubble, watermark, blurry, seam"). '
     'NEVER write "no background", "no colors", "no details", "no style", "no characters", or words starting with "no ".\n'
@@ -58,6 +65,12 @@ SYSTEM_PROMPT = (
 )
 
 _LAST_ACTIVE_OLLAMA_MODEL: Optional[str] = None
+
+# Token budget for the FLUX 3 PUP caption.  90 tokens truncated the caption
+# mid-sentence ("The central region continues as") whenever the model wrote
+# more than ~35 words, which produced half-finished prompts in the diffusion
+# model.  160 tokens covers a 40-word caption without cutting it.
+PUP_MAX_NEW_TOKENS = 160
 
 _BAD_NEGATIVE_CONCEPTS = {
     "background",
@@ -102,6 +115,32 @@ def _is_removal_instruction(instruction: str) -> bool:
     return bool(_REMOVAL_KEYWORDS_RE.search(instruction or ""))
 
 
+# Removal of *text / SFX* specifically (not an arbitrary object).  Only for these
+# tasks do we suppress ink/brush artefacts in the negative prompt — forcing
+# "no ink" on e.g. a character removal would fight legitimate line art.
+_TEXT_SFX_RE = re.compile(
+    r"\b(text|sfx|sound\s*effects?|kanji|katakana|hiragana|japanese|letters?|words?|writing|"
+    r"captions?|subtitles?|speech\s*bubbles?|thought\s*bubbles?|bubbles?|watermarks?|signatures?|"
+    r"текст\w*|надпис\w*|букв\w*|японск\w*|кана\w*|канзи\w*|звук\w*|сфх|бабл\w*|облачк\w*|"
+    r"реплик\w*|водян\w*|подпис\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_text_sfx_removal_instruction(instruction: str) -> bool:
+    """True when the instruction removes text/SFX rather than an arbitrary object."""
+    text = (instruction or "").strip()
+    if not text or not _is_removal_instruction(text):
+        return False
+    return bool(_TEXT_SFX_RE.search(text))
+
+
+# Ink/brush artefacts that must never be generated while filling a removed
+# text/SFX area.  Shared with ``backend.prompt_fallback`` (single source of
+# truth) — see docs/INPAINT_INK_BRUSH_INVESTIGATION.md.
+_MANDATORY_INK_NEGATIVES = MANDATORY_INK_NEGATIVES
+
+
 def _sanitize_negative_prompt(neg_raw: str, instruction: str = "") -> str:
     tokens: List[str] = []
     seen = set()
@@ -121,6 +160,14 @@ def _sanitize_negative_prompt(neg_raw: str, instruction: str = "") -> str:
 
     if _is_removal_instruction(instruction):
         for req in ("text", "japanese sfx", "kanji", "katakana", "letters", "speech bubble", "watermark", "blurry", "visible seam"):
+            if req.lower() not in seen:
+                seen.add(req.lower())
+                tokens.append(req)
+        # Ink suppression for ANY removal task.  It used to require an explicit
+        # text/SFX keyword, which silently skipped the tokens whenever the
+        # instruction was phrased differently ("удали это", "remove this") and
+        # let the harsh ink artefacts back in.
+        for req in _MANDATORY_INK_NEGATIVES:
             if req.lower() not in seen:
                 seen.add(req.lower())
                 tokens.append(req)
@@ -263,7 +310,88 @@ def check_ollama_status(ollama_url: str, timeout: float = 2.5) -> Dict[str, Any]
     }
 
 
-def _sanitize_positive_prompt(prompt_raw: str) -> str:
+# Phrases that describe the REMOVED element (ink / brush artwork).  These are
+# stripped ONLY for removal tasks.  Generic vocabulary such as "texture",
+# "splatter" or "streaks" is deliberately NOT stripped: after the prompt
+# reframe the model describes the surrounding artwork, and its texture words are
+# exactly what the diffusion needs in order to continue that surface.
+_INPAINT_ARTEFACT_PATTERNS = (
+    r"\b(?:irregular\s+|rough\s+|heavy\s+|dense\s+|bold\s+|strong\s+)?black\s+brush\s+strokes?\b",
+    r"\b(?:dry[- ]brush|brush[- ]strokes?|brushwork)(?:\s+(?:streaks?|marks?|splashes?))?\b",
+    r"\b(?:ink[- ]splash(?:es)?|ink[- ]wash(?:es)?|ink\s+splatter|ink\s+marks?|ink\s+droplets?|ink\s+strokes?)\b",
+    r"\b(?:rough|dense|layered)\s+manga[- ]style\s+splatter\b",
+    r"\b(?:scattered|flying|sprayed)\s+(?:droplets|ink|splashes)\b",
+    r"\b(?:dense\s+|heavy\s+|thick\s+|rich\s+|dark\s+)?"
+    r"(?:crimson|scarlet|blood[- ]red|dark\s+red|red)\s+(?:washes?|stains?|pools?)\b",
+    r"\b(?:continuous\s+)?painted\s+texture\b",
+)
+
+# Meta clauses the VLM likes to append ("contains only the ...", "with no
+# lettering").  Diffusion models do not honour negations inside the positive
+# prompt, so these are dropped entirely for removal tasks.  Clauses that name
+# the REMOVED element are dropped as well - "the area formerly covered by the
+# Japanese SFX placeholder" would make the model paint the SFX back in.
+_INPAINT_META_PATTERNS = (
+    r"\b(?:the\s+)?[\w-]+\s+region\s+contains\s+only\s+the\b[^,.]*",
+    r"[^,.]*\bformerly\s+(?:covered|occupied)\s+by\s+[^,.]*",
+    r"[^,.]*\breplacing\s+the\s+[^,.]*",
+    r",?\s*with\s+no\b[^.]*",
+    r",?\s*without\s+any\b[^.]*",
+    r",?\s*and\s+no\s+(?:visible\s+)?(?:pattern|text|lettering|figures?|graphics?|symbols?|characters?)\b[^.]*",
+    r",?\s*\bno\s+(?:lettering|symbols?|characters?|text|masks?|figures?|graphics?|foreground\s+objects?)\b[^.]*",
+    r"\b(?:the\s+)?(?:red\s+|bright\s+)?(?:masked\s+|highlighted\s+)?placeholder\b[,.]?",
+)
+
+# Appended to every removal prompt so the diffusion model continues the
+# surrounding surface instead of inventing a flat colour patch.
+CONTINUATION_MARKER = SURFACE_CONTINUATION_MARKER
+
+_CONTINUATION_MARKER_RE = re.compile(
+    r"\b(?:seamless\s+continuation|same\s+surface\s+continues|continuing\s+seamlessly)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_inpaint_artifacts(prompt: str) -> str:
+    """Remove ink/brush artwork phrases from a removal-task prompt."""
+    p = prompt
+    for pat in _INPAINT_META_PATTERNS:
+        p = re.sub(pat, "", p, flags=re.IGNORECASE)
+    for pat in _INPAINT_ARTEFACT_PATTERNS:
+        p = re.sub(pat, "", p, flags=re.IGNORECASE)
+    # Clean up list separators, dangling adjectives and conjunctions left behind
+    # by removed items.  Run to a fixed point so the result is idempotent.
+    for _ in range(3):
+        before = p
+        p = re.sub(r"\(\s*\)|\[\s*\]", "", p)
+        p = re.sub(r",\s*\.", ".", p)
+        p = re.sub(r"\b(has|have|is|are|was|were|contains|consists|features)\s*,\s*", r"\1 ", p)
+        p = re.sub(r"(?:,\s*){2,}", ", ", p)
+        p = re.sub(r"\s+,", ",", p)
+        p = re.sub(
+            r"\b(?:rough|irregular|heavy|dense|bold|strong|vertical|horizontal|scattered|thick|rich)"
+            r"\s*(?=[,.;]|$)",
+            "",
+            p,
+            flags=re.IGNORECASE,
+        )
+        p = re.sub(r"\b(?:with|and|or|plus)\s*(?=[,.;]|$)", "", p, flags=re.IGNORECASE)
+        p = re.sub(r"\bwith\s+(?:and|or)\s+", "", p, flags=re.IGNORECASE)
+        # A removed item may leave a dangling preposition: "consists of, mottled".
+        p = re.sub(r"\b(of|with|from|into|by)\s*,\s*", r"\1 ", p, flags=re.IGNORECASE)
+        p = re.sub(r"\s{2,}", " ", p)
+        if p == before:
+            break
+    p = p.strip().strip(",").strip()
+    p = re.sub(r"^(?:and|or|with)\s+", "", p, flags=re.IGNORECASE)
+    if not p:
+        return CONTINUATION_MARKER
+    if not _CONTINUATION_MARKER_RE.search(p):
+        p = f"{p.rstrip(' .,;')}, {CONTINUATION_MARKER}"
+    return p
+
+
+def _sanitize_positive_prompt(prompt_raw: str, is_removal: bool = False) -> str:
     p = (prompt_raw or "").strip()
     # Strip any CJK (Japanese/Chinese/Korean) characters so the diffusion model never renders text
     p = re.sub(r'["\'«„“”\(\[]*[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]+["\'»“”\)\]]*', "", p)
@@ -306,6 +434,9 @@ def _sanitize_positive_prompt(prompt_raw: str) -> str:
     p = re.sub(r"\s+,", ",", p)
     p = re.sub(r",\s*,+", ", ", p)
     p = re.sub(r"\s{2,}", " ", p)
+    p = p.strip().rstrip(",").strip()
+    if is_removal:
+        p = _strip_inpaint_artifacts(p)
     return p.strip().rstrip(",").strip()
 
 
@@ -327,11 +458,13 @@ def parse_vlm_response_text(raw_text: str, instruction: str = "") -> Tuple[str, 
     if brace_match and brace_match.group(0) != cleaned:
         candidates.append(brace_match.group(0))
 
+    is_removal = _is_removal_instruction(instruction)
+
     for cand in candidates:
         try:
             obj = json.loads(cand)
             if isinstance(obj, dict):
-                prompt = _sanitize_positive_prompt(str(obj.get("prompt") or ""))
+                prompt = _sanitize_positive_prompt(str(obj.get("prompt") or ""), is_removal=is_removal)
                 neg = str(obj.get("negative_prompt") or obj.get("negative") or "").strip()
                 if prompt:
                     neg_clean = _sanitize_negative_prompt(neg, instruction=instruction)
@@ -349,24 +482,105 @@ def parse_vlm_response_text(raw_text: str, instruction: str = "") -> Tuple[str, 
         combined = " ".join(prose_lines)
         combined = re.sub(r"^(prompt\s*:\s*)", "", combined, flags=re.IGNORECASE).strip().strip('"')
         if combined:
-            return combined[:1500], DEFAULT_NEGATIVE_PROMPT[:500]
+            combined = _sanitize_positive_prompt(combined, is_removal=is_removal)
+            neg_clean = _sanitize_negative_prompt(DEFAULT_NEGATIVE_PROMPT, instruction=instruction)
+            return combined[:1500], neg_clean[:500]
 
     raise ValueError("Could not extract prompt from vision model response")
 
 
-INPAINT_PUP_SYSTEM_PROMPT = (
+# Base rules shared by every PUP request.  Deliberately free of ink/brush
+# vocabulary: the previous few-shot example ("rough vertical ink brushwork")
+# was the single strongest driver of the ink-splash artefacts (see
+# docs/INPAINT_INK_BRUSH_INVESTIGATION.md, §1.4).
+_INPAINT_PUP_BASE_RULES = (
     "You write direct, vivid visual scene descriptions for an image inpainting diffusion model.\n"
-    "The bright red highlight in the image marks the area to be repainted.\n"
+    "The bright red highlight in the image marks an area that has been emptied out and must be "
+    "repainted so it continues the surrounding artwork.\n"
     "CRITICAL RULES:\n"
-    "1. Output ONLY a direct visual description (20–40 words) of the clean surface, background, "
-    "lighting, colors, and brushwork texture that should appear inside that area after the edit.\n"
+    "1. Output ONLY a direct visual description (20–40 words) of the background surface.\n"
     "2. NEVER mention 'the first image', 'the second image', 'red highlight', 'mask', 'patch', "
     "'remove', 'delete', 'replace', or CSS hex color codes like #030522.\n"
-    "3. NEVER describe characters, faces, hair, or clothing outside the red area.\n"
+    "3. NEVER name a subject. No people, characters, faces, heads, hair, clothing, body parts, "
+    "plants, animals or objects - not even indirectly ('character-like', 'torso', 'foliage').\n"
     "4. Write ONLY the final visual appearance as a single descriptive phrase (e.g., "
-    "'Dark crimson and deep burgundy manga background with rough vertical ink brushwork, "
-    "subtle plum shadows, painterly anime illustration texture, clean seamless surface')."
+    "'deep crimson painted background with soft mottled shading, darker crimson clouds and "
+    "scattered near-black accents, even lighting, seamless surface').\n"
 )
+
+# Extra rules appended only for removal tasks.  The model must describe the
+# surface AROUND the marked area, not the marked area itself: the marked area is
+# only a placeholder (it is red-tinted in the input image), so describing it
+# literally is what made the model answer "a completely flat, smooth, uniform
+# dark crimson-red background" and the diffusion paint a flat red blob.
+#
+# Verified limitation (docs/INPAINT_INK_BRUSH_INVESTIGATION.md §10): PUP is a
+# captioner and ignores length limits - an explicit "at most 12 words" rule
+# still produced 41 words.  Its output is therefore post-filtered down to
+# whitelisted surface wording; the colours come from measured pixels.
+_INPAINT_PUP_REMOVAL_RULES = (
+    "REMOVAL TASK RULES:\n"
+    "- Describe the surface AROUND the highlighted area: its colour, tone, texture and lighting.\n"
+    "- The highlighted area is an empty placeholder. Never describe it as a flat, smooth or "
+    "uniform colour field, and never call it a solid shape.\n"
+    "- State that the very same surrounding surface continues into the highlighted area.\n"
+    "- Describe only surface materials (texture, grain, shading, pattern). Do NOT invent "
+    "subjects, story elements or style labels.\n"
+    "- NEVER output the words: 'brush', 'stroke', 'strokes', 'ink', 'splatter', 'spray', "
+    "'droplet', 'droplets', 'wash', 'washes', 'streak', 'streaks', 'dry-brush'.\n"
+)
+
+INPAINT_PUP_SYSTEM_PROMPT = _INPAINT_PUP_BASE_RULES
+
+INPAINT_PUP_REMOVAL_SYSTEM_PROMPT = _INPAINT_PUP_BASE_RULES + _INPAINT_PUP_REMOVAL_RULES
+
+
+def _build_inpaint_request(
+    instruction: str,
+    colors: str,
+    *,
+    is_removal: bool,
+    flat_fill: bool,
+) -> str:
+    """Build the user request text sent to a PUP prompt upsampler."""
+    if is_removal:
+        if flat_fill:
+            # Explicitly requested uniform colour patch.
+            return (
+                f"Task: {instruction}. "
+                "Write ONLY a direct visual description (15-25 words) of a clean, even, uniform "
+                f"background colour patch in the colours ({colors or 'matching surrounding tones'}) "
+                "that matches the surrounding area. Do NOT mention the highlight, characters, text "
+                "or symbols."
+            )
+        # The marked area is a placeholder - describe the surface AROUND it so the
+        # diffusion can continue that same surface into the hole.  The wording is
+        # the one that produced the verified-good caption ("a dense, painterly
+        # field of dark crimson ... fills the entire composition, continuing
+        # seamlessly through the central area"): it makes PUP describe the
+        # surface as a *field* that continues, which is what gives the diffusion
+        # model the texture detail it needs.  A caption that names a subject or
+        # a foreign colour is rejected downstream (backend/surface_profile.py).
+        return (
+            f"Task: {instruction}. "
+            "Describe the background surface SURROUNDING the highlighted area - its colour, "
+            "tone, texture and lighting - so the identical surface can be continued seamlessly "
+            f"into it. The surrounding colours are ({colors or 'matching surrounding tones'}). "
+            "The highlighted area is an empty placeholder: describe what surrounds it and state "
+            "that the same surface continues into it. Do NOT mention the highlight, characters, "
+            "text or symbols."
+        )
+    if instruction:
+        return (
+            f"Task: {instruction}. "
+            "Write ONLY a direct visual description (20-35 words) of what should appear in the marked area, "
+            "matching surrounding art style and lighting. Do NOT mention red masks, images, or hex codes."
+        )
+    return (
+        "Write ONLY a direct visual description (15-25 words) of the background surface surrounding "
+        f"the highlighted area, in colours ({colors or 'matching surrounding tones'}), stating that "
+        "the same surface continues into it. Do NOT mention the highlight, characters, text or symbols."
+    )
 
 
 def run_nunchaku_pup_inference(
@@ -534,45 +748,67 @@ def generate_vlm_prompt(
     timeout_sec: int = 120,
     keep_alive: str = "0s",
     models_dir: Optional[Path] = None,
+    flat_fill: bool = True,
+    surface_profile: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str]:
-    """Generate ``(prompt, negative_prompt)`` for Inpaint via Nunchaku PUP, FLUX 3 PUP GGUF, or Ollama VLM."""
+    """Generate ``(prompt, negative_prompt)`` for Inpaint via Nunchaku PUP, FLUX 3 PUP GGUF, or Ollama VLM.
+
+    For removal tasks the caption is NOT trusted as the source of truth: it is a
+    captioner that describes the whole crop (including characters next to the
+    mask) and ignores length limits.  The colour and tonal facts come from the
+    measured ``surface_profile``; the caption may only contribute whitelisted
+    surface-material wording.  See ``backend/surface_profile.py``.
+    """
     entry = get_catalog_entry(model_id)
-    color_list = (analysis_hint or {}).get("color_names") or []
-    colors = ", ".join(color_list[:3])
+    is_removal = _is_removal_instruction((instruction or "").strip())
+    if surface_profile is None and is_removal and analysis_hint:
+        # Degraded fallback: no measured band available (e.g. a direct call).
+        surface_profile = build_surface_profile({
+            "primary": (analysis_hint.get("color_names") or ["neutral grey"])[0],
+            "color_names": analysis_hint.get("color_names") or [],
+            "brightness": analysis_hint.get("brightness"),
+            "saturation": analysis_hint.get("saturation"),
+            "brightness_std": analysis_hint.get("brightness_std"),
+            "edge_density": analysis_hint.get("edge_density"),
+        })
+    # The colours handed to the VLM are the MEASURED ones, not the wide-ring
+    # guess: on a mixed panel the wide ring can be dominated by a colour that
+    # does not touch the mask at all.
+    if surface_profile and surface_profile.get("primary"):
+        colors = str(surface_profile["primary"])
+    else:
+        color_list = (analysis_hint or {}).get("color_names") or []
+        colors = ", ".join(color_list[:3])
     if entry and entry.get("provider") == "nunchaku":
         base_models_dir = (models_dir or (Path(__file__).resolve().parent.parent / "models" / "cache")).resolve()
         model_dir = base_models_dir / entry["local_dir"]
         instr_clean = (instruction or "").strip()
-        if _is_removal_instruction(instr_clean):
-            req_text = (
-                f"Task: {instr_clean}. "
-                "Write ONLY a direct visual description (20-35 words) of the clean background surface, "
-                f"colors ({colors or 'matching surrounding tones'}), lighting, and manga/anime brush texture "
-                "that should fill this area. Do NOT mention characters, red masks, images, or hex codes."
-            )
-        elif instr_clean:
-            req_text = (
-                f"Task: {instr_clean}. "
-                "Write ONLY a direct visual description (20-35 words) of what should appear in the marked area, "
-                "matching surrounding art style and lighting. Do NOT mention red masks, images, or hex codes."
-            )
-        else:
-            req_text = (
-                "Write ONLY a direct visual description (20-35 words) of the clean surrounding background surface, "
-                f"colors ({colors or 'matching surrounding tones'}), lighting, and brush texture to restore this area."
-            )
+        req_text = _build_inpaint_request(
+            instr_clean,
+            colors,
+            is_removal=is_removal,
+            flat_fill=flat_fill,
+        )
+        system_prompt = INPAINT_PUP_REMOVAL_SYSTEM_PROMPT if is_removal else INPAINT_PUP_SYSTEM_PROMPT
         caption = run_nunchaku_pup_inference(
             model_dir=model_dir,
             quant_file=entry["primary_file"],
             prompt_text=req_text,
             images_b64=[crop_b64],
             timeout_sec=timeout_sec,
-            max_new_tokens=90,
-            system_prompt=INPAINT_PUP_SYSTEM_PROMPT,
+            # 90 tokens truncated the caption mid-sentence ("The central region
+            # continues as") whenever the model wrote more than ~35 words.
+            max_new_tokens=PUP_MAX_NEW_TOKENS,
+            system_prompt=system_prompt,
             inpaint_mode=True,
         )
         p_out, n_out = parse_vlm_response_text(caption, instruction=instruction)
-        return _sanitize_positive_prompt(p_out), _sanitize_negative_prompt(n_out, instruction=instruction)
+        if is_removal and surface_profile:
+            p_out = build_removal_prompt(surface_profile, p_out, flat_fill=flat_fill)
+        return (
+            _sanitize_positive_prompt(p_out, is_removal=False),
+            _sanitize_negative_prompt(n_out, instruction=instruction),
+        )
 
     global _LAST_ACTIVE_OLLAMA_MODEL
     base = validate_ollama_url(ollama_url)
@@ -582,31 +818,20 @@ def generate_vlm_prompt(
 
     if use_flux3_pup:
         instr_clean = (instruction or "").strip()
-        if _is_removal_instruction(instr_clean):
-            user_content = (
-                f"Task: {instr_clean}. "
-                "Write ONLY a direct visual description (20-35 words) of the clean background surface, "
-                f"colors ({colors or 'matching surrounding tones'}), lighting, and manga/anime brush texture "
-                "that should fill this area. Do NOT mention characters, red masks, images, or hex codes."
-            )
-        elif instr_clean:
-            user_content = (
-                f"Task: {instr_clean}. "
-                "Write ONLY a direct visual description (20-35 words) of what should appear in the marked area, "
-                "matching surrounding art style and lighting. Do NOT mention red masks, images, or hex codes."
-            )
-        else:
-            user_content = (
-                "Write ONLY a direct visual description (20-35 words) of the clean surrounding background surface, "
-                f"colors ({colors or 'matching surrounding tones'}), lighting, and brush texture to restore this area."
-            )
+        user_content = _build_inpaint_request(
+            instr_clean,
+            colors,
+            is_removal=is_removal,
+            flat_fill=flat_fill,
+        )
+        system_prompt = INPAINT_PUP_REMOVAL_SYSTEM_PROMPT if is_removal else INPAINT_PUP_SYSTEM_PROMPT
         payload = {
             "model": model_id,
             "stream": False,
             "keep_alive": effective_keep_alive,
             "think": False,
             "messages": [
-                {"role": "system", "content": INPAINT_PUP_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": user_content,
@@ -640,8 +865,10 @@ def generate_vlm_prompt(
             user_parts.append(
                 "IMPORTANT: This is an OBJECT/TEXT/SFX REMOVAL task! "
                 "Do NOT describe any character, face, hair, hat, or outfit standing next to the red mask. "
-                "Describe ONLY the clean background surface, lighting, colors, and art texture that should fill "
-                f"the red masked shapes after the unwanted SFX/text is erased (matching surrounding {colors or 'colors'})."
+                "The BRIGHT RED masked shapes are only an EMPTY PLACEHOLDER - describe the background "
+                "surface AROUND them (colour, tone, texture and lighting) and state that the same "
+                f"surface continues into them (matching surrounding {colors or 'colors'}). Never "
+                "describe the masked shapes as a flat, smooth, uniform or solid colour field."
             )
         else:
             user_parts.append(
@@ -680,7 +907,11 @@ def generate_vlm_prompt(
     )
     msg = resp.get("message") or {}
     content = msg.get("content") or resp.get("response") or ""
-    return parse_vlm_response_text(str(content), instruction=instruction)
+    p_out, n_out = parse_vlm_response_text(str(content), instruction=instruction)
+    if is_removal and surface_profile:
+        p_out = build_removal_prompt(surface_profile, p_out, flat_fill=flat_fill)
+        n_out = _sanitize_negative_prompt(n_out, instruction=instruction)
+    return p_out, n_out
 
 
 def upsample_flux3_prompt(

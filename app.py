@@ -14419,6 +14419,7 @@ def create_app() -> FastAPI:
                 vision_model=body.get("vision_model"),
                 vision_provider=body.get("vision_provider"),
                 use_vlm=bool(body.get("use_vlm", True)),
+                flat_fill=bool(body.get("flat_fill", False)),
                 settings=settings,
                 project_root=project_root,
                 allowed_dirs=allowed_dirs,

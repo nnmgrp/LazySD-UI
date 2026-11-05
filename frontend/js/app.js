@@ -3212,7 +3212,14 @@ const App = {
       }
       const filename = imagePath.split(/[\/\\]/).pop();
       const url = `/outputs/${encodeURIComponent(filename)}?t=${Date.now()}`;
-      if (!this.state.genMask?.enabled) img.src = url;
+      img.src = url;
+      if (this.state.genMask?.enabled && typeof this.setGenMaskSource === "function") {
+        this.setGenMaskSource({
+          url,
+          path: filename,
+          name: filename,
+        });
+      }
       this.state.currentPreviewFilename = filename;
       this.state.currentPreviewUrl = url;
       this.state.lastPreviewName = filename;
@@ -13060,8 +13067,8 @@ Object.assign(App, {
   applyInpaintPreset(key) {
     const presets = {
       clean_text: {
-        prompt: "clean empty dialog speech bubble, seamless white fill, clean background, monochrome manga",
-        negative: "text, letters, words, japanese, kanji, sound effects, sfx, speech, artifacts, watermark",
+        prompt: "flat smooth clean background surface, uniform color fill, seamless solid backdrop, clean edges, no text",
+        negative: "text, letters, words, japanese, kanji, sound effects, sfx, speech, ink, brush strokes, dry brush, splatter, droplets, streaks, dark spots, dirty shading, artifacts, watermark",
       },
       screentone: {
         prompt: "uniform monochrome manga screentone texture, fine halftone dot pattern, seamless shading",
@@ -13769,6 +13776,7 @@ Object.assign(App, {
     const source = state.source;
     state.jobContext = {
       sourceToken: source.token,
+      sourceLoadSeq: state.sourceLoadSeq,
       sourcePath: source.path,
       maskLayerId: layer.id,
       maskDataUrl,
@@ -13891,8 +13899,8 @@ Object.assign(App, {
     if (
       !context
       || state.jobId !== context.jobId
-      || state.source?.token !== context.sourceToken
-      || state.sourceLoadSeq !== context.sourceToken
+      || (context.sourceToken !== undefined && state.source?.token !== context.sourceToken)
+      || (context.sourceLoadSeq !== undefined && state.sourceLoadSeq !== context.sourceLoadSeq)
     ) {
       state.jobContext = null;
       this.toast("warning", this.maskT("inpaint.hint.source_changed", "Источник изменился; результат не добавлен"));
@@ -13920,8 +13928,8 @@ Object.assign(App, {
       maskImage.src = maskSnapshot;
     });
     if (
-      state.source?.token !== context.sourceToken
-      || state.sourceLoadSeq !== context.sourceToken
+      (context.sourceToken !== undefined && state.source?.token !== context.sourceToken)
+      || (context.sourceLoadSeq !== undefined && state.sourceLoadSeq !== context.sourceLoadSeq)
     ) {
       state.jobContext = null;
       this.toast("warning", this.maskT("inpaint.hint.source_changed", "Источник изменился; результат не добавлен"));
@@ -14487,6 +14495,8 @@ Object.assign(App, {
     const selectedVision = visionSelect?.value || "qwen2.5vl:3b";
     const useVlm = selectedVision !== "heuristic" && selectedProvider !== "heuristic";
     const crop = this.getInpaintCropState() || { mode: "auto", padding: 64, box: null };
+    const flatFillEl = document.getElementById("inpaint-flat-fill");
+    const flatFill = flatFillEl ? !!flatFillEl.checked : false;
 
     const btn = document.getElementById("inpaint-generate-prompt-btn");
     const badge = document.getElementById("inpaint-prompt-source-badge");
@@ -14508,6 +14518,7 @@ Object.assign(App, {
         vision_model: useVlm ? selectedVision : null,
         vision_provider: selectedProvider,
         use_vlm: useVlm,
+        flat_fill: flatFill,
       });
 
       const promptEl = document.getElementById("inpaint-prompt");

@@ -1074,6 +1074,7 @@
   "inpaint.assistant.title": "Prompt Assistant",
   "inpaint.assistant.instruction_placeholder": "What to do in this region? (e.g., remove text, restore red background)",
   "inpaint.assistant.generate_btn": "✨ Generate Prompt",
+  "inpaint.assistant.flat_fill": "Flat solid fill (instead of continuing the background)",
   "inpaint.assistant.generating": "Analyzing region...",
   "inpaint.assistant.heuristic_only": "Heuristic (no VLM)",
   "inpaint.assistant.download": "⬇ Download",

@@ -7123,6 +7123,23 @@ body:not(.role-guest) #guest-mode-banner {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
+.inpaint-flat-fill-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.inpaint-flat-fill-row input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent, #7c6cf0);
+}
+.inpaint-flat-fill-row:hover {
+  color: var(--text-primary);
+}
 .inpaint-vision-row {
   display: flex;
   align-items: center;

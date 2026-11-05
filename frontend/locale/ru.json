@@ -1074,6 +1074,7 @@
   "inpaint.assistant.title": "Помощник промпта",
   "inpaint.assistant.instruction_placeholder": "Что сделать в этой области? (напр.: убрать текст, восстановить красный фон)",
   "inpaint.assistant.generate_btn": "✨ Сгенерировать промпт",
+  "inpaint.assistant.flat_fill": "Плоская однотонная заливка (вместо продолжения фона)",
   "inpaint.assistant.generating": "Анализ области...",
   "inpaint.assistant.heuristic_only": "Эвристика (без VLM)",
   "inpaint.assistant.download": "⬇ Скачать",

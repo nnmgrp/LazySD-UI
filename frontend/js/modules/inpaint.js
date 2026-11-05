@@ -1370,6 +1370,7 @@ export async function generateInpaint(appRef = null) {
   const source = state.source;
   state.jobContext = {
     sourceToken: source.token,
+    sourceLoadSeq: state.sourceLoadSeq,
     sourcePath: source.path,
     maskLayerId: layer.id,
     maskDataUrl,
@@ -1497,8 +1498,8 @@ async function applyInpaintResult(app, status, _unused) {
   if (
     !context
     || state.jobId !== context.jobId
-    || state.source?.token !== context.sourceToken
-    || state.sourceLoadSeq !== context.sourceToken
+    || (context.sourceToken !== undefined && state.source?.token !== context.sourceToken)
+    || (context.sourceLoadSeq !== undefined && state.sourceLoadSeq !== context.sourceLoadSeq)
   ) {
     state.jobContext = null;
     toast("warning", t("inpaint.hint.source_changed", "Источник изменился; результат не добавлен"));
@@ -1526,8 +1527,8 @@ async function applyInpaintResult(app, status, _unused) {
     maskImage.src = maskSnapshot;
   });
   if (
-    state.source?.token !== context.sourceToken
-    || state.sourceLoadSeq !== context.sourceToken
+    (context.sourceToken !== undefined && state.source?.token !== context.sourceToken)
+    || (context.sourceLoadSeq !== undefined && state.sourceLoadSeq !== context.sourceLoadSeq)
   ) {
     state.jobContext = null;
     toast("warning", t("inpaint.hint.source_changed", "Источник изменился; результат не добавлен"));

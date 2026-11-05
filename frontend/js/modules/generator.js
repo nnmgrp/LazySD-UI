@@ -255,7 +255,11 @@ export function onGenerationComplete(status, appRef) {
 
   if (emptyEl) emptyEl.style.display = "none";
   if (wrap) wrap.style.display = "inline-flex";
-  if (previewImg && !app?.state?.genMask?.enabled) previewImg.src = url;
+  if (previewImg) previewImg.src = url;
+  if (app?.state?.genMask?.enabled && typeof app.setGenMaskSource === "function") {
+    const filename = imagePath.split(/[\/\\]/).pop();
+    app.setGenMaskSource({ url, path: filename, name: filename });
+  }
 
   toast("success", "Изображение готово ✓");
   loadHistory(app);

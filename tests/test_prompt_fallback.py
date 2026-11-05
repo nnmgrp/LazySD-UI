@@ -62,8 +62,13 @@ def test_colored_art_splash_classification_and_palette():
     assert res["analysis"]["region_type"] == "colored_art"
     assert len(res["analysis"]["dominant_colors"]) >= 2
     assert "red" in res["prompt"]
-    assert "ink splash" in res["prompt"]
+    # The removal prompt is MEASURED, so the Russian hint "брызги" must not be
+    # translated into the positive prompt: "ink splash" in a positive prompt is
+    # exactly the trigger that produced the ink artefacts.
+    assert "ink splash" not in res["prompt"]
+    assert "seamless continuation" in res["prompt"]
     assert DEFAULT_NEGATIVE_PROMPT in res["negative_prompt"]
+    assert "ink" in res["negative_prompt"]
 
 
 def test_explicit_replacement_instruction():

@@ -14,16 +14,43 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+from .surface_profile import (
+    build_removal_prompt,
+    build_surface_profile,
+    extract_dominant_colors,
+    hex_to_rgb,
+    measure_surface,
+    rgb_to_color_name,
+)
+
 
 DEFAULT_NEGATIVE_PROMPT = (
     "text, japanese, kanji, kana, letters, sfx, speech bubble outline, "
     "watermark, signature, seams, blurry, low contrast, color shift"
 )
 
+# Ink / brush artefacts that must never be generated while filling a removed
+# text or SFX area (see docs/INPAINT_INK_BRUSH_INVESTIGATION.md).
+# Shared with ``backend.vision_runtime`` so both prompt paths agree.
+# NB: style-level words such as "grunge" / "dirty shading" are intentionally NOT
+# listed - they block legitimate painterly backgrounds, while the concrete
+# artefacts are already covered by the ink/brush/splatter tokens below.
+MANDATORY_INK_NEGATIVES = (
+    "ink",
+    "brush strokes",
+    "dry brush",
+    "splatter",
+    "droplets",
+    "ink wash",
+    "streaks",
+    "black marks",
+    "dark spots",
+)
+
 # Bilingual keyword patterns for user intent classification
 _RE_REMOVE = re.compile(
     r"\b(удал\w*|убер\w*|убрат\w*|сотр\w*|стерет\w*|очист\w*|чист\w*|"
-    r"clean\w*|remov\w*|eras\w*|clear\w*|rid\b)\b",
+    r"clean\w*|remov\w*|eras\w*|clear\w*|delet\w*|wip\w*|scrub\w*|rid\b)\b",
     re.IGNORECASE,
 )
 _RE_REPLACE = re.compile(
@@ -81,57 +108,14 @@ def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
 
 
 def rgb_to_color_name(rgb: Tuple[int, int, int]) -> str:
-    """Convert an RGB tuple (0..255) into a descriptive English colour phrase."""
-    r, g, b = (float(c) / 255.0 for c in rgb)
-    cmax = max(r, g, b)
-    cmin = min(r, g, b)
-    delta = cmax - cmin
-    val = cmax
-    sat = 0.0 if cmax <= 1e-5 else (delta / cmax)
+    """Convert an RGB tuple (0..255) into a descriptive English colour phrase.
 
-    if val > 0.90 and sat < 0.12:
-        return "white"
-    if val < 0.14:
-        return "black"
-    if sat < 0.14:
-        if val < 0.38:
-            return "dark grey"
-        if val > 0.72:
-            return "light grey"
-        return "neutral grey"
+    Implemented in :mod:`backend.surface_profile` and re-exported here for
+    backwards compatibility with existing imports.
+    """
+    from .surface_profile import rgb_to_color_name as _impl
 
-    # Compute hue in degrees [0, 360)
-    if delta <= 1e-5:
-        hue = 0.0
-    elif cmax == r:
-        hue = 60.0 * (((g - b) / delta) % 6.0)
-    elif cmax == g:
-        hue = 60.0 * (((b - r) / delta) + 2.0)
-    else:
-        hue = 60.0 * (((r - g) / delta) + 4.0)
-
-    if hue < 15 or hue >= 345:
-        base = "red"
-    elif hue < 42:
-        base = "orange" if val > 0.55 else "brown"
-    elif hue < 68:
-        base = "yellow" if sat > 0.35 else "warm beige"
-    elif hue < 160:
-        base = "green"
-    elif hue < 200:
-        base = "teal"
-    elif hue < 255:
-        base = "blue"
-    elif hue < 295:
-        base = "purple"
-    else:
-        base = "crimson" if val < 0.55 else "pink"
-
-    if val < 0.38 and base not in ("brown", "crimson"):
-        return f"dark {base}"
-    if val > 0.82 and sat < 0.45 and base not in ("warm beige",):
-        return f"pale {base}"
-    return base
+    return _impl(rgb)
 
 
 def extract_dominant_colors(
@@ -139,51 +123,21 @@ def extract_dominant_colors(
     sample_mask: Optional[np.ndarray] = None,
     max_colors: int = 5,
 ) -> List[str]:
-    """Return up to ``max_colors`` dominant hex colours sorted by area."""
-    rgb_img = image.convert("RGB")
-    small = rgb_img.resize((64, 64), Image.Resampling.BILINEAR)
-    arr = np.asarray(small, dtype=np.uint8)
+    """Return up to ``max_colors`` dominant hex colours sorted by area.
 
-    if sample_mask is not None and sample_mask.ndim == 2 and sample_mask.size > 0:
-        mask_pil = Image.fromarray((np.clip(sample_mask, 0.0, 1.0) * 255.0).astype(np.uint8), mode="L")
-        mask_small = np.asarray(mask_pil.resize((64, 64), Image.Resampling.NEAREST), dtype=np.uint8)
-        pixels = arr[mask_small > 32]
-        if pixels.shape[0] < 16:
-            pixels = arr.reshape(-1, 3)
-    else:
-        pixels = arr.reshape(-1, 3)
+    Implemented in :mod:`backend.surface_profile` and re-exported here for
+    backwards compatibility with existing imports.
+    """
+    from .surface_profile import extract_dominant_colors as _impl
 
-    if pixels.shape[0] == 0:
-        return ["#ffffff"]
-
-    # Quantise RGB into 16-level buckets (4 bits per channel) and average each cluster
-    buckets = (pixels // 24).astype(np.int32)
-    keys = (buckets[:, 0] << 8) | (buckets[:, 1] << 4) | buckets[:, 2]
-    unique_keys, counts = np.unique(keys, return_counts=True)
-
-    # Filter out tiny noise clusters (< 2% of pixels) unless only one cluster exists
-    min_count = max(1, int(pixels.shape[0] * 0.02))
-    order = np.argsort(-counts)
-    hex_colors: List[str] = []
-    for idx in order:
-        if len(hex_colors) >= max_colors:
-            break
-        if counts[idx] < min_count and len(hex_colors) > 0:
-            continue
-        cluster_pixels = pixels[keys == unique_keys[idx]]
-        mean_rgb = tuple(int(round(float(v))) for v in cluster_pixels.mean(axis=0))
-        hex_val = _rgb_to_hex(mean_rgb)
-        if hex_val not in hex_colors:
-            hex_colors.append(hex_val)
-
-    return hex_colors or ["#ffffff"]
+    return _impl(image, sample_mask=sample_mask, max_colors=max_colors)
 
 
 def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
-    s = hex_color.lstrip("#")
-    if len(s) != 6:
-        return (255, 255, 255)
-    return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    """Convert ``#rrggbb`` to an RGB tuple (re-exported from surface_profile)."""
+    from .surface_profile import hex_to_rgb as _impl
+
+    return _impl(hex_color)
 
 
 def analyze_region(
@@ -325,6 +279,7 @@ def generate_heuristic_prompt(
     mask_array: np.ndarray,
     mask_box: Tuple[int, int, int, int],
     instruction: str = "",
+    flat_fill: bool = False,
 ) -> Dict[str, Any]:
     """Build a `{prompt, negative_prompt, analysis}` payload using local heuristics."""
     analysis = analyze_region(source_image, mask_array, mask_box)
@@ -358,10 +313,23 @@ def generate_heuristic_prompt(
         )
         prompt = f"{subject}, {style}, seamless integration, clean edges, no text"
     elif region_type == "white_bubble":
+        # Already free of ink/brush vocabulary - keep the bubble-specific wording.
         prompt = (
             "clean white speech bubble interior, smooth white fill, "
             f"subtle paper texture{hint_suffix}, seamless edges, no text"
         )
+    elif traits["is_remove"]:
+        # Removal task: the masked area must continue the surrounding surface.
+        # The description is MEASURED from the pixels around the mask instead of
+        # being copied from a caption, so a hallucinated subject ("character-like
+        # torso") or ink vocabulary can never reach the diffusion model.
+        # NB: the positive prompt deliberately does NOT contain "no ink" /
+        # "no brush marks" - diffusion models do not honour negations and would
+        # receive the very trigger words we are trying to suppress.  Ink
+        # suppression lives in the negative prompt instead.
+        profile = build_surface_profile(measure_surface(source_image, mask_array))
+        analysis["surface"] = profile
+        prompt = build_removal_prompt(profile, "", flat_fill=flat_fill)
     elif region_type == "flat_color":
         prompt = (
             f"seamless {primary_color} fill, matching surrounding {primary_color}"
@@ -385,6 +353,10 @@ def generate_heuristic_prompt(
     neg_parts = [DEFAULT_NEGATIVE_PROMPT]
     if traits["has_text_mention"]:
         neg_parts.append("handwriting, typography, speech text, dialogue, font")
+    if traits["is_remove"]:
+        # Ink suppression applies to EVERY removal task, not only to the ones
+        # that explicitly mention text/SFX.
+        neg_parts.append(", ".join(MANDATORY_INK_NEGATIVES))
 
     prompt = prompt.strip()[:1000]
     negative_prompt = ", ".join(neg_parts).strip()[:500]
