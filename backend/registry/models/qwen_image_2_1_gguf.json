@@ -87,6 +87,12 @@
       "sampler": "euler",
       "steps": 28,
       "cfg": 3.0
+    },
+    "dmd2_fast": {
+      "sampler": "euler",
+      "steps": 2,
+      "cfg": 1.0,
+      "sigmas": "1.0,0.5,0.0"
     }
   }
 }
