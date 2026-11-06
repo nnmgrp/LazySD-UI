@@ -1374,13 +1374,10 @@ class SDCppWorker:
                 cmd.extend(["--vae-tile-size", "512x512"])
 
         # Offload text encoder / vision encoder to CPU RAM:
-        # If running direct 2K generation without hires-fix on a 16GB GPU, the 16384-token attention
-        # activations in DiT require ~8-10GB of VRAM. Keeping the 6GB Qwen-VL model on GPU forces
-        # PCIe layer-swapping thrashing (40s/step). Offloading TE to CPU keeps all 10GB for DiT on GPU!
-        direct_2k_qwen = is_qwen and not hires_fix and (target_w >= 1536 or target_h >= 1536)
+        # Only on constrained GPUs (<= 12GB VRAM) or when explicitly requested via offload_te_cpu.
+        # On GPUs with >= 16GB VRAM, Qwen3-VL 8B runs on GPU in ~13s, whereas on 6-core CPU it takes 5+ min.
         needs_te_cpu = (
             gpu_vram <= 12288
-            or direct_2k_qwen
             or getattr(request, "offload_te_cpu", False)
         )
         if needs_te_cpu and "--backend" not in cmd:
