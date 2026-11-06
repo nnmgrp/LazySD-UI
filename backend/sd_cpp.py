@@ -1141,8 +1141,26 @@ class SDCppWorker:
                 if "encode_first_stage" in line_str:
                     emit(ProgressEvent(
                         status=JobStatus.GENERATING,
-                        progress=0.08,
-                        message="Кодирование VAE...",
+                        progress=0.07,
+                        message="Кодирование VAE входного изображения...",
+                    ))
+                    continue
+
+                if "qwen3vl" in line_str.lower() or "get_learned_condition" in line_str.lower():
+                    emit(ProgressEvent(
+                        status=JobStatus.GENERATING,
+                        progress=0.09,
+                        message="Анализ изображения и промпта (Qwen-VL на GPU)...",
+                    ))
+                    continue
+
+                if "generating image:" in line_str:
+                    emit(ProgressEvent(
+                        status=JobStatus.GENERATING,
+                        progress=0.10,
+                        step=1,
+                        total_steps=total_steps,
+                        message=f"Генерация: шаг 1/{total_steps} (расчет на GPU)...",
                     ))
                     continue
 
@@ -1156,18 +1174,24 @@ class SDCppWorker:
 
                 # Parse real sampling progress
                 step_match = _STEP_PROGRESS_RE.search(line_str)
-                if step_match and ("generating image" in line_str or "s/it" in line_str or "it/s" in line_str or int(step_match.group(2)) == total_steps):
+                if step_match and ("s/it" in line_str or "it/s" in line_str or int(step_match.group(2)) == total_steps):
                     try:
                         cur_step = int(step_match.group(1))
                         tot_steps = int(step_match.group(2))
-                        pct = min(0.95, max(0.10, cur_step / tot_steps))
-                        emit(ProgressEvent(
-                            status=JobStatus.GENERATING,
-                            progress=pct,
-                            step=cur_step,
-                            total_steps=tot_steps,
-                            message=f"Шаг сэмплинга {cur_step}/{tot_steps} ({int(pct*100)}%)",
-                        ))
+                        if tot_steps == total_steps or "s/it" in line_str or "it/s" in line_str:
+                            pct = min(0.95, max(0.10, cur_step / tot_steps))
+                            # Extract speed token if available (e.g. 69.60s/it or 5.04s/it)
+                            speed_str = ""
+                            speed_match = re.search(r"(\d+(?:\.\d+)?(?:s/it|it/s))", line_str)
+                            if speed_match:
+                                speed_str = f" · {speed_match.group(1)}"
+                            emit(ProgressEvent(
+                                status=JobStatus.GENERATING,
+                                progress=pct,
+                                step=cur_step,
+                                total_steps=tot_steps,
+                                message=f"Шаг {cur_step}/{tot_steps} ({int(pct*100)}%){speed_str}",
+                            ))
                     except ValueError:
                         pass
                 else:

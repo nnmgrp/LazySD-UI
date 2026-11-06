@@ -3180,29 +3180,56 @@ const App = {
 
   setGenerating(busy) {
     const btn = document.getElementById("generate-btn");
+    const newBtn = document.getElementById("new-dock-generate");
     const overlay = document.getElementById("progress-overlay");
     const statusPill = document.getElementById("status-pill");
     const statusMsg = document.getElementById("status-message");
-    if (!btn) return;
+
+    const cancelLabel = (window.t ? window.t("controls.cancel") : "") || "Отмена";
+    const runLabel = (window.t ? window.t("dock.run_short") : "") || "Пуск";
+    const genLabel = (window.t ? window.t("controls.generate") : "") || "Generate";
 
     if (busy) {
-      btn.classList.add("busy");
-      btn.disabled = true;
-      btn.textContent = t("controls.busy");
-      if (overlay) overlay.style.display = "none";
+      if (btn) {
+        btn.classList.add("busy", "btn-cancel-active");
+        btn.disabled = false;
+        btn.textContent = "⏹ " + cancelLabel;
+        btn.onclick = (e) => {
+          if (e) { e.preventDefault(); e.stopPropagation(); }
+          App.cancelJob();
+        };
+      }
+      if (newBtn) {
+        newBtn.classList.add("busy", "btn-cancel-active");
+        newBtn.disabled = false;
+        newBtn.innerHTML = `<span class="new-dock-generate-sparkle">⏹</span><span>${escapeHtml(cancelLabel)}</span>`;
+        newBtn.onclick = (e) => {
+          if (e) { e.preventDefault(); e.stopPropagation(); }
+          App.cancelJob();
+        };
+      }
       if (statusPill) {
         statusPill.className = "status-pill warning";
-        statusPill.textContent = t("controls.busy") || "Generating...";
+        statusPill.textContent = (window.t ? window.t("controls.busy") : "") || "Generating...";
       }
     } else {
-      btn.classList.remove("busy");
-      btn.disabled = false;
-      btn.textContent = t("controls.generate");
+      if (btn) {
+        btn.classList.remove("busy", "btn-cancel-active");
+        btn.disabled = false;
+        btn.textContent = "✨ " + genLabel;
+        btn.onclick = () => App.onGenerate();
+      }
+      if (newBtn) {
+        newBtn.classList.remove("busy", "btn-cancel-active");
+        newBtn.disabled = false;
+        newBtn.innerHTML = `<span class="new-dock-generate-sparkle">✣</span><span>${escapeHtml(runLabel)}</span>`;
+        newBtn.onclick = () => App.onGenerate();
+      }
       if (overlay) overlay.style.display = "none";
       this.hideQueueStatus();
       if (statusPill) {
         statusPill.className = "status-pill success";
-        statusPill.textContent = t("status.ready") || "Ready";
+        statusPill.textContent = (window.t ? window.t("status.ready") : "") || "Ready";
       }
       if (statusMsg) {
         statusMsg.textContent = "";
