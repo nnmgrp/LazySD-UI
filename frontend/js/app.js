@@ -4214,9 +4214,18 @@ const App = {
       const hiresSuffix = this.state.hiresFix ? " · Hires" : "";
       resPillText.textContent = resVal.replace("x", "×") + hiresSuffix;
     }
-    document.querySelectorAll("#dock-res-grid .dock-res-chip").forEach(chip => {
+    document.querySelectorAll(".dock-res-grid .dock-res-chip[data-res]").forEach(chip => {
       chip.classList.toggle("active", chip.dataset.res === resVal);
     });
+    const hiresChip = document.getElementById("dock-hires-toggle-chip");
+    const hiresBadge = document.getElementById("dock-hires-chip-badge");
+    if (hiresChip) {
+      hiresChip.classList.toggle("active", Boolean(this.state.hiresFix));
+    }
+    if (hiresBadge) {
+      hiresBadge.textContent = this.state.hiresFix ? "ВКЛ" : "ВЫКЛ";
+      hiresBadge.style.color = this.state.hiresFix ? "#a78bfa" : "var(--text-muted)";
+    }
 
     // 3. Params Pill Text
     const samplerVal = document.getElementById("sampler-select")?.value || "euler";
@@ -4380,8 +4389,27 @@ const App = {
     }
   },
 
+  toggleHiresFromChip(event) {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    const nextState = !this.state.hiresFix;
+    this.onHiresFixChange(nextState);
+  },
+
   onHiresFixChange(checked) {
     this.state.hiresFix = Boolean(checked);
+    this.state.hiresFixExplicitlyOff = !checked;
+    const hiresChip = document.getElementById("dock-hires-toggle-chip");
+    const hiresBadge = document.getElementById("dock-hires-chip-badge");
+    if (hiresChip) {
+      hiresChip.classList.toggle("active", this.state.hiresFix);
+    }
+    if (hiresBadge) {
+      hiresBadge.textContent = this.state.hiresFix ? "ВКЛ" : "ВЫКЛ";
+      hiresBadge.style.color = this.state.hiresFix ? "#a78bfa" : "var(--text-muted)";
+    }
     ["dock-hires-checkbox", "dock-hires-params-checkbox", "new-dock-hires-checkbox", "new-dock-hires-params-checkbox"].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.checked = this.state.hiresFix;

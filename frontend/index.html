@@ -526,14 +526,11 @@
 
                 <button type="button" class="dock-res-chip" data-res="2048x2048" onclick="App.selectResolutionChip('2048x2048')">2048 × 2048 <small>UHD</small></button>
 
-              </div>
+                <button type="button" class="dock-res-chip dock-hires-toggle-chip" id="dock-hires-toggle-chip" onclick="App.toggleHiresFromChip(event)" title="Быстрый 2-проходный 2K за ~5 минут вместо 32 минут">
+                  <span>⚡ Highres</span>
+                  <small id="dock-hires-chip-badge" style="font-weight: 700;">ВКЛ</small>
+                </button>
 
-              <div class="dock-hires-row" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
-                <label class="dock-hires-label" style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text); cursor: pointer;" title="2-проходная генерация: база 1024 + 6-шаговый 2K апскейл за ~5 минут вместо 32 минут">
-                  <input type="checkbox" id="dock-hires-checkbox" onchange="App.onHiresFixChange(this.checked)">
-                  <span style="font-weight: 600;">⚡ Быстрый 2K (Highres Fix)</span>
-                </label>
-                <span style="font-size: 10px; color: var(--accent); font-family: var(--font-mono, monospace);">~5 мин</span>
               </div>
 
             </div>
@@ -1021,7 +1018,7 @@
                 <button type="button" onclick="App.swapNewDockResolution()" data-i18n-title="dock.swap_dimensions" title="Swap width and height">↔</button>
                 <label><span>H</span><input id="new-dock-height" type="number" min="256" max="2048" step="64" onchange="App.updateNewDockResolutionFromInputs()"></label>
               </div>
-              <div class="new-dock-hires-row" style="margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between;">
+              <div class="new-dock-hires-row" style="margin-top: 10px; padding: 7px 10px; background: #101620; border-radius: 8px; display: flex; align-items: center; justify-content: space-between;">
                 <label class="new-dock-checkbox-label" style="display: flex; align-items: center; gap: 6px; font-size: 10px; color: #cbd5e1; cursor: pointer;" title="2-проходная генерация: база + быстрый 2K апскейл за ~5 минут">
                   <input type="checkbox" id="new-dock-hires-checkbox" onchange="App.onHiresFixChange(this.checked)">
                   <span style="font-weight: 600;">⚡ Быстрый 2K (Highres Fix)</span>

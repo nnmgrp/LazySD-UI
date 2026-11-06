@@ -7225,3 +7225,29 @@ body:not(.role-guest) #guest-mode-banner {
   height: 4px;
   cursor: pointer;
 }
+
+
+.dock-hires-toggle-chip {
+  border-style: dashed;
+  border-color: rgba(167, 139, 250, 0.45);
+  color: #e2e8f0;
+  background: rgba(124, 58, 237, 0.08);
+}
+.dock-hires-toggle-chip:hover {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: var(--accent);
+}
+.dock-hires-toggle-chip.active {
+  border-style: solid;
+  border-color: var(--accent);
+  background: rgba(124, 58, 237, 0.28);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.35);
+}
+.dock-hires-toggle-chip small {
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+}
