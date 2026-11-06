@@ -695,6 +695,9 @@ class Worker:
 
         # Dispatch: stable-diffusion.cpp engine
         if getattr(model, "engine", "quantfunc") == "sd_cpp":
+            import importlib
+            from . import sd_cpp
+            importlib.reload(sd_cpp)
             from .sd_cpp import SDCppWorker, is_sd_cpp_installed
             if not is_sd_cpp_installed():
                 raise RuntimeError(
@@ -710,6 +713,9 @@ class Worker:
 
         # Dispatch: SDNQ (SD.Next Quantization) engine
         if getattr(model, "engine", "quantfunc") == "sdnq":
+            import importlib
+            from . import sdnq_engine
+            importlib.reload(sdnq_engine)
             from .sdnq_engine import SDNQWorker, is_sdnq_installed
             if not is_sdnq_installed():
                 raise RuntimeError(
