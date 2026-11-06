@@ -1057,14 +1057,24 @@ class SDCppWorker:
         hires_strength = float(getattr(request, "hires_denoising_strength", 0.35) or 0.35)
         hires_upscaler = str(getattr(request, "hires_upscaler", "Latent (bicubic)") or "Latent (bicubic)")
         if vae_type == "pid":
-            hires_upscaler = "NVIDIA PiD"
+            hires_upscaler = "Latent (bicubic)"
             hires_steps = 4
             if width >= 1536 or height >= 1536:
                 hires_fix = True
 
-        mapped_hires_upscaler = hires_upscaler
+        valid_builtin_upscalers = {
+            "latent": "Latent",
+            "latent (bicubic)": "Latent (bicubic)",
+            "latent (nearest)": "Latent (nearest)",
+            "latent (antialiased)": "Latent (antialiased)",
+            "lanczos": "Lanczos",
+            "nearest": "Nearest",
+        }
+        mapped_hires_upscaler = valid_builtin_upscalers.get(
+            hires_upscaler.strip().lower(), "Latent (bicubic)"
+        )
         if "pid" in hires_upscaler.lower():
-            mapped_hires_upscaler = "from_ldm"
+            mapped_hires_upscaler = "Latent (bicubic)"
             hires_steps = min(hires_steps, 4)
 
         # Masked runs operate on the inpainting bbox and avoid hires scaling conflicts
@@ -1340,11 +1350,19 @@ class SDCppWorker:
             self._current_process = None
 
         if proc.returncode != 0:
+            error_lines = [
+                l for l in captured_lines
+                if any(k in l.lower() for k in ("[e]", "error:", "fatal:", "failed"))
+                and not l.strip().lower().startswith("usage:")
+                and "cli options:" not in l.lower()
+            ]
+            err_summary = "\n".join(error_lines[-10:]) if error_lines else ""
             tail = "\n".join(captured_lines[-20:]) if captured_lines else "(no output)"
-            raise RuntimeError(
-                f"SD.CPP process exited with code {proc.returncode}.\n"
-                f"--- Engine output (last 20 lines) ---\n{tail}"
-            )
+            msg = f"SD.CPP process exited with code {proc.returncode}."
+            if err_summary:
+                msg += f"\n--- Engine Error Summary ---\n{err_summary}"
+            msg += f"\n--- Engine output (last 20 lines) ---\n{tail}"
+            raise RuntimeError(msg)
 
         if not output_path.exists():
             tail = "\n".join(captured_lines[-20:]) if captured_lines else "(no output)"

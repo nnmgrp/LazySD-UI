@@ -375,7 +375,7 @@ def test_sd_cpp_hires_pid_mapping(tmp_path, mock_gpu_16gb):
 
     # 2. PiD maps to "from_ldm" in sd-cli and auto-sets steps to 4
     assert "--hires-upscaler" in captured_cmd
-    assert captured_cmd[captured_cmd.index("--hires-upscaler") + 1] == "from_ldm"
+    assert captured_cmd[captured_cmd.index("--hires-upscaler") + 1] == "Latent (bicubic)"
     assert captured_cmd[captured_cmd.index("--hires-steps") + 1] == "4"
     assert captured_cmd[captured_cmd.index("--hires-width") + 1] == "2048"
 
@@ -493,5 +493,5 @@ def test_sd_cpp_vae_pid_decoder_dispatch(tmp_path, mock_gpu_16gb):
     assert "--hires" in captured_cmd
     assert "--hires-upscaler" in captured_cmd
     hu_idx = captured_cmd.index("--hires-upscaler")
-    assert captured_cmd[hu_idx + 1] == "from_ldm"
+    assert captured_cmd[hu_idx + 1] == "Latent (bicubic)"
     assert captured_cmd[captured_cmd.index("--hires-steps") + 1] == "4"
