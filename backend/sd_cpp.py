@@ -1373,15 +1373,15 @@ class SDCppWorker:
             if (target_w >= 1536 or target_h >= 1536 or engine_width >= 1536 or engine_height >= 1536) and "--vae-tile-size" not in cmd:
                 cmd.extend(["--vae-tile-size", "512x512"])
 
-        # Offload text encoder / vision encoder to CPU RAM:
-        # Only on constrained GPUs (<= 12GB VRAM) or when explicitly requested via offload_te_cpu.
-        # On GPUs with >= 16GB VRAM, Qwen3-VL 8B runs on GPU in ~13s, whereas on 6-core CPU it takes 5+ min.
-        needs_te_cpu = (
-            gpu_vram <= 12288
-            or getattr(request, "offload_te_cpu", False)
-        )
-        if needs_te_cpu and "--backend" not in cmd:
-            cmd.extend(["--backend", "te=cpu"])
+        # True GPU-compute with RAM residency for Text Encoder:
+        # '--params-backend te=cpu' stores the 5.5 GB Qwen3-VL weights in system RAM while
+        # computing conditioning on GPU (CUDA0) in just ~7-13 seconds!
+        # Once conditioning finishes, the weights are evicted/remain in RAM, leaving VRAM
+        # completely free (only 4.6 GB used) for DiT diffusion and activations.
+        if is_qwen and "--params-backend" not in cmd:
+            cmd.extend(["--params-backend", "te=cpu"])
+        elif gpu_vram <= 12288 and "--params-backend" not in cmd:
+            cmd.extend(["--params-backend", "cpu"])
 
         # Parameter offloading for very constrained VRAM (<= 12GB)
         if gpu_vram <= 12288:
