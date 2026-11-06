@@ -378,3 +378,23 @@ def test_sd_cpp_hires_pid_mapping(tmp_path, mock_gpu_16gb):
     assert captured_cmd[captured_cmd.index("--hires-upscaler") + 1] == "from_ldm"
     assert captured_cmd[captured_cmd.index("--hires-steps") + 1] == "4"
     assert captured_cmd[captured_cmd.index("--hires-width") + 1] == "2048"
+
+
+def test_qwen_image_2_1_pid_model_spec():
+    from backend.registry.loader import get_registry, reload_registry
+    reg = reload_registry()
+    model = reg.get("qwen_image_2_1_pid")
+    assert model is not None
+    assert model.id == "qwen_image_2_1_pid"
+    assert model.sources.primary.repo_id == "Comfy-Org/PixelDiT"
+
+    # Verify text encoder source points to existing file in Comfy-Org/PixelDiT
+    te = model.get_text_encoder("gemma_2_2b")
+    assert te is not None
+    assert te["source"]["repo_id"] == "Comfy-Org/PixelDiT"
+    assert te["source"]["file_path"] == "text_encoders/gemma_2_2b_it_elm_bf16.safetensors"
+
+    # Verify transformer path
+    assert len(model.transformers) > 0
+    tr = model.transformers[0]
+    assert tr.path == "diffusion_models/pid_qwenimage_1024_to_4096_4step_bf16.safetensors"

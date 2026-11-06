@@ -15,42 +15,47 @@
   "sources": {
     "primary": {
       "type": "huggingface",
-      "repo_id": "nvidia/PiD"
+      "repo_id": "Comfy-Org/PixelDiT"
     }
   },
   "engine_args": {
-    "diffusion_model": "PiD_v1pt5_res2kto4k_sr4x_official_qwenimage_distill_4step.safetensors",
-    "llm": "gemma_2_2b_it_elm_bf16.safetensors",
+    "diffusion_model": "diffusion_models/pid_qwenimage_1024_to_4096_4step_bf16.safetensors",
+    "llm": "text_encoders/gemma_2_2b_it_elm_bf16.safetensors",
     "tokenizer": "tokenizer_gemma2.json",
-    "tokenizer_repo": "nvidia/PiD",
-    "tokenizer_remote": "tokenizer_gemma2.json",
+    "tokenizer_repo": "unsloth/gemma-2-2b-it",
+    "tokenizer_remote": "tokenizer.json",
     "vae": "qwen_image_2.1_vae_bf16.safetensors",
+    "vae_repo": "Comfy-Org/Qwen-Image-2.1",
+    "vae_remote": "vae/qwen_image_2.1_vae_bf16.safetensors",
     "vae_format": "wan"
   },
   "text_encoders": [
     {
       "id": "gemma_2_2b",
-      "name": "Gemma 2 2B IT ELM (BF16, ~4.5 GB)",
-      "file": "gemma_2_2b_it_elm_bf16.safetensors",
+      "name": "Gemma 2 2B IT ELM (BF16, ~4.9 GB, Official)",
+      "file": "text_encoders/gemma_2_2b_it_elm_bf16.safetensors",
       "precision": "bf16",
-      "size_gb": 4.5,
+      "size_gb": 4.87,
+      "size_bytes": 5232958571,
       "recommended": true,
       "source": {
-        "repo_id": "nvidia/PiD",
-        "file_path": "gemma_2_2b_it_elm_bf16.safetensors"
+        "repo_id": "Comfy-Org/PixelDiT",
+        "file_path": "text_encoders/gemma_2_2b_it_elm_bf16.safetensors"
       }
     }
   ],
   "transformers": [
     {
       "id": "pid_qwen_distill_4step",
-      "path": "PiD_v1pt5_res2kto4k_sr4x_official_qwenimage_distill_4step.safetensors",
+      "path": "diffusion_models/pid_qwenimage_1024_to_4096_4step_bf16.safetensors",
       "tier": "universal",
       "backend": "sd_cpp",
       "steps": 4,
-      "size_gb": 3.8,
+      "size_gb": 2.54,
+      "size_bytes": 2724747428,
       "recommended": true,
-      "note": "Official NVIDIA PiD v1.5 2K-to-4K 4-step distilled decoder"
+      "repo_id": "Comfy-Org/PixelDiT",
+      "note": "Official NVIDIA PiD v1.5 Qwen-Image 4-step distilled decoder"
     }
   ],
   "requirements": {

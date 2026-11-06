@@ -460,10 +460,23 @@ class SDCppWorker:
                     return custom_candidate
             except Exception:
                 pass
+            base_name = Path(rel_or_abs).name
+            if (repo_dir / rel_or_abs).exists():
+                return repo_dir / rel_or_abs
+            if (repo_dir / base_name).exists():
+                return repo_dir / base_name
             if (repo_dir / "text_encoders" / rel_or_abs).exists():
                 return repo_dir / "text_encoders" / rel_or_abs
+            if (repo_dir / "text_encoders" / base_name).exists():
+                return repo_dir / "text_encoders" / base_name
+            if (repo_dir / "diffusion_models" / rel_or_abs).exists():
+                return repo_dir / "diffusion_models" / rel_or_abs
+            if (repo_dir / "diffusion_models" / base_name).exists():
+                return repo_dir / "diffusion_models" / base_name
             if (repo_dir / "vae" / rel_or_abs).exists():
                 return repo_dir / "vae" / rel_or_abs
+            if (repo_dir / "vae" / base_name).exists():
+                return repo_dir / "vae" / base_name
             # Check secondary repos (e.g. text encoders from unsloth/Qwen3-8B-GGUF or variants from akhaliq/...)
             sec_repos = [
                 t.repo_id for t in getattr(model, "transformers", []) if getattr(t, "repo_id", None)
@@ -476,10 +489,20 @@ class SDCppWorker:
                 alt_dir = cache.repo_dir_for(cand_repo)
                 if (alt_dir / rel_or_abs).exists():
                     return alt_dir / rel_or_abs
+                if (alt_dir / base_name).exists():
+                    return alt_dir / base_name
                 if (alt_dir / "text_encoders" / rel_or_abs).exists():
                     return alt_dir / "text_encoders" / rel_or_abs
+                if (alt_dir / "text_encoders" / base_name).exists():
+                    return alt_dir / "text_encoders" / base_name
+                if (alt_dir / "diffusion_models" / rel_or_abs).exists():
+                    return alt_dir / "diffusion_models" / rel_or_abs
+                if (alt_dir / "diffusion_models" / base_name).exists():
+                    return alt_dir / "diffusion_models" / base_name
                 if (alt_dir / "vae" / rel_or_abs).exists():
                     return alt_dir / "vae" / rel_or_abs
+                if (alt_dir / "vae" / base_name).exists():
+                    return alt_dir / "vae" / base_name
             return p if p.is_absolute() else repo_dir / rel_or_abs
 
         # Checkpoint vs standalone diffusion-model
