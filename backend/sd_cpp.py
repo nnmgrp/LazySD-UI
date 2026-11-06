@@ -593,12 +593,16 @@ class SDCppWorker:
                 if not custom_vae_p.is_file():
                     raise RuntimeError(f"Custom VAE file not found: {custom_vae_p}")
                 cmd.extend(["--vae", str(custom_vae_p)])
+            elif vae_type and str(vae_type).startswith("file:"):
+                cand_p = Path(str(vae_type)[5:])
+                if cand_p.is_file():
+                    cmd.extend(["--vae", str(cand_p)])
+                else:
+                    vae_rel = cand_p.name
             else:
                 vae_rel = model.engine_args.get("vae")
                 if is_qwen:
                     if vae_type == "official":
-                        vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
-                    elif vae_type == "pid":
                         vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
                     else:
                         vae_rel = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
@@ -1066,8 +1070,18 @@ class SDCppWorker:
         else:
             hires_steps = 6
 
-        if is_pid_hires:
-            hires_upscaler = "Latent (bicubic)"
+        # For Qwen (Wan 16-channel flow latents), Latent bicubic destroys the latent manifold,
+        # resulting in burnt skin and scarred face artifacts. Lanczos decodes to pixels, upscales,
+        # and re-encodes, preserving natural skin micro-relief.
+        if is_qwen:
+            if not raw_upscaler or raw_upscaler.strip().lower() in ("latent", "latent (bicubic)"):
+                hires_upscaler = "Lanczos"
+            else:
+                hires_upscaler = raw_upscaler
+            if "turbo" in model.id.lower() and getattr(request, "hires_denoising_strength", None) is None:
+                hires_strength = 0.25
+        elif is_pid_hires:
+            hires_upscaler = "Lanczos" if is_qwen else "Latent (bicubic)"
             if width >= 1536 or height >= 1536:
                 hires_fix = True
         else:
@@ -1082,7 +1096,7 @@ class SDCppWorker:
             "nearest": "Nearest",
         }
         mapped_hires_upscaler = valid_builtin_upscalers.get(
-            hires_upscaler.strip().lower(), "Latent (bicubic)"
+            hires_upscaler.strip().lower(), "Lanczos" if is_qwen else "Latent (bicubic)"
         )
 
         # Masked runs operate on the inpainting bbox and avoid hires scaling conflicts
@@ -1116,6 +1130,8 @@ class SDCppWorker:
                 "-s", str(seed),
                 "-o", str(output_path),
             ])
+            if is_qwen and "turbo" in model.id.lower():
+                cmd.extend(["--hires-sigmas", "qwen-image-2.1-turbo"])
         else:
             engine_width, engine_height = (
                 mask_ctx["crop_size"] if mask_ctx is not None else (width, height)

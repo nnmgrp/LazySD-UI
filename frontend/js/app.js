@@ -2421,8 +2421,9 @@ const App = {
           vaeSelect.appendChild(optPid);
         }
         for (const vae of vaeFiles) {
-          const fileName = String(vae.path || "").split("/").pop() || "VAE";
-          const lower = fileName.toLowerCase();
+          const raw = String(vae.path || vae.local_path || vae.local_file || "").replace(/\\/g, "/");
+          const fileName = raw.split("/").pop() || "VAE";
+          const lower = `${raw} ${fileName} ${vae.repo_id || ""}`.toLowerCase();
           // Filter out duplicate presets
           if (isQwen && (lower.includes("texture_fix") || lower.includes("qwen_image_2.1_vae") || lower.includes("wan") || lower.includes("diffusion_pytorch_model"))) {
             continue;
@@ -14434,8 +14435,9 @@ Object.assign(App, {
       select.appendChild(optPid);
     }
     for (const vae of vaeList.filter((v) => v.installed && v.local_file)) {
-      const fileName = String(vae.path || vae.local_file).split("/").pop() || "VAE";
-      const lower = fileName.toLowerCase();
+      const raw = String(vae.path || vae.local_path || vae.local_file || "").replace(/\\/g, "/");
+      const fileName = raw.split("/").pop() || "VAE";
+      const lower = `${raw} ${fileName} ${vae.repo_id || ""}`.toLowerCase();
       if (isQwen && (lower.includes("texture_fix") || lower.includes("qwen_image_2.1_vae") || lower.includes("wan") || lower.includes("diffusion_pytorch_model"))) {
         continue;
       }
