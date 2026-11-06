@@ -296,3 +296,85 @@ def test_sd_cpp_hires_bypassed_when_mask_present(tmp_path, mock_gpu_16gb):
 
     # Highres fix must be disabled when inpaint mask is active
     assert "--hires" not in captured_cmd
+
+
+def test_sd_cpp_hires_pid_mapping(tmp_path, mock_gpu_16gb):
+    worker = SDCppWorker()
+    worker.cli_path = Path("G:/QuantFunc-WebUI/bin/windows/sd_cpp/sd-cli.exe")
+
+    diff_file = tmp_path / "diffusion.gguf"
+    diff_file.write_text("dummy")
+
+    mock_model = MagicMock()
+    mock_model.id = "qwen_image_2_1_gguf"
+    mock_model.family = "qwen"
+    mock_model.sources.primary.repo_id = "test_qwen_repo"
+    mock_model.files = {"diffusion": str(diff_file)}
+    mock_model.engine_args = {}
+    mock_model.scheduler_presets = {}
+    mock_model.transformers = []
+    mock_model.text_encoders = []
+    mock_model.get_default_cfg.return_value = 3.0
+
+    mock_request = MagicMock()
+    mock_request.prompt = "Test PiD highres"
+    mock_request.output_filename = "test_pid_out.png"
+    mock_request.width = 2048
+    mock_request.height = 2048
+    mock_request.steps = 28
+    mock_request.cfg = 3.0
+    mock_request.sampler = "euler"
+    mock_request.seed = 42
+    mock_request.init_image_path = None
+    mock_request.ref_mode = "control_ref"
+    mock_request.mask_image_path = None
+    mock_request.mask_data_url = None
+    mock_request.mask_path = None
+    mock_request.mask_crop_box = None
+    mock_request.lora_paths = []
+    mock_request.lora_strengths = []
+    mock_request.negative_prompt = ""
+    mock_request.custom_text_encoder_path = None
+    mock_request.custom_vae_path = None
+    mock_request.vae = None
+    mock_request.text_encoder_id = None
+    mock_request.control_net_path = None
+    mock_request.variant_id = None
+    mock_request.offload_te_cpu = False
+
+    # PiD requested as upscaler
+    mock_request.hires_fix = True
+    mock_request.hires_scale = 2.0
+    mock_request.hires_steps = 6
+    mock_request.hires_denoising_strength = 0.35
+    mock_request.hires_upscaler = "NVIDIA PiD"
+
+    captured_cmd = []
+
+    def mock_popen(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        if "-o" in captured_cmd:
+            out_p = Path(captured_cmd[captured_cmd.index("-o") + 1])
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            from PIL import Image as _PIL_Img
+            _PIL_Img.new("RGB", (256, 256), (128, 128, 128)).save(out_p, format="PNG")
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(["[I] done\n"])
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with patch("subprocess.Popen", side_effect=mock_popen):
+        res = worker.generate(mock_request, mock_model, mock_gpu_16gb)
+
+    # 1. Base resolution must be 1024x1024
+    assert captured_cmd[captured_cmd.index("-W") + 1] == "1024"
+    assert captured_cmd[captured_cmd.index("-H") + 1] == "1024"
+
+    # 2. PiD maps to "from_ldm" in sd-cli and auto-sets steps to 4
+    assert "--hires-upscaler" in captured_cmd
+    assert captured_cmd[captured_cmd.index("--hires-upscaler") + 1] == "from_ldm"
+    assert captured_cmd[captured_cmd.index("--hires-steps") + 1] == "4"
+    assert captured_cmd[captured_cmd.index("--hires-width") + 1] == "2048"

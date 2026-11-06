@@ -9125,6 +9125,8 @@ def create_app() -> FastAPI:
         # Highres fix parameters
         raw_hires_fix = body.get("hires_fix", False)
         hires_fix = bool(raw_hires_fix) if isinstance(raw_hires_fix, bool) else str(raw_hires_fix).lower() in ("true", "1", "yes")
+        raw_native_ref = body.get("native_ref_res", False)
+        native_ref_res = bool(raw_native_ref) if isinstance(raw_native_ref, bool) else str(raw_native_ref).lower() in ("true", "1", "yes")
         try:
             hires_scale = float(body.get("hires_scale", 2.0) or 2.0)
             hires_scale = max(1.25, min(4.0, hires_scale))
@@ -9349,6 +9351,7 @@ def create_app() -> FastAPI:
             hires_steps=hires_steps,
             hires_denoising_strength=hires_denoising_strength,
             hires_upscaler=hires_upscaler,
+            native_ref_res=native_ref_res,
 
 
 

@@ -665,7 +665,7 @@ class SDCppWorker:
             if model.engine_args.get("flow_shift"):
                 cmd.extend(["--flow-shift", str(model.engine_args["flow_shift"])])
 
-            # External Tokenizer (required for MOSS-Image / Qwen3.5 text encoder)
+            # External Tokenizer (required for MOSS-Image / Qwen3.5 and NVIDIA PiD)
             tok_rel = model.engine_args.get("tokenizer")
             is_moss_or_qwen35 = (
                 "moss" in model.id.lower()
@@ -673,26 +673,38 @@ class SDCppWorker:
                 or "qwen3.5" in (llm_rel or "").lower()
                 or "moss" in (diff_rel or "").lower()
             )
-            if tok_rel or is_moss_or_qwen35:
-                tok_rel = tok_rel or "tokenizer.json"
+            is_pid = (
+                "pid" in model.id.lower()
+                or "pid" in (diff_rel or "").lower()
+                or "pid" in (tok_rel or "").lower()
+            )
+            if tok_rel or is_moss_or_qwen35 or is_pid:
+                tok_rel = tok_rel or ("tokenizer_gemma2.json" if is_pid else "tokenizer.json")
                 tok_search = [
                     resolve_model_file(tok_rel),
+                    repo_dir / tok_rel,
                     repo_dir / "tokenizer.json",
                     repo_dir / "tokenizer" / "tokenizer.json",
                     repo_dir / "tokenizer_qwen3.5.json",
                     settings.models_dir / "MOSS-Image_GGUFs" / "tokenizer.json",
                     settings.models_dir / "MOSS-Image_GGUFs" / "tokenizer" / "tokenizer.json",
+                    settings.models_dir / "PiD" / tok_rel,
+                    settings.models_dir / "tokenizers" / tok_rel,
+                    get_sd_cpp_dir() / tok_rel,
                 ]
                 tok_path = next((p for p in tok_search if p.exists() and p.is_file()), None)
                 if tok_path is None:
                     from .sources import HuggingFaceSource
                     hf = HuggingFaceSource(token=settings.huggingface_token)
-                    tok_repo = model.engine_args.get("tokenizer_repo", "OpenMOSS-Team/MOSS-Image-Base")
-                    tok_remote = model.engine_args.get("tokenizer_remote", "tokenizer/tokenizer.json")
+                    default_repo = "nvidia/PiD" if is_pid else "OpenMOSS-Team/MOSS-Image-Base"
+                    default_remote = "tokenizer_gemma2.json" if is_pid else "tokenizer/tokenizer.json"
+                    tok_repo = model.engine_args.get("tokenizer_repo", default_repo)
+                    tok_remote = model.engine_args.get("tokenizer_remote", default_remote)
+                    tok_title = "PiD Gemma 2 Tokenizer" if is_pid else "Qwen3.5 Tokenizer"
                     emit(ProgressEvent(
                         status=JobStatus.DOWNLOADING,
                         progress=0.12,
-                        message="Downloading Qwen3.5 Tokenizer (tokenizer.json) for MOSS-Image...",
+                        message=f"Downloading {tok_title} ({tok_rel})...",
                     ))
                     hf.download_file(
                         repo_id=tok_repo,
@@ -700,7 +712,7 @@ class SDCppWorker:
                         local_dir=repo_dir,
                     )
                     dl_tok = repo_dir / tok_remote
-                    target_tok = repo_dir / "tokenizer.json"
+                    target_tok = repo_dir / tok_rel
                     if dl_tok.exists() and not target_tok.exists() and dl_tok != target_tok:
                         import shutil
                         shutil.copy2(dl_tok, target_tok)
@@ -922,14 +934,26 @@ class SDCppWorker:
                                 local_dir=repo_dir,
                             )
                             mmproj_path = repo_dir / "mmproj-F16.gguf"
-                        # Use actual reference image dimensions (aligned to 32) to preserve
-                        # 100% native source resolution without artificial upscaling (which causes
-                        # quadratic ViT self-attention memory blowup while adding zero detail).
+                        # Reference resolution mode:
+                        # - Default (False, как на раньше): safe downsampling (max dimension <= 1024),
+                        #   allowing ViT to execute in ~2 seconds without 17.3GB VRAM explosion or CPU lag.
+                        # - Native (True, toggle ON): full source resolution (1500+ px) with RAM offload.
+                        native_ref = getattr(request, "native_ref_res", False) is True
                         ref_w, ref_h = width, height
                         try:
                             from PIL import Image as _PIL_Image
                             with _PIL_Image.open(ref_path) as _ref_im:
-                                ref_w, ref_h = _ref_im.size
+                                raw_w, raw_h = _ref_im.size
+                            if native_ref:
+                                ref_w, ref_h = raw_w, raw_h
+                            else:
+                                max_dim = 1024
+                                if max(raw_w, raw_h) > max_dim:
+                                    scale = float(max_dim) / float(max(raw_w, raw_h))
+                                    ref_w = max(32, int(round((raw_w * scale) / 32) * 32))
+                                    ref_h = max(32, int(round((raw_h * scale) / 32) * 32))
+                                else:
+                                    ref_w, ref_h = raw_w, raw_h
                         except Exception:
                             pass
                         w32 = max(32, (ref_w // 32) * 32)
@@ -993,6 +1017,10 @@ class SDCppWorker:
         hires_steps = int(getattr(request, "hires_steps", 6) or 6)
         hires_strength = float(getattr(request, "hires_denoising_strength", 0.35) or 0.35)
         hires_upscaler = str(getattr(request, "hires_upscaler", "Latent (bicubic)") or "Latent (bicubic)")
+        mapped_hires_upscaler = hires_upscaler
+        if "pid" in hires_upscaler.lower():
+            mapped_hires_upscaler = "from_ldm"
+            hires_steps = min(hires_steps, 4)
 
         # Masked runs operate on the inpainting bbox and avoid hires scaling conflicts
         if mask_ctx is not None:
@@ -1021,7 +1049,7 @@ class SDCppWorker:
                 "--hires-scale", str(hires_scale),
                 "--hires-steps", str(hires_steps),
                 "--hires-denoising-strength", str(hires_strength),
-                "--hires-upscaler", str(hires_upscaler),
+                "--hires-upscaler", str(mapped_hires_upscaler),
                 "-s", str(seed),
                 "-o", str(output_path),
             ])
@@ -1348,6 +1376,7 @@ class SDCppWorker:
                 "noise": noise_val,
                 "sampler": ui_sampler,
                 "vae": vae_type,
+                "native_ref_res": native_ref,
                 "backend": "sd_cpp",
                 "engine": "stable-diffusion.cpp",
                 "owner_id": getattr(request, "owner_id", "host"),

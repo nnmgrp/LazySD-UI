@@ -120,6 +120,8 @@ class GenerateRequest:
     hires_steps: int = 6
     hires_denoising_strength: float = 0.35
     hires_upscaler: str = "Latent (bicubic)"
+    # ---- Reference resolution mode (Safe 1024 downsample vs Native 1500+ px) ----
+    native_ref_res: bool = False
     owner_id: str = "host" 
     owner_name: str = "Хост"
     shared: bool = True

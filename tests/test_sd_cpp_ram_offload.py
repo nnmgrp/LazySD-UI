@@ -73,6 +73,7 @@ def test_sd_cpp_preserves_ref_resolution_and_enables_flash_attn_on_16gb_gpu(tmp_
     mock_request.control_net_path = None
     mock_request.variant_id = None
     mock_request.offload_te_cpu = False
+    mock_request.native_ref_res = False
 
     # Mock 16GB RTX 5060 Ti
     gpu_info = GPUInfo(
@@ -121,8 +122,8 @@ def test_sd_cpp_preserves_ref_resolution_and_enables_flash_attn_on_16gb_gpu(tmp_
             break
     assert preproc_idx != -1, "--image-preprocess must be in command"
     preproc_str = captured_cmd[preproc_idx]
-    assert "width=1472,height=1472" in preproc_str, (
-        f"Expected width=1472,height=1472 (native 1500px ref), but got: {preproc_str}"
+    assert "width=1024,height=1024" in preproc_str, (
+        f"Expected width=1024,height=1024 (safe downsample default), but got: {preproc_str}"
     )
     assert "width=2048,height=2048" not in preproc_str, (
         "Reference was artificially upscaled to 2048x2048!"
@@ -189,6 +190,7 @@ def test_sd_cpp_enables_ram_offload_on_12gb_gpu(tmp_path, tmp_source_image):
     mock_request.control_net_path = None
     mock_request.variant_id = None
     mock_request.offload_te_cpu = False
+    mock_request.native_ref_res = False
 
     # Mock 12GB GPU (e.g. RTX 3060 12GB or RTX 4070 12GB)
     gpu_info_12gb = GPUInfo(
@@ -232,3 +234,91 @@ def test_sd_cpp_enables_ram_offload_on_12gb_gpu(tmp_path, tmp_source_image):
     assert captured_cmd[captured_cmd.index("--params-backend") + 1] == "cpu"
     assert "--backend" in captured_cmd
     assert captured_cmd[captured_cmd.index("--backend") + 1] == "te=cpu"
+
+
+def test_sd_cpp_native_ref_toggle_preserves_1500px(tmp_path, tmp_source_image):
+    worker = SDCppWorker()
+    worker.cli_path = Path("G:/QuantFunc-WebUI/bin/windows/sd_cpp/sd-cli.exe")
+
+    diff_file = tmp_path / "diffusion.gguf"
+    diff_file.write_text("dummy")
+
+    mock_model = MagicMock()
+    mock_model.id = "qwen_image_edit"
+    mock_model.family = "qwen"
+    mock_model.sources.primary.repo_id = "test_qwen_repo"
+    mock_model.files = {"diffusion": str(diff_file)}
+    mock_model.engine_args = {}
+    mock_model.scheduler_presets = {}
+    mock_model.transformers = []
+    mock_model.text_encoders = []
+    mock_model.get_default_cfg.return_value = 3.0
+
+    mock_request = MagicMock()
+    mock_request.prompt = "Native 1500px ref test"
+    mock_request.output_filename = "test_native_ref.png"
+    mock_request.width = 2048
+    mock_request.height = 2048
+    mock_request.steps = 28
+    mock_request.cfg = 3.0
+    mock_request.sampler = "euler"
+    mock_request.seed = 42
+    mock_request.init_image_path = str(tmp_source_image)
+    mock_request.ref_mode = "control_ref"
+    mock_request.mask_image_path = None
+    mock_request.mask_data_url = None
+    mock_request.mask_path = None
+    mock_request.lora_paths = []
+    mock_request.lora_strengths = []
+    mock_request.negative_prompt = ""
+    mock_request.custom_text_encoder_path = None
+    mock_request.custom_vae_path = None
+    mock_request.vae = None
+    mock_request.text_encoder_id = None
+    mock_request.control_net_path = None
+    mock_request.variant_id = None
+    mock_request.offload_te_cpu = False
+    mock_request.native_ref_res = True  # Toggle ON!
+
+    gpu_info = GPUInfo(
+        name="NVIDIA GeForce RTX 5060 Ti",
+        sm=120,
+        vram_mb=16311,
+        driver_version="610.88",
+        cuda_version="13.0",
+        tier="50x-above",
+        klein_tier="50x",
+    )
+
+    captured_cmd = []
+
+    def mock_popen(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(["[I] done\n"])
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        return mock_proc
+
+    from backend.cache import CacheManager
+    from backend.settings import get_settings
+    settings = get_settings()
+    repo_dir = CacheManager().repo_dir_for("test_qwen_repo")
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "mmproj-F16.gguf").write_text("dummy mmproj")
+
+    output_path = settings.output_dir / "test_native_ref.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("dummy output")
+
+    with patch("subprocess.Popen", side_effect=mock_popen):
+        worker.generate(mock_request, mock_model, gpu_info=gpu_info)
+
+    # When toggle is ON, native 1500px resolution (1472 aligned to 32) is preserved
+    preproc_idx = captured_cmd.index("--image-preprocess") + 1
+    preproc_str = captured_cmd[preproc_idx]
+    assert "width=1472,height=1472" in preproc_str, (
+        f"Expected width=1472,height=1472 (native ref toggle ON), but got: {preproc_str}"
+    )

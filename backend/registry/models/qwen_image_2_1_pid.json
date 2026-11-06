@@ -1,0 +1,69 @@
+{
+  "id": "qwen_image_2_1_pid",
+  "name": "Qwen-Image-2.1 + NVIDIA PiD (2K Decoder)",
+  "family": "qwen",
+  "pipeline": "image_edit",
+  "supports_mask": true,
+  "engine": "sd_cpp",
+  "engine_version": "sd_cpp",
+  "description": "NVIDIA PiD (Pixel Diffusion Decoder) v1.5 distilled for Qwen-Image. Unifies latent decoding and super-resolution into a 4-step pixel diffusion pass, producing crisp 2K/4K results in seconds.",
+  "upstream": {
+    "model": "nvidia/PiD",
+    "license": "NVIDIA Source Code License (NSCLv1)",
+    "commercial_use": false
+  },
+  "sources": {
+    "primary": {
+      "type": "huggingface",
+      "repo_id": "nvidia/PiD"
+    }
+  },
+  "engine_args": {
+    "diffusion_model": "PiD_v1pt5_res2kto4k_sr4x_official_qwenimage_distill_4step.safetensors",
+    "llm": "gemma_2_2b_it_elm_bf16.safetensors",
+    "tokenizer": "tokenizer_gemma2.json",
+    "tokenizer_repo": "nvidia/PiD",
+    "tokenizer_remote": "tokenizer_gemma2.json",
+    "vae": "qwen_image_2.1_vae_bf16.safetensors",
+    "vae_format": "wan"
+  },
+  "text_encoders": [
+    {
+      "id": "gemma_2_2b",
+      "name": "Gemma 2 2B IT ELM (BF16, ~4.5 GB)",
+      "file": "gemma_2_2b_it_elm_bf16.safetensors",
+      "precision": "bf16",
+      "size_gb": 4.5,
+      "recommended": true,
+      "source": {
+        "repo_id": "nvidia/PiD",
+        "file_path": "gemma_2_2b_it_elm_bf16.safetensors"
+      }
+    }
+  ],
+  "transformers": [
+    {
+      "id": "pid_qwen_distill_4step",
+      "path": "PiD_v1pt5_res2kto4k_sr4x_official_qwenimage_distill_4step.safetensors",
+      "tier": "universal",
+      "backend": "sd_cpp",
+      "steps": 4,
+      "size_gb": 3.8,
+      "recommended": true,
+      "note": "Official NVIDIA PiD v1.5 2K-to-4K 4-step distilled decoder"
+    }
+  ],
+  "requirements": {
+    "vram_min_gb": 8,
+    "vram_recommended_gb": 12,
+    "gpu_min_sm": 75,
+    "default_vram_mode": "auto"
+  },
+  "scheduler_presets": {
+    "default": {
+      "sampler": "euler",
+      "steps": 4,
+      "cfg": 1.0
+    }
+  }
+}

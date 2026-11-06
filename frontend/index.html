@@ -646,6 +646,15 @@
                       <strong id="dock-hires-denoise-label" style="font-family: monospace;">0.35</strong>
                     </div>
                     <input type="range" id="dock-hires-denoise" min="0.1" max="0.8" step="0.05" value="0.35" oninput="App.onHiresDenoiseChange(this.value)">
+                    <div style="display: flex; justify-content: space-between; font-size: 10.5px; margin-top: 2px;">
+                      <span>Метод апскейла</span>
+                    </div>
+                    <select id="dock-hires-upscaler" class="dock-mini-select" style="font-size: 10.5px; padding: 3px 6px; background: rgba(0,0,0,0.4); color: var(--text); border: 1px solid var(--border); border-radius: 4px;" onchange="App.onHiresUpscalerChange(this.value)">
+                      <option value="Latent (bicubic)" selected>Latent (bicubic)</option>
+                      <option value="NVIDIA PiD">⚡ NVIDIA PiD (4 шага)</option>
+                      <option value="Latent (exact)">Latent (exact)</option>
+                      <option value="bicubic">Bicubic (Pixel)</option>
+                    </select>
                   </div>
                 </div>
 
@@ -777,6 +786,10 @@
                     <input type="range" id="img2img-strength" min="0.05" max="1.00" step="0.05" value="0.85" oninput="updateStrengthLabel(this.value)">
 
                   </div>
+
+                  <button type="button" class="dock-mini-btn dock-ref-res-btn" id="dock-ref-res-btn" onclick="App.toggleNativeRefRes(event)" title="Разрешение референса для Vision: по умолчанию 1024px (быстро и безопасно). Нажмите для переключения в нативное (1500+ px).">
+                    <span id="dock-ref-res-label">📐 Ref: 1024</span>
+                  </button>
 
                   <button type="button" class="dock-mini-btn" onclick="App.toggleControlNetInput(event)" title="Указать внешний файл ControlNet (.gguf)">+ ControlNet</button>
 
@@ -1061,6 +1074,15 @@
                     <div><span>Denoising Strength</span><strong id="new-dock-hires-denoise-value">0.35</strong></div>
                     <input id="new-dock-hires-denoise" type="range" min="0.1" max="0.8" step="0.05" value="0.35" oninput="App.onHiresDenoiseChange(this.value)">
                   </div>
+                  <div class="new-dock-select-field" style="margin-top: 2px;">
+                    <div style="font-size: 10px; color: #cbd5e1; margin-bottom: 2px;"><span>Upscaler Method</span></div>
+                    <select id="new-dock-hires-upscaler" class="dock-mini-select" style="width: 100%; font-size: 10px; padding: 2px 4px; background: rgba(0,0,0,0.5); color: #e2e8f0; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;" onchange="App.onHiresUpscalerChange(this.value)">
+                      <option value="Latent (bicubic)" selected>Latent (bicubic)</option>
+                      <option value="NVIDIA PiD">⚡ NVIDIA PiD (4 steps)</option>
+                      <option value="Latent (exact)">Latent (exact)</option>
+                      <option value="bicubic">Bicubic (Pixel)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1177,6 +1199,8 @@
 
                     <option value="official">Official Wan / Qwen VAE</option>
 
+                    <option value="pid">⚡ NVIDIA PiD Decoder (4-step 2K)</option>
+
                   </select>
 
                   <input type="text" id="custom-vae-input" placeholder="e.g. D:/ComfyUI/models/vae/texture_fix_vae.safetensors" data-i18n-placeholder="controls.custom_vae_placeholder" style="display: none; margin-top: 4px; font-size: 11px;">
@@ -1200,6 +1224,11 @@
               <div class="inspector-section-body">
 
                 <div id="img2img-mode-hint" class="inspector-hint" style="color: var(--success, #22c55e);" data-i18n="inspector.img2img_hint">✓ Изоляция шагов активна: --init-img и --strength отключены. Модель выполнит 100% шагов с чистого листа.</div>
+
+                <label class="inspector-checkbox-label" style="display: flex; align-items: center; gap: 7px; font-size: 11px; margin: 8px 0; cursor: pointer;" title="По умолчанию включен быстрый безопасный режим 1024px. Включите для подачи исходного размера (1500+ px) в ViT.">
+                  <input type="checkbox" id="ref-native-res-checkbox" onchange="App.onNativeRefResChange(this.checked)">
+                  <span style="font-weight: 500;">📐 Нативное разрешение референса (1500+ px)</span>
+                </label>
 
                 <button type="button" class="history-action-btn" onclick="document.getElementById('dock-ref-file-input').click()" style="height: 32px; font-size: 11.5px;">
 

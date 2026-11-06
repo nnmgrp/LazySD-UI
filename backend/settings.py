@@ -192,8 +192,8 @@ class Settings(BaseModel):
     @field_validator("qwen_vae_type")
     @classmethod
     def _validate_qwen_vae_type(cls, v: str) -> str:
-        if v not in ("texture_fix", "official"):
-            raise ValueError(f"qwen_vae_type must be 'texture_fix' or 'official', got {v!r}")
+        if v not in ("texture_fix", "official", "pid"):
+            raise ValueError(f"qwen_vae_type must be 'texture_fix', 'official', or 'pid', got {v!r}")
         return v
 
     @field_validator("vision_provider")

@@ -108,6 +108,7 @@ const App = {
     historyFilter: "all",
     genMask: null,
     inpaint: null,
+    nativeRefRes: false,
     hiresFix: false,
     hiresScale: 2.0,
     hiresSteps: 6,
@@ -2910,6 +2911,7 @@ const App = {
         document.getElementById("img2img-strength")?.value || "0.85"
       );
       params.ref_mode = document.getElementById("img2img-mode")?.value || "control_ref";
+      params.native_ref_res = Boolean(this.state.nativeRefRes);
       const cnInput = document.getElementById("controlnet-custom-path");
       const cnPath = cnInput && cnInput.style.display !== "none" ? cnInput.value.trim() : "";
       if (cnPath) {
@@ -4448,6 +4450,52 @@ const App = {
     if (lbl1) lbl1.textContent = num.toFixed(2);
     const lbl2 = document.getElementById("new-dock-hires-denoise-value");
     if (lbl2) lbl2.textContent = num.toFixed(2);
+  },
+
+  onHiresUpscalerChange(val) {
+    this.state.hiresUpscaler = val || "Latent (bicubic)";
+    ["dock-hires-upscaler", "new-dock-hires-upscaler"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = this.state.hiresUpscaler;
+    });
+    if (val && val.includes("PiD")) {
+      // NVIDIA PiD runs at 4 steps
+      if (this.state.hiresSteps > 4) {
+        this.onHiresStepsChange(4);
+      }
+    }
+  },
+
+  toggleNativeRefRes(event) {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    const nextVal = !this.state.nativeRefRes;
+    this.onNativeRefResChange(nextVal);
+  },
+
+  onNativeRefResChange(checked) {
+    this.state.nativeRefRes = Boolean(checked);
+    const btn = document.getElementById("dock-ref-res-btn");
+    const lbl = document.getElementById("dock-ref-res-label");
+    const chk = document.getElementById("ref-native-res-checkbox");
+    if (btn) {
+      btn.classList.toggle("active", this.state.nativeRefRes);
+      if (this.state.nativeRefRes) {
+        btn.style.borderColor = "var(--accent)";
+        btn.style.color = "#a78bfa";
+      } else {
+        btn.style.borderColor = "";
+        btn.style.color = "";
+      }
+    }
+    if (lbl) {
+      lbl.textContent = this.state.nativeRefRes ? "📐 Ref: 1500+ (Native)" : "📐 Ref: 1024 (Безопасно)";
+    }
+    if (chk) {
+      chk.checked = this.state.nativeRefRes;
+    }
   },
 
   selectResolutionChip(resValue) {
