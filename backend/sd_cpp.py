@@ -586,6 +586,8 @@ class SDCppWorker:
             vae_rel = None
             vae_type = getattr(request, "vae", None) or getattr(settings, "qwen_vae_type", "texture_fix")
             custom_vae_str = getattr(request, "custom_vae_path", None)
+            is_qwen = model.family == "qwen" or model.id.startswith("qwen")
+            is_klein_flux = model.family in ("klein", "flux") or "flux" in model.id.lower() or "klein" in model.id.lower()
             if custom_vae_str:
                 custom_vae_p = Path(custom_vae_str)
                 if not custom_vae_p.is_file():
@@ -593,11 +595,16 @@ class SDCppWorker:
                 cmd.extend(["--vae", str(custom_vae_p)])
             else:
                 vae_rel = model.engine_args.get("vae")
-                if model.family == "qwen" or model.id.startswith("qwen"):
+                if is_qwen:
                     if vae_type == "official":
+                        vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
+                    elif vae_type == "pid":
                         vae_rel = "qwen_image_2.1_vae_bf16.safetensors"
                     else:
                         vae_rel = "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+                elif is_klein_flux:
+                    if vae_type == "pid":
+                        vae_rel = "flux2-vae.safetensors"
 
             if vae_rel:
                 vae_search_paths = [
@@ -681,7 +688,12 @@ class SDCppWorker:
                     cmd.append("--vae-tiling")
 
             # VAE latent format override
-            if model.engine_args.get("vae_format"):
+            if vae_type == "pid":
+                if is_qwen:
+                    cmd.extend(["--vae-format", "wan"])
+                elif is_klein_flux:
+                    cmd.extend(["--vae-format", "flux2"])
+            elif model.engine_args.get("vae_format"):
                 cmd.extend(["--vae-format", model.engine_args["vae_format"]])
 
             # Flow shift
@@ -697,7 +709,9 @@ class SDCppWorker:
                 or "moss" in (diff_rel or "").lower()
             )
             is_pid = (
-                "pid" in model.id.lower()
+                vae_type == "pid"
+                or "pid" in str(getattr(request, "hires_upscaler", "")).lower()
+                or "pid" in model.id.lower()
                 or "pid" in (diff_rel or "").lower()
                 or "pid" in (tok_rel or "").lower()
             )
@@ -719,8 +733,8 @@ class SDCppWorker:
                 if tok_path is None:
                     from .sources import HuggingFaceSource
                     hf = HuggingFaceSource(token=settings.huggingface_token)
-                    default_repo = "nvidia/PiD" if is_pid else "OpenMOSS-Team/MOSS-Image-Base"
-                    default_remote = "tokenizer_gemma2.json" if is_pid else "tokenizer/tokenizer.json"
+                    default_repo = "unsloth/gemma-2-2b-it" if is_pid else "OpenMOSS-Team/MOSS-Image-Base"
+                    default_remote = "tokenizer.json" if is_pid else "tokenizer/tokenizer.json"
                     tok_repo = model.engine_args.get("tokenizer_repo", default_repo)
                     tok_remote = model.engine_args.get("tokenizer_remote", default_remote)
                     tok_title = "PiD Gemma 2 Tokenizer" if is_pid else "Qwen3.5 Tokenizer"
@@ -891,6 +905,8 @@ class SDCppWorker:
         raw_mask_strength = getattr(request, "mask_strength", None)
         mask_strength_value = 1.0 if raw_mask_strength is None else float(raw_mask_strength)
 
+        native_ref = bool(getattr(request, "native_ref_res", False))
+
         # Reference Image: Native Control/Ref (-r / --control-image / --control-net) vs Classic Noise Img2Img (-i + --strength)
         if getattr(request, "init_image_path", None):
             ref_path = Path(request.init_image_path)
@@ -1040,6 +1056,12 @@ class SDCppWorker:
         hires_steps = int(getattr(request, "hires_steps", 6) or 6)
         hires_strength = float(getattr(request, "hires_denoising_strength", 0.35) or 0.35)
         hires_upscaler = str(getattr(request, "hires_upscaler", "Latent (bicubic)") or "Latent (bicubic)")
+        if vae_type == "pid":
+            hires_upscaler = "NVIDIA PiD"
+            hires_steps = 4
+            if width >= 1536 or height >= 1536:
+                hires_fix = True
+
         mapped_hires_upscaler = hires_upscaler
         if "pid" in hires_upscaler.lower():
             mapped_hires_upscaler = "from_ldm"

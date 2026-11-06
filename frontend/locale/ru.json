@@ -1081,5 +1081,6 @@
   "inpaint.assistant.source_vlm": "VLM",
   "inpaint.assistant.source_heuristic": "эвристика",
   "inpaint.assistant.source_cached": "кэш",
-  "inpaint.assistant.ollama_offline": "Ollama не запущена (эвристика)"
+  "inpaint.assistant.ollama_offline": "Ollama не запущена (эвристика)",
+  "controls.vae_pid": "⚡ NVIDIA PiD Decoder (4 шага, 2K/4K)"
 }

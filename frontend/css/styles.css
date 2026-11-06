@@ -7251,3 +7251,11 @@ body:not(.role-guest) #guest-mode-banner {
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.35);
 }
+
+#dock-hires-pill.active,
+#new-dock-hires-pill.active {
+  border-color: var(--accent) !important;
+  color: #c4b5fd !important;
+  background: rgba(124, 58, 237, 0.22) !important;
+  box-shadow: 0 0 10px rgba(124, 58, 237, 0.3) !important;
+}

@@ -2378,8 +2378,9 @@ const App = {
         ? activeModelObj.vae_files
         : (activeModelObj?.vae ? [activeModelObj.vae] : []);
       const isQwen = Boolean(activeModelObj && (activeModelObj.family === "qwen" || activeModelObj.id.includes("qwen")));
+      const isKleinOrFlux = Boolean(activeModelObj && (activeModelObj.family === "klein" || activeModelObj.family === "flux" || activeModelObj.id.includes("flux") || activeModelObj.id.includes("klein")));
       const vaeFiles = vaeList.filter(vae => vae.installed && vae.local_file);
-      if (isQwen || vaeList.length) {
+      if (isQwen || isKleinOrFlux || vaeList.length) {
         vaeGroup.style.display = "flex";
         vaeSelect.innerHTML = "";
         const autoOpt = document.createElement("option");
@@ -2387,15 +2388,41 @@ const App = {
         autoOpt.textContent = t("controls.vae_auto") || "Auto (model default)";
         vaeSelect.appendChild(autoOpt);
         if (isQwen) {
-          for (const value of ["texture_fix", "official"]) {
-            const opt = document.createElement("option");
-            opt.value = value;
-            opt.textContent = t(`controls.vae_${value}`) || value;
-            vaeSelect.appendChild(opt);
-          }
+          const optTex = document.createElement("option");
+          optTex.value = "texture_fix";
+          optTex.textContent = t("controls.vae_texture_fix") || "Texture-Fix VAE (Реком.)";
+          vaeSelect.appendChild(optTex);
+
+          const optOff = document.createElement("option");
+          optOff.value = "official";
+          optOff.textContent = t("controls.vae_official") || "Официальный Wan / Qwen VAE";
+          vaeSelect.appendChild(optOff);
+
+          const optPid = document.createElement("option");
+          optPid.value = "pid";
+          optPid.textContent = t("controls.vae_pid") || "⚡ NVIDIA PiD Decoder (4 шага, 2K/4K)";
+          vaeSelect.appendChild(optPid);
+        } else if (isKleinOrFlux) {
+          const optFlux = document.createElement("option");
+          optFlux.value = "official";
+          optFlux.textContent = "Официальный FLUX.2 VAE (flux2-vae)";
+          vaeSelect.appendChild(optFlux);
+
+          const optPid = document.createElement("option");
+          optPid.value = "pid";
+          optPid.textContent = t("controls.vae_pid") || "⚡ NVIDIA PiD Decoder (4 шага, 2K/4K)";
+          vaeSelect.appendChild(optPid);
         }
         for (const vae of vaeFiles) {
           const fileName = String(vae.path || "").split("/").pop() || "VAE";
+          const lower = fileName.toLowerCase();
+          // Filter out duplicate presets
+          if (isQwen && (lower.includes("texture_fix") || lower.includes("qwen_image_2.1_vae") || lower.includes("wan") || lower.includes("diffusion_pytorch_model"))) {
+            continue;
+          }
+          if (isKleinOrFlux && (lower.includes("flux2-vae") || lower.includes("ae.safetensors") || lower.includes("diffusion_pytorch_model"))) {
+            continue;
+          }
           const opt = document.createElement("option");
           opt.value = `file:${vae.local_file}`;
           opt.textContent = `${fileName} · ${vae.repo_id || ""}`.trim();
@@ -4228,6 +4255,15 @@ const App = {
       hiresBadge.textContent = this.state.hiresFix ? "ВКЛ" : "ВЫКЛ";
       hiresBadge.style.color = this.state.hiresFix ? "#a78bfa" : "var(--text-muted)";
     }
+    const hiresPill = document.getElementById("dock-hires-pill");
+    const hiresPillText = document.getElementById("dock-hires-pill-text");
+    if (hiresPill) hiresPill.classList.toggle("active", Boolean(this.state.hiresFix));
+    if (hiresPillText) hiresPillText.textContent = this.state.hiresFix ? "2K: Вкл" : "2K: Выкл";
+
+    const newHiresPill = document.getElementById("new-dock-hires-pill");
+    const newHiresPillText = document.getElementById("new-dock-hires-pill-text");
+    if (newHiresPill) newHiresPill.classList.toggle("active", Boolean(this.state.hiresFix));
+    if (newHiresPillText) newHiresPillText.textContent = this.state.hiresFix ? "2K: Вкл" : "2K: Выкл";
 
     // 3. Params Pill Text
     const samplerVal = document.getElementById("sampler-select")?.value || "euler";
@@ -4412,6 +4448,16 @@ const App = {
       hiresBadge.textContent = this.state.hiresFix ? "ВКЛ" : "ВЫКЛ";
       hiresBadge.style.color = this.state.hiresFix ? "#a78bfa" : "var(--text-muted)";
     }
+    const hiresPill = document.getElementById("dock-hires-pill");
+    const hiresPillText = document.getElementById("dock-hires-pill-text");
+    if (hiresPill) hiresPill.classList.toggle("active", this.state.hiresFix);
+    if (hiresPillText) hiresPillText.textContent = this.state.hiresFix ? "2K: Вкл" : "2K: Выкл";
+
+    const newHiresPill = document.getElementById("new-dock-hires-pill");
+    const newHiresPillText = document.getElementById("new-dock-hires-pill-text");
+    if (newHiresPill) newHiresPill.classList.toggle("active", this.state.hiresFix);
+    if (newHiresPillText) newHiresPillText.textContent = this.state.hiresFix ? "2K: Вкл" : "2K: Выкл";
+
     ["dock-hires-checkbox", "dock-hires-params-checkbox", "new-dock-hires-checkbox", "new-dock-hires-params-checkbox"].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.checked = this.state.hiresFix;
@@ -14361,16 +14407,34 @@ Object.assign(App, {
     autoOpt.value = "auto";
     autoOpt.textContent = t("controls.vae_auto") || "Auto (model default)";
     select.appendChild(autoOpt);
+    const isKleinOrFlux = Boolean(activeModel && (activeModel.family === "klein" || activeModel.family === "flux" || activeModel.id.includes("flux") || activeModel.id.includes("klein")));
     if (isQwen) {
-      for (const value of ["texture_fix", "official"]) {
+      for (const value of ["texture_fix", "official", "pid"]) {
         const opt = document.createElement("option");
         opt.value = value;
-        opt.textContent = t(`controls.vae_${value}`) || value;
+        opt.textContent = t(`controls.vae_${value}`) || (value === "pid" ? "⚡ NVIDIA PiD Decoder (4 шага, 2K/4K)" : value);
         select.appendChild(opt);
       }
+    } else if (isKleinOrFlux) {
+      const optOff = document.createElement("option");
+      optOff.value = "official";
+      optOff.textContent = "Официальный FLUX.2 VAE (flux2-vae)";
+      select.appendChild(optOff);
+
+      const optPid = document.createElement("option");
+      optPid.value = "pid";
+      optPid.textContent = t("controls.vae_pid") || "⚡ NVIDIA PiD Decoder (4 шага, 2K/4K)";
+      select.appendChild(optPid);
     }
     for (const vae of vaeList.filter((v) => v.installed && v.local_file)) {
       const fileName = String(vae.path || vae.local_file).split("/").pop() || "VAE";
+      const lower = fileName.toLowerCase();
+      if (isQwen && (lower.includes("texture_fix") || lower.includes("qwen_image_2.1_vae") || lower.includes("wan") || lower.includes("diffusion_pytorch_model"))) {
+        continue;
+      }
+      if (isKleinOrFlux && (lower.includes("flux2-vae") || lower.includes("ae.safetensors") || lower.includes("diffusion_pytorch_model"))) {
+        continue;
+      }
       const opt = document.createElement("option");
       opt.value = `file:${vae.local_file}`;
       opt.textContent = fileName;

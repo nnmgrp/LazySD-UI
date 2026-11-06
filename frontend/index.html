@@ -863,6 +863,10 @@
 
                   </button>
 
+                  <button type="button" class="dock-pill" id="dock-hires-pill" onclick="App.toggleHiresFromChip(event)" title="Быстрый 2K режим (Highres Fix)">
+                    <span>⚡</span> <span id="dock-hires-pill-text">2K: Выкл</span>
+                  </button>
+
                   <button type="button" class="dock-pill" id="dock-neg-pill" onclick="App.toggleNegativePrompt()" title="Негативный промпт">
 
                     <span>🚫</span> <span>Neg</span>
@@ -955,6 +959,9 @@
               </button>
               <button type="button" class="new-dock-setting-pill new-dock-mono-pill" id="new-dock-resolution-pill" onclick="App.toggleNewDockPopover('resolution')">
                 <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M9 5v4H4m16 6h-5v4"/></svg></span><span id="new-dock-resolution-summary">1:1 · 1024×1024</span><span class="new-dock-pill-caret">⌄</span>
+              </button>
+              <button type="button" class="new-dock-setting-pill new-dock-mono-pill" id="new-dock-hires-pill" onclick="App.toggleHiresFromChip(event)" title="Быстрый 2K режим (Highres Fix)">
+                <span class="new-dock-pill-icon" aria-hidden="true">⚡</span><span id="new-dock-hires-pill-text">2K: Выкл</span>
               </button>
               <button type="button" class="new-dock-setting-pill new-dock-mono-pill" id="new-dock-params-pill" onclick="App.toggleNewDockPopover('params')">
                 <span class="new-dock-pill-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.14 12.94a7.5 7.5 0 0 0 0-1.88l2.03-1.58-2-3.46-2.39.96a7.5 7.5 0 0 0-1.63-.94L14.79 3h-4l-.36 3.04a7.5 7.5 0 0 0-1.63.94l-2.39-.96-2 3.46 2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58 2 3.46 2.39-.96a7.5 7.5 0 0 0 1.63.94L10.79 21h4l.36-3.04a7.5 7.5 0 0 0 1.63-.94l2.39.96 2-3.46z"/></svg></span><span id="new-dock-params-summary">Euler · 4 st · CFG 3.0</span><span class="new-dock-pill-caret">⌄</span>

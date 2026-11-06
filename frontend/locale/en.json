@@ -1081,5 +1081,6 @@
   "inpaint.assistant.source_vlm": "VLM",
   "inpaint.assistant.source_heuristic": "heuristic",
   "inpaint.assistant.source_cached": "cached",
-  "inpaint.assistant.ollama_offline": "Ollama offline (heuristic)"
+  "inpaint.assistant.ollama_offline": "Ollama offline (heuristic)",
+  "controls.vae_pid": "⚡ NVIDIA PiD Decoder (4 steps, 2K/4K)"
 }

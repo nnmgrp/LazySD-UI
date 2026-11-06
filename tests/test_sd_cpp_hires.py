@@ -380,21 +380,118 @@ def test_sd_cpp_hires_pid_mapping(tmp_path, mock_gpu_16gb):
     assert captured_cmd[captured_cmd.index("--hires-width") + 1] == "2048"
 
 
-def test_qwen_image_2_1_pid_model_spec():
-    from backend.registry.loader import get_registry, reload_registry
+def test_unsloth_gguf_models_specs():
+    from backend.registry.loader import reload_registry
     reg = reload_registry()
-    model = reg.get("qwen_image_2_1_pid")
-    assert model is not None
-    assert model.id == "qwen_image_2_1_pid"
-    assert model.sources.primary.repo_id == "Comfy-Org/PixelDiT"
 
-    # Verify text encoder source points to existing file in Comfy-Org/PixelDiT
-    te = model.get_text_encoder("gemma_2_2b")
-    assert te is not None
-    assert te["source"]["repo_id"] == "Comfy-Org/PixelDiT"
-    assert te["source"]["file_path"] == "text_encoders/gemma_2_2b_it_elm_bf16.safetensors"
+    # 1. Qwen-Image-2.1 Turbo (Unsloth GGUF)
+    qwen_turbo = reg.get("qwen_image_2_1_turbo_gguf")
+    assert qwen_turbo is not None
+    assert qwen_turbo.sources.primary.repo_id == "unsloth/Qwen-Image-2.1-Turbo-GGUF"
+    assert qwen_turbo.scheduler_presets["default"]["steps"] == 8
+    assert qwen_turbo.scheduler_presets["default"]["cfg"] == 1.0
+    te_qwen = qwen_turbo.get_text_encoder("ud_q4_k_xl")
+    assert te_qwen is not None
+    assert te_qwen["source"]["repo_id"] == "unsloth/Qwen3-VL-8B-Instruct-GGUF"
+    assert len(qwen_turbo.transformers) == 2
+    tr_ids = [t.id for t in qwen_turbo.transformers]
+    assert "q4_k_m" in tr_ids
+    assert "q4_k_s" in tr_ids
 
-    # Verify transformer path
-    assert len(model.transformers) > 0
-    tr = model.transformers[0]
-    assert tr.path == "diffusion_models/pid_qwenimage_1024_to_4096_4step_bf16.safetensors"
+    # 2. Flux.2 Klein 9B (Unsloth GGUF)
+    flux_klein = reg.get("flux_2_klein_9b_gguf")
+    assert flux_klein is not None
+    assert flux_klein.sources.primary.repo_id == "unsloth/FLUX.2-klein-9B-GGUF"
+    assert flux_klein.scheduler_presets["default"]["steps"] == 20
+    assert flux_klein.engine_args.get("vae_format") == "flux2"
+    te_flux = flux_klein.get_text_encoder("qwen3_8b_q4_k_m")
+    assert te_flux is not None
+    assert te_flux["source"]["repo_id"] == "unsloth/Qwen3-8B-GGUF"
+    assert len(flux_klein.transformers) == 3
+    tr_flux_ids = [t.id for t in flux_klein.transformers]
+    assert "q4_k_m" in tr_flux_ids
+    assert "q4_0" in tr_flux_ids
+    assert "q4_k_s" in tr_flux_ids
+
+
+def test_sd_cpp_vae_pid_decoder_dispatch(tmp_path, mock_gpu_16gb):
+    worker = SDCppWorker()
+    worker.cli_path = Path("G:/QuantFunc-WebUI/bin/windows/sd_cpp/sd-cli.exe")
+
+    diff_file = tmp_path / "diffusion.gguf"
+    diff_file.write_text("dummy")
+
+    # Test Qwen with VAE="pid"
+    mock_model = MagicMock()
+    mock_model.id = "qwen_image_2_1_turbo_gguf"
+    mock_model.family = "qwen"
+    mock_model.sources.primary.repo_id = "test_qwen_repo"
+    mock_model.files = {"diffusion": str(diff_file)}
+    mock_model.engine_args = {"vae": "qwen_image_2.1_vae_bf16.safetensors"}
+    mock_model.scheduler_presets = {}
+    mock_model.transformers = []
+    mock_model.text_encoders = []
+    mock_model.get_default_cfg.return_value = 1.0
+
+    mock_request = MagicMock()
+    mock_request.prompt = "Test PiD VAE 2K"
+    mock_request.output_filename = "test_pid_vae.png"
+    mock_request.width = 2048
+    mock_request.height = 2048
+    mock_request.steps = 8
+    mock_request.cfg = 1.0
+    mock_request.sampler = "euler"
+    mock_request.seed = 999
+    mock_request.init_image_path = None
+    mock_request.ref_mode = "control_ref"
+    mock_request.mask_image_path = None
+    mock_request.mask_data_url = None
+    mock_request.mask_path = None
+    mock_request.mask_crop_box = None
+    mock_request.lora_paths = []
+    mock_request.lora_strengths = []
+    mock_request.negative_prompt = ""
+    mock_request.custom_text_encoder_path = None
+    mock_request.custom_vae_path = None
+    mock_request.vae = "pid"
+    mock_request.text_encoder_id = None
+    mock_request.control_net_path = None
+    mock_request.variant_id = "q4_k_m"
+    mock_request.offload_te_cpu = False
+    mock_request.hires_fix = False
+    mock_request.hires_steps = 4
+    mock_request.hires_scale = 2.0
+    mock_request.hires_denoising_strength = 0.35
+    mock_request.hires_upscaler = "NVIDIA PiD"
+
+    captured_cmd = []
+
+    def mock_popen(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        if "-o" in captured_cmd:
+            out_p = Path(captured_cmd[captured_cmd.index("-o") + 1])
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            from PIL import Image as _PIL_Img
+            _PIL_Img.new("RGB", (256, 256), (128, 128, 128)).save(out_p, format="PNG")
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(["[I] done\n"])
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with patch("subprocess.Popen", side_effect=mock_popen):
+        res = worker.generate(mock_request, mock_model, mock_gpu_16gb)
+
+    # VAE format wan must be passed for Qwen PiD
+    assert "--vae-format" in captured_cmd
+    vf_idx = captured_cmd.index("--vae-format")
+    assert captured_cmd[vf_idx + 1] == "wan"
+
+    # PiD auto-triggers Highres 2-pass with from_ldm and 4 steps
+    assert "--hires" in captured_cmd
+    assert "--hires-upscaler" in captured_cmd
+    hu_idx = captured_cmd.index("--hires-upscaler")
+    assert captured_cmd[hu_idx + 1] == "from_ldm"
+    assert captured_cmd[captured_cmd.index("--hires-steps") + 1] == "4"
