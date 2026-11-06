@@ -2,8 +2,9 @@
 
 Verifies:
 1. Native source image resolution is preserved without artificial upscaling to target generation size.
-2. RAM offloading (--params-backend cpu, --vae-tiling) is enabled for resolutions > 1024 or <= 16GB GPUs.
-3. Heavy ViT vision encoder workloads (>= 1400px) are offloaded to system RAM (--backend te=cpu).
+2. VAE tiling (--vae-tiling) is enabled for resolutions > 1024 or <= 16GB GPUs.
+3. Heavy ViT vision encoder workloads (--llm_vision at res > 1024) are offloaded to system RAM (--backend te=cpu) on 16GB GPUs.
+4. --params-backend cpu is reserved for <= 12GB GPUs so that --auto-fit remains active on 16GB GPUs.
 """
 import sys
 from pathlib import Path
@@ -127,11 +128,99 @@ def test_sd_cpp_preserves_ref_resolution_and_enables_ram_offload(tmp_path, tmp_s
         "Reference was artificially upscaled to 2048x2048!"
     )
 
-    # 2. Verify RAM offload and VAE tiling are active for 16GB GPU / high res
-    assert "--params-backend" in captured_cmd, "--params-backend must be present"
-    assert captured_cmd[captured_cmd.index("--params-backend") + 1] == "cpu"
+    # 2. Verify VAE tiling is active for 16GB GPU / high res
     assert "--vae-tiling" in captured_cmd, "--vae-tiling must be present"
 
-    # 3. Verify Vision encoder offload to CPU RAM (--backend te=cpu) is active for large ViT input
+    # 3. Verify --params-backend cpu is NOT passed on 16GB GPU (would disable --auto-fit)
+    assert "--params-backend" not in captured_cmd, (
+        "--params-backend cpu must NOT be passed on 16GB GPU to keep --auto-fit active"
+    )
+
+    # 4. Verify Vision encoder offload to CPU RAM (--backend te=cpu) is active for large ViT input
     assert "--backend" in captured_cmd, "--backend must be present for large ViT input"
     assert captured_cmd[captured_cmd.index("--backend") + 1] == "te=cpu"
+
+
+def test_sd_cpp_enables_params_backend_cpu_on_12gb_gpu(tmp_path, tmp_source_image):
+    worker = SDCppWorker()
+    worker.cli_path = Path("G:/QuantFunc-WebUI/bin/windows/sd_cpp/sd-cli.exe")
+
+    diff_file = tmp_path / "diffusion.gguf"
+    diff_file.write_text("dummy")
+
+    mock_model = MagicMock()
+    mock_model.id = "qwen_image_edit"
+    mock_model.family = "qwen"
+    mock_model.sources.primary.repo_id = "test_qwen_repo"
+    mock_model.files = {"diffusion": str(diff_file)}
+    mock_model.engine_args = {}
+    mock_model.scheduler_presets = {}
+    mock_model.transformers = []
+    mock_model.text_encoders = []
+    mock_model.get_default_cfg.return_value = 3.0
+
+    mock_request = MagicMock()
+    mock_request.prompt = "A restored comic panel"
+    mock_request.output_filename = "test_out_12gb.png"
+    mock_request.width = 1024
+    mock_request.height = 1024
+    mock_request.steps = 20
+    mock_request.cfg = 3.0
+    mock_request.sampler = "euler"
+    mock_request.seed = 42
+    mock_request.init_image_path = str(tmp_source_image)
+    mock_request.ref_mode = "control_ref"
+    mock_request.mask_image_path = None
+    mock_request.mask_data_url = None
+    mock_request.mask_path = None
+    mock_request.lora_paths = []
+    mock_request.lora_strengths = []
+    mock_request.negative_prompt = ""
+    mock_request.custom_text_encoder_path = None
+    mock_request.custom_vae_path = None
+    mock_request.vae = None
+    mock_request.text_encoder_id = None
+    mock_request.control_net_path = None
+    mock_request.variant_id = None
+    mock_request.offload_te_cpu = False
+
+    # Mock 12GB GPU (e.g. RTX 3060 12GB or RTX 4070 12GB)
+    gpu_info_12gb = GPUInfo(
+        name="NVIDIA GeForce RTX 3060",
+        sm=86,
+        vram_mb=12288,
+        driver_version="560.00",
+        cuda_version="12.4",
+        tier="30x",
+        klein_tier="30x",
+    )
+
+    captured_cmd = []
+
+    def mock_popen(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(["[I] done\n"])
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        return mock_proc
+
+    from backend.cache import CacheManager
+    from backend.settings import get_settings
+    settings = get_settings()
+    repo_dir = CacheManager().repo_dir_for("test_qwen_repo")
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "mmproj-F16.gguf").write_text("dummy mmproj")
+
+    output_path = settings.output_dir / "test_out_12gb.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("dummy output")
+
+    with patch("subprocess.Popen", side_effect=mock_popen):
+        worker.generate(mock_request, mock_model, gpu_info=gpu_info_12gb)
+
+    # On <= 12GB GPU, --params-backend cpu should be present
+    assert "--params-backend" in captured_cmd
+    assert captured_cmd[captured_cmd.index("--params-backend") + 1] == "cpu"

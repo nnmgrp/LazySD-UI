@@ -994,23 +994,28 @@ class SDCppWorker:
         ref_dim_max = max(w32 if "w32" in locals() else 0, h32 if "h32" in locals() else 0)
         has_large_res = engine_width > 1024 or engine_height > 1024 or ref_dim_max > 1024
 
-        # When generating/editing high resolutions (> 1024) or on GPUs <= 16GB VRAM,
-        # enable params-backend cpu and vae-tiling so SD.CPP can spill weights to RAM and tile VAE.
-        if gpu_vram <= 16384 or has_large_res or getattr(request, "offload_te_cpu", False):
-            if "--params-backend" not in cmd:
-                cmd.extend(["--params-backend", "cpu"])
+        # VAE spatial tiling: essential for large resolutions (> 1024) or tight VRAM
+        if gpu_vram <= 16384 or has_large_res:
             if "--vae-tiling" not in cmd:
                 cmd.append("--vae-tiling")
 
         # Offload text encoder / vision encoder to CPU RAM:
         # 1. On GPUs with <= 12GB VRAM
         # 2. When explicitly requested via offload_te_cpu
-        # 3. When Vision encoder (--llm_vision) is used with a large reference image (>= 1400px),
-        #    allowing the full-resolution image to be processed in system RAM without overflowing CUDA0.
-        ref_is_very_large = ("--llm_vision" in cmd) and (ref_dim_max >= 1400)
-        if gpu_vram <= 12288 or getattr(request, "offload_te_cpu", False) or (gpu_vram <= 16384 and ref_is_very_large):
-            if "--backend" not in cmd:
-                cmd.extend(["--backend", "te=cpu"])
+        # 3. When Vision encoder (--llm_vision) is used at high resolutions (> 1024),
+        #    as Qwen3-VL ViT attention requires ~17.3 GB memory which exceeds 16GB GPU VRAM.
+        needs_te_cpu = (
+            gpu_vram <= 12288
+            or getattr(request, "offload_te_cpu", False)
+            or (gpu_vram <= 16384 and ("--llm_vision" in cmd) and has_large_res)
+        )
+        if needs_te_cpu and "--backend" not in cmd:
+            cmd.extend(["--backend", "te=cpu"])
+
+        # Parameter offloading for very constrained VRAM (<= 12GB)
+        if gpu_vram <= 12288:
+            if "--params-backend" not in cmd:
+                cmd.extend(["--params-backend", "cpu"])
 
         # Sampling method & Noise / Eta
         noise_val = float(getattr(request, "noise", 0.0) or 0.0)
