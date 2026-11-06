@@ -480,6 +480,8 @@ class AppState:
                 "raw_image_path": getattr(event, "raw_image_path", None),
                 "error": event.error,
             })
+            if getattr(event, "diagnostics", None) is not None:
+                job["diagnostics"] = event.diagnostics
             if event.status in (JobStatus.COMPLETE, JobStatus.ERROR, JobStatus.CANCELLED):
                 job["finished_at"] = time.time()
 
@@ -9427,25 +9429,11 @@ def create_app() -> FastAPI:
 
 
                 STATE.update_job(job_id, ProgressEvent(
-
-
-
                     status=JobStatus.COMPLETE,
-
-
-
                     progress=1.0,
-
-
-
                     image_path=str(result.image_path),
-
-
-
                     message=f"Done in {result.generation_time_sec:.1f}s",
-
-
-
+                    diagnostics=getattr(result, "diagnostics", None),
                 ))
 
 

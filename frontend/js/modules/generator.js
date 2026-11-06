@@ -261,7 +261,18 @@ export function onGenerationComplete(status, appRef) {
     app.setGenMaskSource({ url, path: filename, name: filename });
   }
 
-  toast("success", "Изображение готово ✓");
+  if (status.diagnostics) {
+    console.info("[QuantFunc Telemetry]", status.diagnostics);
+    const d = status.diagnostics;
+    const s = d.stages || {};
+    const perfMsg = `⏱️ ${d.total_time_sec}с (Энкодер: ${s.conditioner_sec || 0}с | Сэмплинг: ${s.sampling_sec || 0}с | VAE: ${s.vae_decode_sec || 0}с)`;
+    toast("success", `Готово ✓ ${perfMsg}`, 6000);
+    if (Array.isArray(d.bottlenecks) && d.bottlenecks.length > 0 && !d.bottlenecks[0].startsWith("✅")) {
+      toast("warning", d.bottlenecks[0], 10000);
+    }
+  } else {
+    toast("success", "Изображение готово ✓");
+  }
   loadHistory(app);
 }
 

@@ -66,6 +66,7 @@ class ProgressEvent:
     image_path: Optional[str] = None  # Final image path (when complete)
     raw_image_path: Optional[str] = None  # Raw engine output (before mask compositing)
     error: Optional[str] = None       # Error message (when error)
+    diagnostics: Optional[dict[str, Any]] = None  # Fine-grained performance telemetry
 
 
 # ---------- Generate request ----------
@@ -138,6 +139,7 @@ class GenerateResult:
     backend: str
     steps: int
     prompt: str
+    diagnostics: Optional[dict[str, Any]] = None
 
 
 # ---------- Progress parsing ----------

@@ -358,6 +358,215 @@ def _ensure_moss_gguf_qkv_fused(gguf_path: Path, emit: Optional[Callable] = None
     logger.info("[sd_cpp] Successfully fused Q/K/V tensors in %s (%d tensors)", gguf_path.name, len(new_entries))
 
 
+
+class SDCppTelemetry:
+    """Collects fine-grained execution metrics, stage timings, and bottleneck diagnostics for SD.CPP."""
+
+    def __init__(self, request: GenerateRequest, model, seed: int):
+        self.request = request
+        self.model = model
+        self.seed = seed
+        self.start_wall_time = time.time()
+        self.gpu_device_name = "CUDA GPU"
+        self.gpu_total_vram_mb = 0
+        self.gpu_free_vram_mb = 0
+        self.autofit_plan: dict[str, Any] = {}
+
+        self.stages: dict[str, float] = {
+            "conditioner_sec": 0.0,
+            "vae_encode_sec": 0.0,
+            "sampling_sec": 0.0,
+            "vae_decode_sec": 0.0,
+        }
+
+        self.step_timings: list[float] = []
+        self.step_speeds: list[str] = []
+        self.last_step_time: Optional[float] = None
+        self.layer_swaps_count: int = 0
+        self.pcie_transfer_sec: float = 0.0
+        self.graph_cut_detected: bool = False
+        self.vae_encode_tiles: int = 0
+        self.vae_decode_tiles: int = 0
+        self.current_phase: str = "init"
+        self._sampling_t0: Optional[float] = None
+        self._vae_decode_t0: Optional[float] = None
+
+    def process_line(self, line: str) -> None:
+        # GPU detection
+        if "Device 0:" in line or "compute capability" in line:
+            m = re.search(r"Device \d+:\s*(.+?),\s*compute capability.*VRAM:\s*(\d+)\s*MiB", line)
+            if m:
+                self.gpu_device_name = m.group(1).strip()
+                self.gpu_total_vram_mb = int(m.group(2))
+
+        # Auto-fit plan
+        if "free" in line and "budget" in line and "CUDA" in line:
+            m = re.search(r"CUDA\d+\s+.*free\s+(\d+)\s+MiB,\s+budget\s+(\d+)\s+MiB", line)
+            if m:
+                self.gpu_free_vram_mb = int(m.group(1))
+
+        m = re.search(
+            r"(DiT|Conditioner|VAE)\s+params\s+(\d+)\s+MiB,\s+compute reserve\s+(\d+)\s+MiB\s*->\s*compute\s+(\w+),\s*params\s+(\w+)",
+            line,
+        )
+        if m:
+            comp, p_mb, res_mb, c_dev, p_dev = m.groups()
+            self.autofit_plan[comp] = {
+                "params_mb": int(p_mb),
+                "reserve_mb": int(res_mb),
+                "compute_device": c_dev,
+                "params_device": p_dev,
+            }
+
+        # Conditioner completion
+        m = re.search(r"get_learned_condition completed, taking ([\d\.]+)s", line)
+        if m:
+            self.stages["conditioner_sec"] = round(float(m.group(1)), 2)
+
+        # VAE encode completion
+        m = re.search(r"encode_first_stage completed, taking ([\d\.]+)s", line)
+        if m:
+            self.stages["vae_encode_sec"] = round(float(m.group(1)), 2)
+
+        # Graph-cut detection
+        if "build cached graph cut plan done" in line:
+            self.graph_cut_detected = True
+
+        # PCIe tensor transfers
+        m = re.search(r"loading tensors completed, taking ([\d\.]+)s", line)
+        if m and (self.current_phase == "sampling" or self.graph_cut_detected):
+            self.layer_swaps_count += 1
+            self.pcie_transfer_sec += float(m.group(1))
+
+        # Sampling transition
+        if "generating image:" in line:
+            self.current_phase = "sampling"
+            self._sampling_t0 = time.time()
+            self.last_step_time = time.time()
+
+        # VAE decode transition
+        if "decode_first_stage" in line or "decoding" in line or "latent 1 decoded" in line:
+            self.current_phase = "decoding"
+            if self._vae_decode_t0 is None:
+                self._vae_decode_t0 = time.time()
+
+        m = re.search(r"(?:latent \d+ decoded|decode_first_stage completed), taking ([\d\.]+)s", line)
+        if m:
+            self.stages["vae_decode_sec"] = round(float(m.group(1)), 2)
+
+        # Tile progress tracking
+        m = re.search(r"\|\s*(\d+)/(\d+)\s*-\s*([\d\.]+)(s/it|it/s)", line)
+        if m:
+            cur, tot, spd, unit = int(m.group(1)), int(m.group(2)), float(m.group(3)), m.group(4)
+            if self.current_phase == "sampling" and tot in (getattr(self.request, "steps", 20), 8, 6, 20):
+                now = time.time()
+                if self.last_step_time:
+                    dt = now - self.last_step_time
+                    self.step_timings.append(round(dt, 2))
+                self.last_step_time = now
+                self.step_speeds.append(f"{spd}{unit}")
+            elif tot >= 20:
+                self.vae_decode_tiles = tot
+
+    def finalize(self, total_elapsed: float) -> dict[str, Any]:
+        now = time.time()
+        if self.stages["sampling_sec"] <= 0.0:
+            if self._sampling_t0:
+                end_t = self._vae_decode_t0 or (now - self.stages["vae_decode_sec"])
+                self.stages["sampling_sec"] = round(max(0.0, end_t - self._sampling_t0), 2)
+            else:
+                self.stages["sampling_sec"] = round(
+                    max(
+                        0.0,
+                        total_elapsed
+                        - self.stages["conditioner_sec"]
+                        - self.stages["vae_encode_sec"]
+                        - self.stages["vae_decode_sec"],
+                    ),
+                    2,
+                )
+
+        avg_step_sec = (
+            round(sum(self.step_timings) / len(self.step_timings), 2)
+            if self.step_timings
+            else 0.0
+        )
+
+        bottlenecks = []
+        unload_recs = []
+
+        if self.layer_swaps_count > 10:
+            bottlenecks.append(
+                f"🚨 Перегрузка VRAM (PCIe Layer Swapping): контекст внимания при высоком разрешении превысил доступный лимит VRAM ({self.gpu_device_name}). "
+                f"Движок выполнил {self.layer_swaps_count} перекачек слоев по шине PCIe (накладные расходы: {self.pcie_transfer_sec:.1f}с, шаг длился ~{avg_step_sec:.1f}с вместо ~1.5с)."
+            )
+            cond_time = self.stages.get("conditioner_sec", 0.0)
+            unload_recs.append(
+                f"💡 Выгрузка Текстового Энкодера (Conditioner, ~6.0 ГБ VRAM): Qwen3-VL 8B отработал за {cond_time:.1f}с на 1-м этапе и простаивал в VRAM все {self.stages['sampling_sec']:.0f}с диффузии! "
+                "Если выгрузить его из VRAM перед стартом диффузии (или запускать на CPU через --backend te=cpu), освободится 6 ГБ видеопамяти, и генерация 2K поместится в VRAM без PCIe-свопа."
+            )
+
+        if self.stages["vae_decode_sec"] > 35 or self.vae_decode_tiles > 100:
+            bottlenecks.append(
+                f"⏳ Медленный VAE декод: занял {self.stages['vae_decode_sec']:.1f}с ({self.vae_decode_tiles} тайлов при размере 256x256)."
+            )
+            unload_recs.append(
+                f"💡 Оптимизация VAE тайлов: увеличение размера тайла (--vae-tile-size 512x512) сокращает число тайлов с {self.vae_decode_tiles} до 49 и ускоряет декодирование в 3-5 раз."
+            )
+
+        if not bottlenecks:
+            bottlenecks.append("✅ Все этапы выполнились оптимально, оффлоада по шине PCIe не обнаружено.")
+
+        return {
+            "total_time_sec": round(total_elapsed, 2),
+            "stages": {
+                "conditioner_sec": self.stages["conditioner_sec"],
+                "vae_encode_sec": self.stages["vae_encode_sec"],
+                "sampling_sec": self.stages["sampling_sec"],
+                "vae_decode_sec": self.stages["vae_decode_sec"],
+            },
+            "performance": {
+                "avg_step_sec": avg_step_sec,
+                "step_timings_sec": self.step_timings,
+                "last_step_speed": self.step_speeds[-1] if self.step_speeds else "",
+                "graph_cut_detected": self.graph_cut_detected,
+                "layer_swaps_count": self.layer_swaps_count,
+                "pcie_transfer_sec": round(self.pcie_transfer_sec, 2),
+                "vae_decode_tiles": self.vae_decode_tiles,
+            },
+            "memory": {
+                "gpu_device": self.gpu_device_name,
+                "total_vram_mb": self.gpu_total_vram_mb,
+                "initial_free_vram_mb": self.gpu_free_vram_mb,
+                "autofit_plan": self.autofit_plan,
+            },
+            "bottlenecks": bottlenecks,
+            "unload_recommendations": unload_recs,
+        }
+
+
+def format_diagnostic_report(d: dict[str, Any]) -> str:
+    s = d.get("stages", {})
+    p = d.get("performance", {})
+    lines = [
+        "==================== SD.CPP PERFORMANCE DIAGNOSTICS ====================",
+        f"• Total Time: {d.get('total_time_sec', 0)}s",
+        f"• 1. Conditioner (Qwen3-VL 8B): {s.get('conditioner_sec', 0)}s",
+        f"• 2. VAE Encode:                {s.get('vae_encode_sec', 0)}s",
+        f"• 3. Diffusion Sampling:        {s.get('sampling_sec', 0)}s (avg step: {p.get('avg_step_sec', 0)}s)",
+    ]
+    if p.get("graph_cut_detected") or p.get("layer_swaps_count", 0) > 0:
+        lines.append(f"     ⚠️ GRAPH-CUT DETECTED: {p.get('layer_swaps_count', 0)} PCIe layer swaps (overhead: {p.get('pcie_transfer_sec', 0)}s)")
+    lines.append(f"• 4. VAE Decode:                {s.get('vae_decode_sec', 0)}s ({p.get('vae_decode_tiles', 0)} tiles)")
+    lines.append("--- Bottlenecks & Unload Opportunities ---")
+    for b in d.get("bottlenecks", []):
+        lines.append(f"• {b}")
+    for u in d.get("unload_recommendations", []):
+        lines.append(f"• {u}")
+    lines.append("========================================================================")
+    return "\n".join(lines)
+
+
 class SDCppWorker:
     """Executes diffusion inference via sd-cli.exe."""
 
@@ -1161,12 +1370,17 @@ class SDCppWorker:
         if gpu_vram <= 16384 or has_large_res:
             if "--vae-tiling" not in cmd:
                 cmd.append("--vae-tiling")
+            if (target_w >= 1536 or target_h >= 1536 or engine_width >= 1536 or engine_height >= 1536) and "--vae-tile-size" not in cmd:
+                cmd.extend(["--vae-tile-size", "512x512"])
 
         # Offload text encoder / vision encoder to CPU RAM:
-        # Only on GPUs with <= 12GB VRAM (e.g. RTX 3060 12GB) or when explicitly requested via offload_te_cpu.
-        # On GPUs with >= 16GB VRAM, --flash-attn on allows ViT + LLM to run entirely on GPU in ~17s without OOM.
+        # If running direct 2K generation without hires-fix on a 16GB GPU, the 16384-token attention
+        # activations in DiT require ~8-10GB of VRAM. Keeping the 6GB Qwen-VL model on GPU forces
+        # PCIe layer-swapping thrashing (40s/step). Offloading TE to CPU keeps all 10GB for DiT on GPU!
+        direct_2k_qwen = is_qwen and not hires_fix and (target_w >= 1536 or target_h >= 1536)
         needs_te_cpu = (
             gpu_vram <= 12288
+            or direct_2k_qwen
             or getattr(request, "offload_te_cpu", False)
         )
         if needs_te_cpu and "--backend" not in cmd:
@@ -1249,6 +1463,7 @@ class SDCppWorker:
 
         total_steps = request.steps or 20
         captured_lines = []
+        telemetry = SDCppTelemetry(request, model, seed)
 
         try:
             for line in proc.stdout:
@@ -1257,6 +1472,7 @@ class SDCppWorker:
                     continue
                 captured_lines.append(line_str)
                 logger.debug(f"[sd_cpp] {line_str}")
+                telemetry.process_line(line_str)
 
                 # Check cancel
                 if self._cancel_flag.is_set():
@@ -1330,6 +1546,8 @@ class SDCppWorker:
                         if speed_match:
                             speed_str = f" · {speed_match.group(1)}"
 
+                        offload_badge = " ⚠️ [PCIe оффлоад слоев в RAM]" if telemetry.layer_swaps_count > 5 else ""
+
                         if hires_fix and tot_steps == hires_steps:
                             # Pass 2: Highres Fix pass
                             pass_pct = min(1.0, max(0.0, cur_step / tot_steps))
@@ -1339,7 +1557,7 @@ class SDCppWorker:
                                 progress=overall_pct,
                                 step=cur_step,
                                 total_steps=tot_steps,
-                                message=f"Highres Fix: шаг {cur_step}/{tot_steps} ({int(overall_pct*100)}%){speed_str}",
+                                message=f"Highres Fix: шаг {cur_step}/{tot_steps} ({int(overall_pct*100)}%){speed_str}{offload_badge}",
                             ))
                         else:
                             # Pass 1: Base generation
@@ -1351,10 +1569,21 @@ class SDCppWorker:
                                 progress=overall_pct,
                                 step=cur_step,
                                 total_steps=tot_steps,
-                                message=f"{prefix} {cur_step}/{tot_steps} ({int(overall_pct*100)}%){speed_str}",
+                                message=f"{prefix} {cur_step}/{tot_steps} ({int(overall_pct*100)}%){speed_str}{offload_badge}",
                             ))
                     except ValueError:
                         pass
+                elif "wan_vae" in line_str.lower() or "decode" in line_str.lower():
+                    tile_m = re.search(r"\|\s*(\d+)/(\d+)", line_str)
+                    if tile_m and int(tile_m.group(2)) >= 20:
+                        cur_t = int(tile_m.group(1))
+                        tot_t = int(tile_m.group(2))
+                        pct = min(0.99, 0.90 + 0.09 * (cur_t / tot_t))
+                        emit(ProgressEvent(
+                            status=JobStatus.GENERATING,
+                            progress=pct,
+                            message=f"Декодирование VAE ({cur_t}/{tot_t} тайлов)...",
+                        ))
                 else:
                     pct_match = _PERCENT_PROGRESS_RE.search(line_str)
                     if pct_match and ("sampling" in line_str.lower() or "%" in line_str):
@@ -1507,12 +1736,21 @@ class SDCppWorker:
         except Exception as e:
             logger.warning(f"[sd_cpp] Failed to write sidecar metadata: {e}")
 
+        diag = telemetry.finalize(elapsed)
+        logger.info("\n" + format_diagnostic_report(diag))
+        meta["diagnostics"] = diag
+        try:
+            sidecar_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
         emit(ProgressEvent(
             status=JobStatus.COMPLETE,
             progress=1.0,
             image_path=str(output_path),
             raw_image_path=raw_fragment_rel,
             message=f"Done in {elapsed:.1f}s",
+            diagnostics=diag,
         ))
 
         return GenerateResult(
@@ -1523,4 +1761,5 @@ class SDCppWorker:
             backend="sd_cpp",
             steps=request.steps,
             prompt=prompt,
+            diagnostics=diag,
         )

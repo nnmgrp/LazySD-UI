@@ -3085,7 +3085,18 @@ const App = {
           this.stopPolling();
           this.setGenerating(false);
           this.showPreview(status.image_path);
-          this.toast("success", t("toast.generation_complete"));
+          if (status.diagnostics) {
+            console.info("[QuantFunc Telemetry]", status.diagnostics);
+            const d = status.diagnostics;
+            const s = d.stages || {};
+            const perfMsg = `⏱️ ${d.total_time_sec}с (Энкодер: ${s.conditioner_sec || 0}с | Сэмплинг: ${s.sampling_sec || 0}с | VAE: ${s.vae_decode_sec || 0}с)`;
+            this.toast("success", `${t("toast.generation_complete")} ✓ ${perfMsg}`, 6000);
+            if (Array.isArray(d.bottlenecks) && d.bottlenecks.length > 0 && !d.bottlenecks[0].startsWith("✅")) {
+              this.toast("warning", d.bottlenecks[0], 10000);
+            }
+          } else {
+            this.toast("success", t("toast.generation_complete"));
+          }
         } else if (status.status === "error") {
           this.stopPolling();
           this.setGenerating(false);
