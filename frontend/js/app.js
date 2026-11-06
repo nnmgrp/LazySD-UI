@@ -829,6 +829,9 @@ const App = {
     this.state.isModelPickerOpen = true;
     modal.style.display = "flex";
     this.renderModelPickerModal();
+    if (this.refreshConfig) {
+      this.refreshConfig().then(() => this.renderModelPickerModal());
+    }
     const searchInput = document.getElementById("model-picker-search");
     if (searchInput) {
       searchInput.value = this.state.modelPickerSearch || "";
@@ -2175,7 +2178,11 @@ const App = {
     if (tabName === "history") {
       this.loadHistory(this.state.historyPage);
     } else if (tabName === "models") {
-      this.renderModelsTab();
+      if (this.refreshConfig) {
+        this.refreshConfig().then(() => this.renderModelsTab());
+      } else {
+        this.renderModelsTab();
+      }
     } else if (tabName === "templates") {
       this.renderPresetsUI();
     } else if (tabName === "halftone") {

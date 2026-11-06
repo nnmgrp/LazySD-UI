@@ -14246,26 +14246,11 @@ def create_app() -> FastAPI:
 
 
     async def homepage():
-
-
-
-        return build_index_html()
-
-
-
-
-
-
+        return HTMLResponse(content=build_index_html(), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     @app.get("/index.html", response_class=HTMLResponse)
-
-
-
     async def index_html_alias():
-
-
-
-        return build_index_html()
+        return HTMLResponse(content=build_index_html(), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 

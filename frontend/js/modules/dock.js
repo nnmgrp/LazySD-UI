@@ -35,11 +35,41 @@ export function updateDockPills(appRef) {
   const resVal = document.getElementById("resolution-select")?.value || "1024x1024";
   const resPillText = document.getElementById("dock-res-pill-text");
   if (resPillText) {
-    resPillText.textContent = resVal.replace("x", "×");
+    const hiresSuffix = app?.state?.hiresFix ? " · Hires" : "";
+    resPillText.textContent = resVal.replace("x", "×") + hiresSuffix;
   }
-  document.querySelectorAll("#dock-res-grid .dock-res-chip").forEach(chip => {
+  document.querySelectorAll(".dock-res-grid .dock-res-chip[data-res]").forEach(chip => {
     chip.classList.toggle("active", chip.dataset.res === resVal);
   });
+  const hiresChip = document.getElementById("dock-hires-toggle-chip");
+  const hiresBadge = document.getElementById("dock-hires-chip-badge");
+  if (hiresChip) {
+    hiresChip.classList.toggle("active", Boolean(app?.state?.hiresFix));
+  }
+  if (hiresBadge) {
+    hiresBadge.textContent = app?.state?.hiresFix ? "ВКЛ" : "ВЫКЛ";
+    hiresBadge.style.color = app?.state?.hiresFix ? "#a78bfa" : "var(--text-muted)";
+  }
+
+  const dockHiresPill = document.getElementById("dock-hires-pill");
+  const dockHiresPillText = document.getElementById("dock-hires-pill-text");
+  if (dockHiresPill) {
+    dockHiresPill.classList.toggle("active", Boolean(app?.state?.hiresFix));
+  }
+  if (dockHiresPillText) {
+    dockHiresPillText.textContent = app?.state?.hiresFix ? "2K: Вкл" : "2K: Выкл";
+    dockHiresPillText.style.color = app?.state?.hiresFix ? "#a78bfa" : "inherit";
+  }
+
+  const newDockHiresPill = document.getElementById("new-dock-hires-pill");
+  const newDockHiresPillText = document.getElementById("new-dock-hires-pill-text");
+  if (newDockHiresPill) {
+    newDockHiresPill.classList.toggle("active", Boolean(app?.state?.hiresFix));
+  }
+  if (newDockHiresPillText) {
+    newDockHiresPillText.textContent = app?.state?.hiresFix ? "2K: Вкл" : "2K: Выкл";
+    newDockHiresPillText.style.color = app?.state?.hiresFix ? "#a78bfa" : "inherit";
+  }
 
   // 3. Params Pill Text
   const samplerVal = document.getElementById("sampler-select")?.value || "euler";
@@ -523,4 +553,36 @@ export function initDockDrag(appRef) {
     applyDockSettings(app);
     saveDockSettings(app);
   });
+}
+
+export function toggleHiresFromChip(event, appRef) {
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  const app = appRef || window.App;
+  if (!app) return;
+  const nextState = !app.state.hiresFix;
+  onHiresFixChange(nextState, app);
+}
+
+export function onHiresFixChange(checked, appRef) {
+  const app = appRef || window.App;
+  if (!app) return;
+  app.state.hiresFix = Boolean(checked);
+  app.state.hiresFixExplicitlyOff = !checked;
+  const hiresChip = document.getElementById("dock-hires-toggle-chip");
+  const hiresBadge = document.getElementById("dock-hires-chip-badge");
+  if (hiresChip) {
+    hiresChip.classList.toggle("active", app.state.hiresFix);
+  }
+  if (hiresBadge) {
+    hiresBadge.textContent = app.state.hiresFix ? "ВКЛ" : "ВЫКЛ";
+    hiresBadge.style.color = app.state.hiresFix ? "#a78bfa" : "var(--text-muted)";
+  }
+  ["dock-hires-checkbox", "dock-hires-params-checkbox", "new-dock-hires-checkbox", "new-dock-hires-params-checkbox"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = app.state.hiresFix;
+  });
+  updateDockPills(app);
 }

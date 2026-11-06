@@ -496,20 +496,33 @@ def model_supports_mask(spec) -> bool:
 
 # ---------- Singleton ----------
 _registry_instance: Optional[ModelRegistry] = None
+_last_registry_signature: Any = None
 
 
 def get_registry() -> ModelRegistry:
-    """Get the global ModelRegistry singleton."""
-    global _registry_instance
-    if _registry_instance is None:
-        registry_dir = Path(__file__).parent / "models"
+    """Get the global ModelRegistry singleton, auto-reloading if files on disk change."""
+    global _registry_instance, _last_registry_signature
+    registry_dir = Path(__file__).parent / "models"
+    try:
+        json_files = sorted(registry_dir.glob("*.json"))
+        current_sig = tuple((f.name, f.stat().st_mtime_ns) for f in json_files)
+    except Exception:
+        current_sig = None
+
+    if _registry_instance is None or current_sig != _last_registry_signature:
         _registry_instance = ModelRegistry(registry_dir)
+        _last_registry_signature = current_sig
     return _registry_instance
 
 
 def reload_registry() -> ModelRegistry:
     """Force reload from disk."""
-    global _registry_instance
+    global _registry_instance, _last_registry_signature
     registry_dir = Path(__file__).parent / "models"
     _registry_instance = ModelRegistry(registry_dir)
+    try:
+        json_files = sorted(registry_dir.glob("*.json"))
+        _last_registry_signature = tuple((f.name, f.stat().st_mtime_ns) for f in json_files)
+    except Exception:
+        _last_registry_signature = None
     return _registry_instance

@@ -27,6 +27,9 @@ export function openModelPickerModal(appRef) {
   if (app) app.state.isModelPickerOpen = true;
   modal.style.display = "flex";
   renderModelPickerModal(app);
+  if (app && app.refreshConfig) {
+    app.refreshConfig().then(() => renderModelPickerModal(app));
+  }
   const searchInput = document.getElementById("model-picker-search");
   if (searchInput) {
     searchInput.value = app?.state?.modelPickerSearch || "";
@@ -86,7 +89,7 @@ export function renderModelPickerModal(appRef) {
 
     if (filter === "installed") return m.installed === true;
     if (filter === "custom") return m.is_custom === true;
-    if (filter === "klein") return m.family === "klein" || m.id.includes("klein");
+    if (filter === "klein") return m.family === "klein" || m.family === "flux" || m.id.includes("flux") || m.id.includes("klein");
     if (filter === "qwen") return m.family === "qwen" || m.id.includes("qwen");
     if (filter === "z-image") return m.family === "z-image" || m.id.includes("z_image");
     if (filter === "svdq") {
