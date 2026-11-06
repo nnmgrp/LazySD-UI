@@ -59,7 +59,8 @@ PROXY_HEADERS = (
 # Guest allow-list: (method, compiled regex on path). Everything else is admin-only.
 _GUEST_ALLOW: list[tuple[str, re.Pattern]] = [
     ("GET", re.compile(r"^/(index\.html)?$")),
-    ("GET", re.compile(r"^/(css|js|locale|outputs)/")),
+    ("GET", re.compile(r"^/(css|js|locale|outputs|studio)/")),
+    ("GET", re.compile(r"^/studio$")),
     ("GET", re.compile(r"^/api/(config|models|presets|loras|history|presence|system/stats|system/open-folder|open-folder)$")),
     ("GET", re.compile(r"^/api/models/[^/]+/state$")),
     ("GET", re.compile(r"^/api/jobs/[^/]+$")),

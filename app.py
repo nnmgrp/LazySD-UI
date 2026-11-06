@@ -1685,6 +1685,10 @@ def create_app() -> FastAPI:
 
     app.mount("/locale", StaticFiles(directory=str(frontend_dir / "locale")), name="locale")
 
+    studio_dir = frontend_dir / "studio"
+    if studio_dir.exists():
+        app.mount("/studio", StaticFiles(directory=str(studio_dir), html=True), name="studio")
+
 
 
 
