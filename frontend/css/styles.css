@@ -7200,3 +7200,28 @@ body:not(.role-guest) #guest-mode-banner {
   background: linear-gradient(135deg, #f87171, #ef4444) !important;
   filter: brightness(1.1) !important;
 }
+
+
+/* Highres Fix (Option A) Fast 2K controls */
+.dock-hires-row input[type="checkbox"],
+.new-dock-hires-row input[type="checkbox"],
+.new-dock-hires-params-field input[type="checkbox"],
+#dock-hires-params-block input[type="checkbox"] {
+  accent-color: #3b82f6;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.dock-hires-label:hover,
+.new-dock-checkbox-label:hover {
+  filter: brightness(1.15);
+}
+
+#dock-hires-controls input[type="range"],
+#new-dock-hires-controls input[type="range"] {
+  width: 100%;
+  accent-color: #3b82f6;
+  height: 4px;
+  cursor: pointer;
+}

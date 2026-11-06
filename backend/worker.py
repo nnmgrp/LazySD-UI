@@ -114,7 +114,13 @@ class GenerateRequest:
     custom_vae_path: Optional[str] = None
     ref_mode: str = "control_ref"      # "control_ref" | "controlnet_canny" | "img2img"
     control_net_path: Optional[str] = None
-    owner_id: str = "host"
+    # ---- Highres Fix (2-pass fast super-resolution) --------------------
+    hires_fix: bool = False
+    hires_scale: float = 2.0
+    hires_steps: int = 6
+    hires_denoising_strength: float = 0.35
+    hires_upscaler: str = "Latent (bicubic)"
+    owner_id: str = "host" 
     owner_name: str = "Хост"
     shared: bool = True
 

@@ -108,6 +108,11 @@ const App = {
     historyFilter: "all",
     genMask: null,
     inpaint: null,
+    hiresFix: false,
+    hiresScale: 2.0,
+    hiresSteps: 6,
+    hiresDenoisingStrength: 0.35,
+    hiresUpscaler: "Latent (bicubic)",
   },
 
   // ---------- 3-Tier Model Sorting ----------
@@ -2884,6 +2889,11 @@ const App = {
       noise: !isNaN(noiseVal) ? noiseVal : 0.0,
       sampler: samplerVal,
       backend: backend,
+      hires_fix: Boolean(this.state.hiresFix),
+      hires_scale: parseFloat(this.state.hiresScale || 2.0),
+      hires_steps: parseInt(this.state.hiresSteps || 6, 10),
+      hires_denoising_strength: parseFloat(this.state.hiresDenoisingStrength || 0.35),
+      hires_upscaler: this.state.hiresUpscaler || "Latent (bicubic)",
     };
 
     // Attach active LoRA stack
@@ -4201,7 +4211,8 @@ const App = {
     const resVal = document.getElementById("resolution-select")?.value || "1024x1024";
     const resPillText = document.getElementById("dock-res-pill-text");
     if (resPillText) {
-      resPillText.textContent = resVal.replace("x", "×");
+      const hiresSuffix = this.state.hiresFix ? " · Hires" : "";
+      resPillText.textContent = resVal.replace("x", "×") + hiresSuffix;
     }
     document.querySelectorAll("#dock-res-grid .dock-res-chip").forEach(chip => {
       chip.classList.toggle("active", chip.dataset.res === resVal);
@@ -4369,10 +4380,55 @@ const App = {
     }
   },
 
+  onHiresFixChange(checked) {
+    this.state.hiresFix = Boolean(checked);
+    ["dock-hires-checkbox", "dock-hires-params-checkbox", "new-dock-hires-checkbox", "new-dock-hires-params-checkbox"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.checked = this.state.hiresFix;
+    });
+    ["dock-hires-controls", "new-dock-hires-controls"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = this.state.hiresFix ? "flex" : "none";
+    });
+    this.updateDockPills();
+    if (window.updateNewDock) {
+      try { window.updateNewDock(this); } catch (e) {}
+    }
+  },
+
+  onHiresStepsChange(val) {
+    const num = parseInt(val, 10) || 6;
+    this.state.hiresSteps = num;
+    ["dock-hires-steps", "new-dock-hires-steps"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = num;
+    });
+    const lbl1 = document.getElementById("dock-hires-steps-label");
+    if (lbl1) lbl1.textContent = num;
+    const lbl2 = document.getElementById("new-dock-hires-steps-value");
+    if (lbl2) lbl2.textContent = num;
+  },
+
+  onHiresDenoiseChange(val) {
+    const num = parseFloat(val) || 0.35;
+    this.state.hiresDenoisingStrength = num;
+    ["dock-hires-denoise", "new-dock-hires-denoise"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = num;
+    });
+    const lbl1 = document.getElementById("dock-hires-denoise-label");
+    if (lbl1) lbl1.textContent = num.toFixed(2);
+    const lbl2 = document.getElementById("new-dock-hires-denoise-value");
+    if (lbl2) lbl2.textContent = num.toFixed(2);
+  },
+
   selectResolutionChip(resValue) {
     const resSel = document.getElementById("resolution-select");
     if (resSel) {
       resSel.value = resValue;
+      if ((resValue === "2048x2048" || resValue === "1536x1536") && !this.state.hiresFixExplicitlyOff) {
+        this.onHiresFixChange(true);
+      }
       this.updateDockPills();
     }
     this.closeAllDockPopovers();

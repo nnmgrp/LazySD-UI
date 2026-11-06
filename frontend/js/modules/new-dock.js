@@ -371,7 +371,8 @@ export function updateNewDock(appRef) {
   if (resolutionSummary) {
     const resolution = document.getElementById("new-dock-resolution")?.value || "";
     const ratio = getAspectRatio(resolution);
-    resolutionSummary.textContent = `${ratio ? `${ratio} · ` : ""}${resolution.replace("x", "×") || "—"}`;
+    const hiresSuffix = app?.state?.hiresFix ? " · Hires" : "";
+    resolutionSummary.textContent = `${ratio ? `${ratio} · ` : ""}${resolution.replace("x", "×") || "—"}${hiresSuffix}`;
   }
 
   const paramsSummary = document.getElementById("new-dock-params-summary");

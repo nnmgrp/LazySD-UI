@@ -987,18 +987,57 @@ class SDCppWorker:
             # Ensure unconditional pass is active in sd.cpp when CFG > 1.0
             cmd.extend(["-n", " "])
 
-        # Dimensions, steps, seed
-        # Masked runs use the crop size; the result is pasted back afterwards.
-        engine_width, engine_height = (
-            mask_ctx["crop_size"] if mask_ctx is not None else (width, height)
-        )
-        cmd.extend([
-            "-W", str(engine_width),
-            "-H", str(engine_height),
-            "--steps", str(request.steps or 20),
-            "-s", str(seed),
-            "-o", str(output_path),
-        ])
+        # Dimensions, steps, seed & Highres Fix (Option A)
+        hires_fix = bool(getattr(request, "hires_fix", False))
+        hires_scale = float(getattr(request, "hires_scale", 2.0) or 2.0)
+        hires_steps = int(getattr(request, "hires_steps", 6) or 6)
+        hires_strength = float(getattr(request, "hires_denoising_strength", 0.35) or 0.35)
+        hires_upscaler = str(getattr(request, "hires_upscaler", "Latent (bicubic)") or "Latent (bicubic)")
+
+        # Masked runs operate on the inpainting bbox and avoid hires scaling conflicts
+        if mask_ctx is not None:
+            hires_fix = False
+
+        if hires_fix:
+            if width >= 1536 or height >= 1536:
+                target_w = width
+                target_h = height
+                base_w = max(64, int(round((target_w / hires_scale) / 64) * 64))
+                base_h = max(64, int(round((target_h / hires_scale) / 64) * 64))
+            else:
+                base_w = width
+                base_h = height
+                target_w = max(64, int(round((base_w * hires_scale) / 64) * 64))
+                target_h = max(64, int(round((base_h * hires_scale) / 64) * 64))
+
+            engine_width, engine_height = base_w, base_h
+            cmd.extend([
+                "-W", str(base_w),
+                "-H", str(base_h),
+                "--steps", str(request.steps or 20),
+                "--hires",
+                "--hires-width", str(target_w),
+                "--hires-height", str(target_h),
+                "--hires-scale", str(hires_scale),
+                "--hires-steps", str(hires_steps),
+                "--hires-denoising-strength", str(hires_strength),
+                "--hires-upscaler", str(hires_upscaler),
+                "-s", str(seed),
+                "-o", str(output_path),
+            ])
+        else:
+            engine_width, engine_height = (
+                mask_ctx["crop_size"] if mask_ctx is not None else (width, height)
+            )
+            target_w, target_h = engine_width, engine_height
+            cmd.extend([
+                "-W", str(engine_width),
+                "-H", str(engine_height),
+                "--steps", str(request.steps or 20),
+                "-s", str(seed),
+                "-o", str(output_path),
+            ])
+
 
         # Flash Attention for diffusion model and text/vision conditioners
         # --flash-attn on enables FlashAttention globally across diffusion, ViT, and LLM,
@@ -1009,7 +1048,7 @@ class SDCppWorker:
         # Memory optimization & RAM offload (ported from SnowE22)
         gpu_vram = gpu_info.vram_mb if gpu_info else 8192
         ref_dim_max = max(w32 if "w32" in locals() else 0, h32 if "h32" in locals() else 0)
-        has_large_res = engine_width > 1024 or engine_height > 1024 or ref_dim_max > 1024
+        has_large_res = engine_width > 1024 or engine_height > 1024 or ref_dim_max > 1024 or hires_fix or target_w > 1024 or target_h > 1024
 
         # VAE spatial tiling: essential for large resolutions (> 1024) or tight VRAM
         if gpu_vram <= 16384 or has_large_res:
@@ -1060,7 +1099,8 @@ class SDCppWorker:
 
         # Logging
         crop_msg = f" (crop from {width}x{height} source)" if mask_ctx is not None else ""
-        logger.info(f"[sd_cpp] Launching SD.CPP: {engine_width}x{engine_height}{crop_msg}, steps={request.steps}, cfg={cfg_val}, sampler={mapped_sampler}, eta={noise_val}, seed={seed}")
+        hires_msg = f" -> Hires {target_w}x{target_h} ({hires_upscaler}, steps={hires_steps}, strength={hires_strength})" if hires_fix else ""
+        logger.info(f"[sd_cpp] Launching SD.CPP: {engine_width}x{engine_height}{crop_msg}{hires_msg}, steps={request.steps}, cfg={cfg_val}, sampler={mapped_sampler}, eta={noise_val}, seed={seed}")
         logger.debug(f"[sd_cpp] CLI args: {' '.join(cmd)}")
 
         # 4. Environment PATH
@@ -1172,25 +1212,39 @@ class SDCppWorker:
                     ))
                     continue
 
-                # Parse real sampling progress
+                # Parse real sampling progress (Base pass & Highres Fix pass)
                 step_match = _STEP_PROGRESS_RE.search(line_str)
-                if step_match and ("s/it" in line_str or "it/s" in line_str or int(step_match.group(2)) == total_steps):
+                if step_match and ("s/it" in line_str or "it/s" in line_str or int(step_match.group(2)) in (total_steps, hires_steps)):
                     try:
                         cur_step = int(step_match.group(1))
                         tot_steps = int(step_match.group(2))
-                        if tot_steps == total_steps or "s/it" in line_str or "it/s" in line_str:
-                            pct = min(0.95, max(0.10, cur_step / tot_steps))
-                            # Extract speed token if available (e.g. 69.60s/it or 5.04s/it)
-                            speed_str = ""
-                            speed_match = re.search(r"(\d+(?:\.\d+)?(?:s/it|it/s))", line_str)
-                            if speed_match:
-                                speed_str = f" · {speed_match.group(1)}"
+                        speed_str = ""
+                        speed_match = re.search(r"(\d+(?:\.\d+)?(?:s/it|it/s))", line_str)
+                        if speed_match:
+                            speed_str = f" · {speed_match.group(1)}"
+
+                        if hires_fix and tot_steps == hires_steps:
+                            # Pass 2: Highres Fix pass
+                            pass_pct = min(1.0, max(0.0, cur_step / tot_steps))
+                            overall_pct = min(0.95, 0.50 + 0.45 * pass_pct)
                             emit(ProgressEvent(
                                 status=JobStatus.GENERATING,
-                                progress=pct,
+                                progress=overall_pct,
                                 step=cur_step,
                                 total_steps=tot_steps,
-                                message=f"Шаг {cur_step}/{tot_steps} ({int(pct*100)}%){speed_str}",
+                                message=f"Highres Fix: шаг {cur_step}/{tot_steps} ({int(overall_pct*100)}%){speed_str}",
+                            ))
+                        else:
+                            # Pass 1: Base generation
+                            pass_pct = min(1.0, max(0.0, cur_step / tot_steps))
+                            overall_pct = min(0.50, 0.10 + 0.40 * pass_pct) if hires_fix else min(0.95, 0.10 + 0.85 * pass_pct)
+                            prefix = "Базовый кадр: шаг" if hires_fix else "Шаг"
+                            emit(ProgressEvent(
+                                status=JobStatus.GENERATING,
+                                progress=overall_pct,
+                                step=cur_step,
+                                total_steps=tot_steps,
+                                message=f"{prefix} {cur_step}/{tot_steps} ({int(overall_pct*100)}%){speed_str}",
                             ))
                     except ValueError:
                         pass
@@ -1302,6 +1356,18 @@ class SDCppWorker:
                 "generation_time_sec": round(elapsed, 2),
                 "timestamp": int(time.time()),
             }
+            if hires_fix:
+                meta.update({
+                    "hires_fix": True,
+                    "hires_scale": hires_scale,
+                    "hires_steps": hires_steps,
+                    "hires_denoising_strength": hires_strength,
+                    "hires_upscaler": hires_upscaler,
+                    "base_width": base_w,
+                    "base_height": base_h,
+                    "hires_width": target_w,
+                    "hires_height": target_h,
+                })
             if mask_ctx is not None:
                 meta.update({
                     "mask_applied": True,

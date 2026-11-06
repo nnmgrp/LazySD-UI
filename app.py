@@ -9122,6 +9122,27 @@ def create_app() -> FastAPI:
 
         control_net_path = (body.get("control_net_path") or "").strip() or None
 
+        # Highres fix parameters
+        raw_hires_fix = body.get("hires_fix", False)
+        hires_fix = bool(raw_hires_fix) if isinstance(raw_hires_fix, bool) else str(raw_hires_fix).lower() in ("true", "1", "yes")
+        try:
+            hires_scale = float(body.get("hires_scale", 2.0) or 2.0)
+            hires_scale = max(1.25, min(4.0, hires_scale))
+        except (ValueError, TypeError):
+            hires_scale = 2.0
+        try:
+            hires_steps = int(body.get("hires_steps", 6) or 6)
+            hires_steps = max(1, min(50, hires_steps))
+        except (ValueError, TypeError):
+            hires_steps = 6
+        try:
+            hires_denoising_strength = float(body.get("hires_denoising_strength", 0.35) or 0.35)
+            hires_denoising_strength = max(0.05, min(1.0, hires_denoising_strength))
+        except (ValueError, TypeError):
+            hires_denoising_strength = 0.35
+        hires_upscaler = str(body.get("hires_upscaler", "Latent (bicubic)") or "Latent (bicubic)").strip()
+
+
 
 
 
@@ -9323,6 +9344,12 @@ def create_app() -> FastAPI:
 
 
             shared=shared,
+            hires_fix=hires_fix,
+            hires_scale=hires_scale,
+            hires_steps=hires_steps,
+            hires_denoising_strength=hires_denoising_strength,
+            hires_upscaler=hires_upscaler,
+
 
 
 

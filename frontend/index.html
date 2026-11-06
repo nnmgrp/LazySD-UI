@@ -528,6 +528,14 @@
 
               </div>
 
+              <div class="dock-hires-row" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+                <label class="dock-hires-label" style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text); cursor: pointer;" title="2-проходная генерация: база 1024 + 6-шаговый 2K апскейл за ~5 минут вместо 32 минут">
+                  <input type="checkbox" id="dock-hires-checkbox" onchange="App.onHiresFixChange(this.checked)">
+                  <span style="font-weight: 600;">⚡ Быстрый 2K (Highres Fix)</span>
+                </label>
+                <span style="font-size: 10px; color: var(--accent); font-family: var(--font-mono, monospace);">~5 мин</span>
+              </div>
+
             </div>
 
             <!-- 3. Quick Parameters Popover (Steps, CFG, Sampler, Noise, Seed) -->
@@ -620,6 +628,28 @@
 
                   </div>
 
+                </div>
+
+                <div class="dock-field" id="dock-hires-params-block" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 11px;">
+                      <input type="checkbox" id="dock-hires-params-checkbox" onchange="App.onHiresFixChange(this.checked)">
+                      <span>⚡ Highres Fix (2-pass 2K)</span>
+                    </label>
+                    <span style="font-size: 10px; color: var(--accent); font-family: var(--font-mono, monospace);">Быстрый 2K</span>
+                  </div>
+                  <div id="dock-hires-controls" style="display: none; flex-direction: column; gap: 6px; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 10.5px;">
+                      <span>Шаги Highres (Steps)</span>
+                      <strong id="dock-hires-steps-label" style="font-family: monospace;">6</strong>
+                    </div>
+                    <input type="range" id="dock-hires-steps" min="2" max="20" step="1" value="6" oninput="App.onHiresStepsChange(this.value)">
+                    <div style="display: flex; justify-content: space-between; font-size: 10.5px;">
+                      <span>Denoising Strength</span>
+                      <strong id="dock-hires-denoise-label" style="font-family: monospace;">0.35</strong>
+                    </div>
+                    <input type="range" id="dock-hires-denoise" min="0.1" max="0.8" step="0.05" value="0.35" oninput="App.onHiresDenoiseChange(this.value)">
+                  </div>
                 </div>
 
               </div>
@@ -991,6 +1021,13 @@
                 <button type="button" onclick="App.swapNewDockResolution()" data-i18n-title="dock.swap_dimensions" title="Swap width and height">↔</button>
                 <label><span>H</span><input id="new-dock-height" type="number" min="256" max="2048" step="64" onchange="App.updateNewDockResolutionFromInputs()"></label>
               </div>
+              <div class="new-dock-hires-row" style="margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between;">
+                <label class="new-dock-checkbox-label" style="display: flex; align-items: center; gap: 6px; font-size: 10px; color: #cbd5e1; cursor: pointer;" title="2-проходная генерация: база + быстрый 2K апскейл за ~5 минут">
+                  <input type="checkbox" id="new-dock-hires-checkbox" onchange="App.onHiresFixChange(this.checked)">
+                  <span style="font-weight: 600;">⚡ Быстрый 2K (Highres Fix)</span>
+                </label>
+                <span style="font-size: 9px; color: #60a5fa; font-family: var(--font-mono, monospace);">~5 мин</span>
+              </div>
               <select id="new-dock-resolution" class="new-dock-sync-select" aria-hidden="true" tabindex="-1"></select>
             </div>
 
@@ -1011,6 +1048,22 @@
                 <div>
                   <input id="new-dock-seed" type="text" onchange="App.onNewDockParamChange('seed', this.value)">
                   <button type="button" onclick="App.randomizeNewDockSeed()" title="Random seed">♧ <span>Dice</span></button>
+                </div>
+              </div>
+              <div class="new-dock-hires-params-field" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);">
+                <label style="display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #cbd5e1; cursor: pointer; margin-bottom: 5px;">
+                  <span style="display: flex; align-items: center; gap: 5px;"><input type="checkbox" id="new-dock-hires-params-checkbox" onchange="App.onHiresFixChange(this.checked)"> ⚡ Highres Fix</span>
+                  <span style="font-size: 9px; color: #60a5fa; font-family: var(--font-mono, monospace);">2K Fast</span>
+                </label>
+                <div id="new-dock-hires-controls" style="display: none; flex-direction: column; gap: 6px; margin-top: 4px; padding: 6px; background: rgba(0,0,0,0.25); border-radius: 6px;">
+                  <div class="new-dock-range-field">
+                    <div><span>Hires Steps</span><strong id="new-dock-hires-steps-value">6</strong></div>
+                    <input id="new-dock-hires-steps" type="range" min="2" max="20" step="1" value="6" oninput="App.onHiresStepsChange(this.value)">
+                  </div>
+                  <div class="new-dock-range-field">
+                    <div><span>Denoising Strength</span><strong id="new-dock-hires-denoise-value">0.35</strong></div>
+                    <input id="new-dock-hires-denoise" type="range" min="0.1" max="0.8" step="0.05" value="0.35" oninput="App.onHiresDenoiseChange(this.value)">
+                  </div>
                 </div>
               </div>
             </div>
