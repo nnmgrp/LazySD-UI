@@ -1226,6 +1226,20 @@ class Worker:
                 self._current_process.terminate()
             except Exception:
                 pass
+            if sys.platform == "win32":
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self._current_process.pid)],
+                        capture_output=True,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+            try:
+                self._current_process.kill()
+            except Exception:
+                pass
 
     # ---------- Mask (inpaint) ----------
     def _prepare_mask(self, request: GenerateRequest, settings, raw_source: str) -> dict:

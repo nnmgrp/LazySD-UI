@@ -368,9 +368,23 @@ class SDCppWorker:
     def cancel(self):
         """Cancel current running process."""
         self._cancel_flag.set()
-        if self._current_process:
+        proc = self._current_process
+        if proc:
             try:
-                self._current_process.terminate()
+                proc.terminate()
+            except Exception:
+                pass
+            if sys.platform == "win32":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        capture_output=True,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+            try:
+                proc.kill()
             except Exception:
                 pass
 
@@ -986,8 +1000,11 @@ class SDCppWorker:
             "-o", str(output_path),
         ])
 
-        # Flash Attention for diffusion model
-        cmd.append("--diffusion-fa")
+        # Flash Attention for diffusion model and text/vision conditioners
+        # --flash-attn on enables FlashAttention globally across diffusion, ViT, and LLM,
+        # keeping ViT attention memory under 2GB and preventing 17.3GB OOM on high resolutions.
+        if "--flash-attn" not in cmd and "--diffusion-fa" not in cmd:
+            cmd.extend(["--flash-attn", "on"])
 
         # Memory optimization & RAM offload (ported from SnowE22)
         gpu_vram = gpu_info.vram_mb if gpu_info else 8192
@@ -1000,14 +1017,11 @@ class SDCppWorker:
                 cmd.append("--vae-tiling")
 
         # Offload text encoder / vision encoder to CPU RAM:
-        # 1. On GPUs with <= 12GB VRAM
-        # 2. When explicitly requested via offload_te_cpu
-        # 3. When Vision encoder (--llm_vision) is used at high resolutions (> 1024),
-        #    as Qwen3-VL ViT attention requires ~17.3 GB memory which exceeds 16GB GPU VRAM.
+        # Only on GPUs with <= 12GB VRAM (e.g. RTX 3060 12GB) or when explicitly requested via offload_te_cpu.
+        # On GPUs with >= 16GB VRAM, --flash-attn on allows ViT + LLM to run entirely on GPU in ~17s without OOM.
         needs_te_cpu = (
             gpu_vram <= 12288
             or getattr(request, "offload_te_cpu", False)
-            or (gpu_vram <= 16384 and ("--llm_vision" in cmd) and has_large_res)
         )
         if needs_te_cpu and "--backend" not in cmd:
             cmd.extend(["--backend", "te=cpu"])
@@ -1099,35 +1113,74 @@ class SDCppWorker:
 
                 # Check cancel
                 if self._cancel_flag.is_set():
-                    proc.terminate()
+                    if sys.platform == "win32":
+                        try:
+                            subprocess.run(
+                                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                capture_output=True,
+                                check=False,
+                            )
+                        except Exception:
+                            pass
+                    proc.kill()
                     raise RuntimeError("Generation cancelled by user")
 
-                # Parse progress
+                # Filter out tensor loading / model weight transfer lines from step progress
+                if "MB/s" in line_str or "GB/s" in line_str or "loading tensors" in line_str:
+                    match = _STEP_PROGRESS_RE.search(line_str)
+                    if match:
+                        cur_t = match.group(1)
+                        tot_t = match.group(2)
+                        emit(ProgressEvent(
+                            status=JobStatus.GENERATING,
+                            progress=0.05,
+                            message=f"Загрузка весов ({cur_t}/{tot_t})...",
+                        ))
+                    continue
+
+                if "encode_first_stage" in line_str:
+                    emit(ProgressEvent(
+                        status=JobStatus.GENERATING,
+                        progress=0.08,
+                        message="Кодирование VAE...",
+                    ))
+                    continue
+
+                if "decode_first_stage" in line_str or "decoding" in line_str:
+                    emit(ProgressEvent(
+                        status=JobStatus.GENERATING,
+                        progress=0.96,
+                        message="Декодирование VAE...",
+                    ))
+                    continue
+
+                # Parse real sampling progress
                 step_match = _STEP_PROGRESS_RE.search(line_str)
-                if step_match:
+                if step_match and ("generating image" in line_str or "s/it" in line_str or "it/s" in line_str or int(step_match.group(2)) == total_steps):
                     try:
                         cur_step = int(step_match.group(1))
                         tot_steps = int(step_match.group(2))
-                        pct = min(0.95, max(0.05, cur_step / tot_steps))
+                        pct = min(0.95, max(0.10, cur_step / tot_steps))
                         emit(ProgressEvent(
                             status=JobStatus.GENERATING,
                             progress=pct,
                             step=cur_step,
                             total_steps=tot_steps,
-                            message=f"Sampling step {cur_step}/{tot_steps} ({int(pct*100)}%)",
+                            message=f"Шаг сэмплинга {cur_step}/{tot_steps} ({int(pct*100)}%)",
                         ))
                     except ValueError:
                         pass
                 else:
                     pct_match = _PERCENT_PROGRESS_RE.search(line_str)
-                    if pct_match:
+                    if pct_match and ("sampling" in line_str.lower() or "%" in line_str):
                         try:
                             val = int(pct_match.group(1))
-                            emit(ProgressEvent(
-                                status=JobStatus.GENERATING,
-                                progress=val / 100.0,
-                                message=f"Sampling ({val}%)",
-                            ))
+                            if val <= 100:
+                                emit(ProgressEvent(
+                                    status=JobStatus.GENERATING,
+                                    progress=val / 100.0,
+                                    message=f"Сэмплирование ({val}%)",
+                                ))
                         except ValueError:
                             pass
 

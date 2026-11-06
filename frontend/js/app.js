@@ -3073,13 +3073,25 @@ const App = {
   },
 
   async cancelJob() {
-    const jobId = this.state.currentJob || this.state.queueJobId;
+    const inpaintState = this.getInpaintState ? this.getInpaintState() : null;
+    const jobId = this.state.currentJob || this.state.queueJobId || (inpaintState ? inpaintState.jobId : null);
     if (!jobId) return;
     try {
-      await this.apiPost(`/api/jobs/${jobId}/cancel`);
+      this.stopPolling();
+      this.setGenerating(false);
+      this.hideQueueStatus();
+      if (inpaintState && typeof this.stopInpaintPolling === "function") {
+        this.stopInpaintPolling();
+      }
+      this.state.currentJob = null;
+      this.state.queueJobId = null;
+      const overlay = document.getElementById("progress-overlay");
+      if (overlay) overlay.style.display = "none";
+      this.toast("info", (window.t ? window.t("status.cancelled") : "") || "Генерация отменена");
+      await this.apiPost(`/api/jobs/${encodeURIComponent(jobId)}/cancel`);
     } catch (e) {
       console.error("[app] Cancel failed:", e);
-      this.toast("error", e.message || t("status.cancelled"));
+      this.toast("error", e.message || (window.t ? window.t("status.cancelled") : "Отмена не удалась"));
     }
   },
 

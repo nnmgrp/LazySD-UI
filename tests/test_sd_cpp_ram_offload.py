@@ -1,10 +1,11 @@
-"""Tests for SD.CPP reference resolution preservation and RAM offload flags.
+"""Tests for SD.CPP reference resolution preservation, FlashAttention, and RAM offload flags.
 
 Verifies:
 1. Native source image resolution is preserved without artificial upscaling to target generation size.
 2. VAE tiling (--vae-tiling) is enabled for resolutions > 1024 or <= 16GB GPUs.
-3. Heavy ViT vision encoder workloads (--llm_vision at res > 1024) are offloaded to system RAM (--backend te=cpu) on 16GB GPUs.
-4. --params-backend cpu is reserved for <= 12GB GPUs so that --auto-fit remains active on 16GB GPUs.
+3. Global FlashAttention (--flash-attn on) is enabled across diffusion and conditioners (ViT & LLM).
+4. On 16GB GPUs, ViT & LLM run on CUDA without --backend te=cpu thanks to FlashAttention.
+5. On <= 12GB GPUs, RAM offload (--params-backend cpu and --backend te=cpu) is active.
 """
 import sys
 from pathlib import Path
@@ -28,7 +29,7 @@ def tmp_source_image(tmp_path):
     return img_path
 
 
-def test_sd_cpp_preserves_ref_resolution_and_enables_ram_offload(tmp_path, tmp_source_image):
+def test_sd_cpp_preserves_ref_resolution_and_enables_flash_attn_on_16gb_gpu(tmp_path, tmp_source_image):
     worker = SDCppWorker()
     worker.cli_path = Path("G:/QuantFunc-WebUI/bin/windows/sd_cpp/sd-cli.exe")
 
@@ -113,7 +114,6 @@ def test_sd_cpp_preserves_ref_resolution_and_enables_ram_offload(tmp_path, tmp_s
     assert len(captured_cmd) > 0, "SD.CPP command was not captured"
 
     # 1. Verify resolution is NOT forcibly upscaled to 2048x2048
-    # 1500 aligned to 32 is (1500 // 32) * 32 = 1472
     preproc_idx = -1
     for i, arg in enumerate(captured_cmd):
         if arg == "--image-preprocess":
@@ -131,17 +131,23 @@ def test_sd_cpp_preserves_ref_resolution_and_enables_ram_offload(tmp_path, tmp_s
     # 2. Verify VAE tiling is active for 16GB GPU / high res
     assert "--vae-tiling" in captured_cmd, "--vae-tiling must be present"
 
-    # 3. Verify --params-backend cpu is NOT passed on 16GB GPU (would disable --auto-fit)
+    # 3. Verify global FlashAttention is enabled (--flash-attn on)
+    assert "--flash-attn" in captured_cmd, "--flash-attn must be present"
+    assert captured_cmd[captured_cmd.index("--flash-attn") + 1] == "on"
+    assert "--diffusion-fa" not in captured_cmd, "--diffusion-fa (deprecated) must not be used"
+
+    # 4. On 16GB GPU with FlashAttention, ViT runs on GPU (no forced --backend te=cpu)
+    assert "--backend" not in captured_cmd or "te=cpu" not in captured_cmd, (
+        "--backend te=cpu should not be forced on 16GB GPU when FlashAttention is on"
+    )
+
+    # 5. Verify --params-backend cpu is NOT passed on 16GB GPU (to keep --auto-fit active)
     assert "--params-backend" not in captured_cmd, (
         "--params-backend cpu must NOT be passed on 16GB GPU to keep --auto-fit active"
     )
 
-    # 4. Verify Vision encoder offload to CPU RAM (--backend te=cpu) is active for large ViT input
-    assert "--backend" in captured_cmd, "--backend must be present for large ViT input"
-    assert captured_cmd[captured_cmd.index("--backend") + 1] == "te=cpu"
 
-
-def test_sd_cpp_enables_params_backend_cpu_on_12gb_gpu(tmp_path, tmp_source_image):
+def test_sd_cpp_enables_ram_offload_on_12gb_gpu(tmp_path, tmp_source_image):
     worker = SDCppWorker()
     worker.cli_path = Path("G:/QuantFunc-WebUI/bin/windows/sd_cpp/sd-cli.exe")
 
@@ -221,6 +227,8 @@ def test_sd_cpp_enables_params_backend_cpu_on_12gb_gpu(tmp_path, tmp_source_imag
     with patch("subprocess.Popen", side_effect=mock_popen):
         worker.generate(mock_request, mock_model, gpu_info=gpu_info_12gb)
 
-    # On <= 12GB GPU, --params-backend cpu should be present
+    # On <= 12GB GPU, both --params-backend cpu and --backend te=cpu should be present
     assert "--params-backend" in captured_cmd
     assert captured_cmd[captured_cmd.index("--params-backend") + 1] == "cpu"
+    assert "--backend" in captured_cmd
+    assert captured_cmd[captured_cmd.index("--backend") + 1] == "te=cpu"
