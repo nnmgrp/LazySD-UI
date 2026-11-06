@@ -708,15 +708,14 @@ class SDCppWorker:
                 or "qwen3.5" in (llm_rel or "").lower()
                 or "moss" in (diff_rel or "").lower()
             )
-            is_pid = (
-                vae_type == "pid"
-                or "pid" in str(getattr(request, "hires_upscaler", "")).lower()
-                or "pid" in model.id.lower()
-                or "pid" in (diff_rel or "").lower()
-                or "pid" in (tok_rel or "").lower()
+            is_pid_model = bool(
+                model.family == "pid"
+                or (model.id and "pid" in model.id.lower() and not ("qwen" in model.id.lower() or "flux" in model.id.lower()))
+                or (diff_rel and "pid" in diff_rel.lower())
+                or (tok_rel and "pid" in tok_rel.lower())
             )
-            if tok_rel or is_moss_or_qwen35 or is_pid:
-                tok_rel = tok_rel or ("tokenizer_gemma2.json" if is_pid else "tokenizer.json")
+            if tok_rel or is_moss_or_qwen35 or is_pid_model:
+                tok_rel = tok_rel or ("tokenizer_gemma2.json" if is_pid_model else "tokenizer.json")
                 tok_search = [
                     resolve_model_file(tok_rel),
                     repo_dir / tok_rel,
@@ -733,11 +732,11 @@ class SDCppWorker:
                 if tok_path is None:
                     from .sources import HuggingFaceSource
                     hf = HuggingFaceSource(token=settings.huggingface_token)
-                    default_repo = "unsloth/gemma-2-2b-it" if is_pid else "OpenMOSS-Team/MOSS-Image-Base"
-                    default_remote = "tokenizer.json" if is_pid else "tokenizer/tokenizer.json"
+                    default_repo = "unsloth/gemma-2-2b-it" if is_pid_model else "OpenMOSS-Team/MOSS-Image-Base"
+                    default_remote = "tokenizer.json" if is_pid_model else "tokenizer/tokenizer.json"
                     tok_repo = model.engine_args.get("tokenizer_repo", default_repo)
                     tok_remote = model.engine_args.get("tokenizer_remote", default_remote)
-                    tok_title = "PiD Gemma 2 Tokenizer" if is_pid else "Qwen3.5 Tokenizer"
+                    tok_title = "PiD Gemma 2 Tokenizer" if is_pid_model else "Qwen3.5 Tokenizer"
                     emit(ProgressEvent(
                         status=JobStatus.DOWNLOADING,
                         progress=0.12,
@@ -1053,14 +1052,26 @@ class SDCppWorker:
         # Dimensions, steps, seed & Highres Fix (Option A)
         hires_fix = bool(getattr(request, "hires_fix", False))
         hires_scale = float(getattr(request, "hires_scale", 2.0) or 2.0)
-        hires_steps = int(getattr(request, "hires_steps", 6) or 6)
         hires_strength = float(getattr(request, "hires_denoising_strength", 0.35) or 0.35)
-        hires_upscaler = str(getattr(request, "hires_upscaler", "Latent (bicubic)") or "Latent (bicubic)")
-        if vae_type == "pid":
-            hires_upscaler = "Latent (bicubic)"
+        raw_upscaler = str(getattr(request, "hires_upscaler", "") or "")
+        is_pid_hires = (vae_type == "pid") or ("pid" in raw_upscaler.lower())
+
+        user_hires_steps = getattr(request, "hires_steps", None)
+        if user_hires_steps is not None and int(user_hires_steps) > 0:
+            hires_steps = int(user_hires_steps)
+            if "pid" in raw_upscaler.lower():
+                hires_steps = min(hires_steps, 4)
+        elif is_pid_hires:
             hires_steps = 4
+        else:
+            hires_steps = 6
+
+        if is_pid_hires:
+            hires_upscaler = "Latent (bicubic)"
             if width >= 1536 or height >= 1536:
                 hires_fix = True
+        else:
+            hires_upscaler = raw_upscaler or "Latent (bicubic)"
 
         valid_builtin_upscalers = {
             "latent": "Latent",
@@ -1073,9 +1084,6 @@ class SDCppWorker:
         mapped_hires_upscaler = valid_builtin_upscalers.get(
             hires_upscaler.strip().lower(), "Latent (bicubic)"
         )
-        if "pid" in hires_upscaler.lower():
-            mapped_hires_upscaler = "Latent (bicubic)"
-            hires_steps = min(hires_steps, 4)
 
         # Masked runs operate on the inpainting bbox and avoid hires scaling conflicts
         if mask_ctx is not None:
