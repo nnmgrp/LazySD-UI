@@ -908,8 +908,18 @@ class SDCppWorker:
                                 local_dir=repo_dir,
                             )
                             mmproj_path = repo_dir / "mmproj-F16.gguf"
-                        w32 = max(32, (width // 32) * 32)
-                        h32 = max(32, (height // 32) * 32)
+                        # Use actual reference image dimensions (aligned to 32) to preserve
+                        # 100% native source resolution without artificial upscaling (which causes
+                        # quadratic ViT self-attention memory blowup while adding zero detail).
+                        ref_w, ref_h = width, height
+                        try:
+                            from PIL import Image as _PIL_Image
+                            with _PIL_Image.open(ref_path) as _ref_im:
+                                ref_w, ref_h = _ref_im.size
+                        except Exception:
+                            pass
+                        w32 = max(32, (ref_w // 32) * 32)
+                        h32 = max(32, (ref_h // 32) * 32)
                         preproc = f"target=ref,mode=crop-resize,width={w32},height={h32}"
                         if ref_mode == "controlnet_canny":
                             preproc += ",canny=true"
@@ -979,15 +989,28 @@ class SDCppWorker:
         # Flash Attention for diffusion model
         cmd.append("--diffusion-fa")
 
-        # Memory optimization for GPUs with <= 12GB VRAM (ported from SnowE22: offload Text Encoder and params to CPU, tile VAE)
+        # Memory optimization & RAM offload (ported from SnowE22)
         gpu_vram = gpu_info.vram_mb if gpu_info else 8192
-        if gpu_vram <= 12288 or getattr(request, "offload_te_cpu", False):
-            if "--backend" not in cmd:
-                cmd.extend(["--backend", "te=cpu"])
+        ref_dim_max = max(w32 if "w32" in locals() else 0, h32 if "h32" in locals() else 0)
+        has_large_res = engine_width > 1024 or engine_height > 1024 or ref_dim_max > 1024
+
+        # When generating/editing high resolutions (> 1024) or on GPUs <= 16GB VRAM,
+        # enable params-backend cpu and vae-tiling so SD.CPP can spill weights to RAM and tile VAE.
+        if gpu_vram <= 16384 or has_large_res or getattr(request, "offload_te_cpu", False):
             if "--params-backend" not in cmd:
                 cmd.extend(["--params-backend", "cpu"])
             if "--vae-tiling" not in cmd:
                 cmd.append("--vae-tiling")
+
+        # Offload text encoder / vision encoder to CPU RAM:
+        # 1. On GPUs with <= 12GB VRAM
+        # 2. When explicitly requested via offload_te_cpu
+        # 3. When Vision encoder (--llm_vision) is used with a large reference image (>= 1400px),
+        #    allowing the full-resolution image to be processed in system RAM without overflowing CUDA0.
+        ref_is_very_large = ("--llm_vision" in cmd) and (ref_dim_max >= 1400)
+        if gpu_vram <= 12288 or getattr(request, "offload_te_cpu", False) or (gpu_vram <= 16384 and ref_is_very_large):
+            if "--backend" not in cmd:
+                cmd.extend(["--backend", "te=cpu"])
 
         # Sampling method & Noise / Eta
         noise_val = float(getattr(request, "noise", 0.0) or 0.0)
