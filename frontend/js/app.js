@@ -11632,7 +11632,7 @@ async function downloadMangaPng(appRef) {
   toast("info", "Рендеринг в полном разрешении для скачивания...");
 
   try {
-    const p = { ...st.params, mode: "manga_screen", finish_enabled: false };
+    const p = { ...st.params };
     const res = await apiPost("/api/manga/process", {
       image_path: st.sourcePath,
       image_data: st.sourceDataUrl,

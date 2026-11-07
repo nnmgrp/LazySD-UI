@@ -34,7 +34,7 @@ from .halftone import (
     render_halftone_screen,
 )
 
-MANGA_MODES = ("manga_lite", "finish_only", "ai_manga", "ai_manga_finish")
+MANGA_MODES = ("manga_lite", "finish_only", "ai_manga", "ai_manga_finish", "manga_screen")
 FINISH_PRESETS: dict[str, dict[str, Any]] = {
     "clean": {
         "screen_lines": 200,
@@ -174,6 +174,8 @@ class MangaPipelineParams:
 
     def validate(self) -> "MangaPipelineParams":
         mode = str(self.mode or "manga_lite").strip().lower()
+        if mode == "manga_screen":
+            mode = "manga_lite"
         if mode not in MANGA_MODES:
             raise ValueError(f"Unsupported manga mode: {mode!r}. Allowed: {', '.join(MANGA_MODES)}")
         self.mode = mode
