@@ -444,16 +444,60 @@ export function revertMangaToOriginal(appRef) {
   if (badgeEl) badgeEl.style.display = "block";
 }
 
+async function triggerMangaDownload(url, filename) {
+  if (!url) return;
+  if (url.startsWith("data:")) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return;
+  }
+  try {
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+      return;
+    }
+  } catch (e) {
+    console.warn("Direct blob download failed, falling back to anchor:", e);
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 export async function saveMangaToGallery(appRef) {
   const app = appRef || window.App;
   initMangaStudio(app);
   const st = app.state.manga;
-  if (!st.sourcePath && !st.sourceDataUrl) {
+  if (!st || (!st.sourcePath && !st.sourceDataUrl && !st.resultDataUrl)) {
     toast("warning", "Нет изображения для сохранения");
     return;
   }
 
-  if (st.params.mode === "ai_manga" || st.params.mode === "ai_manga_finish") {
+  const p = st.params || {};
+  const isAi = (p.mode === "ai_manga" || p.mode === "ai_manga_finish") || Boolean(p.ai_enabled);
+
+  if (isAi) {
+    if (st.resultDataUrl) {
+      toast("success", "Результат генерации уже сохранён в галерее ✓");
+      if (typeof app.loadHistory === "function") app.loadHistory();
+      return;
+    }
     await runMangaPipeline(true, app);
     return;
   }
@@ -471,6 +515,7 @@ export async function saveMangaToGallery(appRef) {
       if (imgEl) imgEl.src = res.preview_data_url;
       const savedMsg = window.t ? (window.t("manga.saved_toast") || "Сохранено в галерею") : "Сохранено в галерею";
       toast("success", `${savedMsg}: ${res.saved.name} ✓`);
+      if (typeof app.loadHistory === "function") app.loadHistory();
     }
   } catch (e) {
     toast("error", "Ошибка сохранения: " + e.message);
@@ -481,17 +526,52 @@ export async function downloadMangaPng(appRef) {
   const app = appRef || window.App;
   initMangaStudio(app);
   const st = app.state.manga;
-  if (!st || (!st.sourcePath && !st.sourceDataUrl)) {
+  if (!st || (!st.sourcePath && !st.sourceDataUrl && !st.resultDataUrl)) {
     toast("warning", "Сначала выберите или загрузите изображение");
     return;
   }
 
+  const p = st.params || {};
+  const isAi = (p.mode === "ai_manga" || p.mode === "ai_manga_finish") || Boolean(p.ai_enabled);
+
+  // В AI-режимах скачиваем сгенерированный результат напрямую, без вызова CPU-пайплайна на оригинале
+  if (isAi) {
+    if (!st.resultDataUrl) {
+      toast("warning", "Сначала сгенерируйте мангу через AI (нажмите «Сгенерировать»)");
+      return;
+    }
+
+    const loadOverlay = document.getElementById("manga-loading-overlay");
+    if (loadOverlay) loadOverlay.style.display = "flex";
+    toast("info", "Скачивание сгенерированной AI-манги...");
+
+    try {
+      let downloadFilename = `manga_ai_${Date.now()}.png`;
+      try {
+        const u = new URL(st.resultDataUrl, window.location.href);
+        const parts = u.pathname.split("/");
+        const last = parts[parts.length - 1];
+        if (last && (last.endsWith(".png") || last.endsWith(".jpg") || last.endsWith(".webp"))) {
+          downloadFilename = decodeURIComponent(last);
+        }
+      } catch (_) {}
+
+      await triggerMangaDownload(st.resultDataUrl, downloadFilename);
+      toast("success", `Скачано: ${downloadFilename} ✓`);
+    } catch (e) {
+      toast("error", "Ошибка скачивания: " + e.message);
+    } finally {
+      if (loadOverlay) loadOverlay.style.display = "none";
+    }
+    return;
+  }
+
+  // Алгоритмический режим Manga Lite / Finish Only на CPU
   const loadOverlay = document.getElementById("manga-loading-overlay");
   if (loadOverlay) loadOverlay.style.display = "flex";
   toast("info", "Рендеринг в полном разрешении для скачивания...");
 
   try {
-    const p = { ...st.params };
     const res = await apiPost("/api/manga/process", {
       image_path: st.sourcePath,
       image_data: st.sourceDataUrl,
@@ -502,12 +582,11 @@ export async function downloadMangaPng(appRef) {
 
     const src = res?.preview_data_url || st.resultDataUrl;
     if (!src) throw new Error("Не удалось получить результат рендеринга");
+    st.resultDataUrl = src;
 
-    const a = document.createElement("a");
-    a.href = src;
-    a.download = `manga_${res.width || "full"}x${res.height || "res"}_${Date.now()}.png`;
-    a.click();
-    toast("success", `Скачано в оригинальном разрешении ${res.width}×${res.height} px ✓`);
+    const downloadFilename = `manga_${res.width || "full"}x${res.height || "res"}_${Date.now()}.png`;
+    await triggerMangaDownload(src, downloadFilename);
+    toast("success", `Скачано в оригинальном разрешении ${res.width || ""}×${res.height || ""} px ✓`);
   } catch (e) {
     toast("error", "Ошибка скачивания: " + e.message);
   } finally {

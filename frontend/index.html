@@ -4771,7 +4771,7 @@
 
   <script src="/js/dropzone.js?v=20261022_01"></script>
 
-  <script src="/js/app.js?v=20261107_02"></script>
+  <script src="/js/app.js?v=20261107_03"></script>
 
   <script>
 
@@ -5294,21 +5294,97 @@
 
     }
 
-    function downloadImage() {
+    async function downloadImage() {
 
       const img = document.getElementById("preview-img");
 
-      if (img && img.src) {
+      if (!img || !img.src) return;
+
+      const src = img.src;
+
+      let filename = "lazysd_" + Date.now() + ".png";
+
+      try {
+
+        const u = new URL(src, window.location.href);
+
+        const parts = u.pathname.split("/");
+
+        const last = parts[parts.length - 1];
+
+        if (last && (last.endsWith(".png") || last.endsWith(".jpg") || last.endsWith(".webp"))) {
+
+          filename = decodeURIComponent(last);
+
+        }
+
+      } catch (_) {}
+
+
+
+      if (src.startsWith("data:")) {
 
         const a = document.createElement("a");
 
-        a.href = img.src;
+        a.href = src;
 
-        a.download = "lazysd_" + Date.now() + ".png";
+        a.download = filename;
+
+        document.body.appendChild(a);
 
         a.click();
 
+        document.body.removeChild(a);
+
+        return;
+
       }
+
+
+
+      try {
+
+        const resp = await fetch(src);
+
+        if (resp.ok) {
+
+          const blob = await resp.blob();
+
+          const blobUrl = URL.createObjectURL(blob);
+
+          const a = document.createElement("a");
+
+          a.href = blobUrl;
+
+          a.download = filename;
+
+          document.body.appendChild(a);
+
+          a.click();
+
+          document.body.removeChild(a);
+
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+
+          return;
+
+        }
+
+      } catch (_) {}
+
+
+
+      const a = document.createElement("a");
+
+      a.href = src;
+
+      a.download = filename;
+
+      document.body.appendChild(a);
+
+      a.click();
+
+      document.body.removeChild(a);
 
     }
 
