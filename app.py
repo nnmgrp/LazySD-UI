@@ -13632,17 +13632,39 @@ def create_app() -> FastAPI:
 
 
 
+        def _is_transformer_installed(tr):
+            if not tr or not getattr(tr, "path", None):
+                return False
+            from backend.cache import CacheManager
+            from backend.settings import get_settings
+            st_cfg = get_settings()
+            cache_mgr = CacheManager(st_cfg.models_dir)
+            primary_r = getattr(model, "sources", {}).get("primary", {}).get("repo_id") if isinstance(getattr(model, "sources", None), dict) else None
+            if not primary_r and hasattr(model, "sources") and getattr(model.sources, "primary", None):
+                primary_r = getattr(model.sources.primary, "repo_id", None)
+            cand_dirs = [cache_mgr.repo_dir_for(primary_r)] if primary_r else []
+            cand_dirs.extend([st_cfg.models_dir / "cache", st_cfg.models_dir])
+            base = Path(tr.path).name
+            for cd in cand_dirs:
+                if (cd / tr.path).exists() or (cd / base).exists():
+                    return True
+                if (cd / "diffusion_models" / base).exists() or (cd / "diffusion_models" / tr.path).exists():
+                    return True
+            return False
+
+        # If no explicit variant was chosen or the selected one isn't downloaded, prefer an installed variant
+        if not selected or not _is_transformer_installed(selected):
+            candidates = transformers_for_gpu or getattr(model, "transformers", [])
+            for cand in candidates:
+                if _is_transformer_installed(cand):
+                    selected = cand
+                    break
+
         if not selected and transformers_for_gpu:
-
-
 
             selected = transformers_for_gpu[0]
 
-
-
         if not selected and model.transformers:
-
-
 
             selected = model.transformers[0]
 

@@ -694,6 +694,9 @@ class SDCppWorker:
                 for te in getattr(model, "text_encoders", [])
                 if isinstance(te.get("source"), dict) and te.get("source", {}).get("repo_id")
             ]
+            vae_repo = model.engine_args.get("vae_repo") if getattr(model, "engine_args", None) else None
+            if vae_repo:
+                sec_repos.append(vae_repo)
             for cand_repo in sec_repos:
                 alt_dir = cache.repo_dir_for(cand_repo)
                 if (alt_dir / rel_or_abs).exists():
@@ -729,6 +732,17 @@ class SDCppWorker:
                         break
             if diff_rel:
                 diff_path = resolve_model_file(diff_rel)
+                if not diff_path.exists() and getattr(model, "transformers", None):
+                    # Smart fallback: check if another registered transformer variant is installed on disk
+                    for t in model.transformers:
+                        cand = resolve_model_file(t.path)
+                        if cand.exists():
+                            logger.info(
+                                f"[sd_cpp] Requested diffusion model {diff_path.name} not found; "
+                                f"falling back to installed variant {t.path} ({t.id})"
+                            )
+                            diff_path = cand
+                            break
                 if not diff_path.exists():
                     raise RuntimeError(
                         f"Diffusion model file not found: {diff_path.name}. "
@@ -822,6 +836,9 @@ class SDCppWorker:
             if vae_rel:
                 vae_search_paths = [
                     resolve_model_file(vae_rel),
+                    settings.models_dir / "cache" / "FLUX.2-VAE" / vae_rel,
+                    settings.models_dir / "cache" / "FLUX.2-VAE" / "split_files" / "vae" / vae_rel,
+                    settings.models_dir / "cache" / "FLUX.2-VAE" / "flux2-vae.safetensors",
                     settings.models_dir / "Klein-4B-Series" / "klein-4b-series-50x-above-base-model" / "vae" / "diffusion_pytorch_model.safetensors",
                     settings.models_dir / "Klein-9B-Series" / "klein-9b-series-50x-above-base-model" / "vae" / "diffusion_pytorch_model.safetensors",
                     settings.models_dir / "FLUX.1-schnell-gguf" / "ae.safetensors",

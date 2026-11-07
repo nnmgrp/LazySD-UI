@@ -19,7 +19,7 @@
     }
   },
   "engine_args": {
-    "diffusion_model": "flux-2-klein-9b-Q4_K_M.gguf",
+    "diffusion_model": "flux-2-klein-9b-Q4_K_S.gguf",
     "llm": "Qwen3-8B-Q4_K_M.gguf",
     "vae": "flux2-vae.safetensors",
     "vae_repo": "unsloth/FLUX.2-VAE",
@@ -60,10 +60,10 @@
       "path": "flux-2-klein-9b-Q4_K_M.gguf",
       "tier": "universal",
       "backend": "sd_cpp",
-      "steps": 20,
+      "steps": 4,
       "size_gb": 5.67,
       "size_bytes": 6088294400,
-      "recommended": true,
+      "recommended": false,
       "note": "Unsloth Q4_K_M medium quantization (recommended)"
     },
     {
@@ -71,7 +71,7 @@
       "path": "flux-2-klein-9b-Q4_0.gguf",
       "tier": "universal",
       "backend": "sd_cpp",
-      "steps": 20,
+      "steps": 4,
       "size_gb": 5.62,
       "size_bytes": 6034554880,
       "recommended": false,
@@ -82,10 +82,10 @@
       "path": "flux-2-klein-9b-Q4_K_S.gguf",
       "tier": "universal",
       "backend": "sd_cpp",
-      "steps": 20,
+      "steps": 4,
       "size_gb": 5.83,
       "size_bytes": 6260105216,
-      "recommended": false,
+      "recommended": true,
       "note": "Unsloth Q4_K_S compact quantization"
     }
   ],
@@ -98,7 +98,7 @@
   "scheduler_presets": {
     "default": {
       "sampler": "euler",
-      "steps": 20,
+      "steps": 4,
       "cfg": 1.0
     }
   }
