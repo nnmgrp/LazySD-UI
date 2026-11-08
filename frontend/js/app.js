@@ -1046,7 +1046,26 @@ const App = {
 
     const select = document.getElementById("model-select");
     if (select) {
+      const exists = Array.from(select.options).some(o => o.value === modelId);
+      if (!exists) {
+        const opt = document.createElement("option");
+        opt.value = modelId;
+        opt.textContent = model ? `${model.installed ? '✓ ' : '⬇ '}${model.name} (${model.family})` : modelId;
+        select.appendChild(opt);
+      }
       select.value = modelId;
+    }
+
+    const quickSelect = document.getElementById("dock-model-quick-select");
+    if (quickSelect) {
+      const existsQ = Array.from(quickSelect.options).some(o => o.value === modelId);
+      if (!existsQ) {
+        const opt = document.createElement("option");
+        opt.value = modelId;
+        opt.textContent = model ? `${model.installed ? '✓ ' : '⬇ '}${model.name} (${model.family})` : modelId;
+        quickSelect.appendChild(opt);
+      }
+      quickSelect.value = modelId;
     }
 
     if (this.state.currentTab !== "generate" && this.state.currentTab !== "inpaint") {
@@ -1055,8 +1074,9 @@ const App = {
 
     await this.onModelChange();
     this.updateModelTrigger();
+    this.updateDockPills();
     this.closeModelPickerModal();
-    this.toast("info", `${t("models.active_model")}: ${modelId}`);
+    this.toast("info", `${t("models.active_model")}: ${model ? model.name : modelId}`);
   },
 
   async renderModelsTab() {
@@ -1519,7 +1539,8 @@ const App = {
         : (vm.provider === "nunchaku" ? ["nunchaku"] : ["ollama", "gguf"]);
       const providerLabels = {
         ollama: "🦙 Ollama (VLM Сервер)",
-        gguf: "📦 GGUF (HF Кэш / SD.CPP)",
+        gguf: "📦 GGUF (HF Кэш / RAM & GPU)",
+        cpu_ram: "🧠 RAM-Only (CPU 0 MB VRAM)",
         nunchaku: "⚡ Nunchaku SVDQ INT4",
       };
       const providerSelectHtml = `<select class="vision-card-provider-select" data-vision-id="${escapeHtml(vm.id)}" onchange="App.onVisionCardProviderChange(this.dataset.visionId, this.value)" style="height: 24px; font-size: 11.5px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: 5px; padding: 0 6px; cursor: pointer;">
@@ -1528,7 +1549,9 @@ const App = {
 
       const caps = Array.isArray(vm.capabilities) ? vm.capabilities : [];
       const usedTags = [];
-      if (caps.includes("flux3_pup")) usedTags.push("FLUX.3 Prompt Upsampler (✨ PUP)");
+      if (caps.includes("copilot")) usedTags.push("💬 AI Copilot & Router");
+      if (caps.includes("ram_mode")) usedTags.push("🧠 RAM-Only (0 MB VRAM)");
+      if (caps.includes("flux3_pup")) usedTags.push("FLUX Prompt Upsampler (✨ PUP / PiD)");
       if (caps.includes("vision")) usedTags.push("Inpaint Помощник промпта (VLM)");
       const usedByHtml = usedTags.length
         ? `<div class="encoder-used-by">${usedTags.map(tag => `<span class="encoder-used-tag">${escapeHtml(tag)}</span>`).join("")}</div>`
@@ -2200,11 +2223,30 @@ const App = {
     const pill = document.getElementById("dock-neg-pill");
     if (!content) return;
     const isHidden = content.style.display === "none";
-    content.style.display = isHidden ? "block" : "none";
-    if (pill) pill.classList.toggle("active", isHidden);
+    this.toggleNewDockNegative(isHidden);
     if (isHidden && input) {
       input.focus();
     }
+  },
+
+  toggleNewDockNegative(forceState = null) {
+    const ndNeg = document.getElementById("new-dock-negative");
+    const content = document.getElementById("negative-prompt-content");
+    const ndPill = document.getElementById("new-dock-negative-pill");
+    const dockPill = document.getElementById("dock-neg-pill");
+    const summary = document.getElementById("new-dock-negative-summary");
+    const dot = document.getElementById("negative-prompt-dot");
+
+    const curOpen = (ndNeg && ndNeg.style.display !== "none" && ndNeg.style.display !== "") ||
+                    (content && content.style.display !== "none" && content.style.display !== "");
+    const isOpen = typeof forceState === "boolean" ? forceState : !curOpen;
+
+    if (ndNeg) ndNeg.style.display = isOpen ? "flex" : "none";
+    if (content) content.style.display = isOpen ? "block" : "none";
+    if (ndPill) ndPill.classList.toggle("active", isOpen);
+    if (dockPill) dockPill.classList.toggle("active", isOpen);
+    if (summary) summary.textContent = isOpen ? "Neg (On)" : "Neg (Off)";
+    if (dot) dot.style.display = isOpen ? "inline-block" : "none";
   },
 
   async saveQwenVae(value) {
@@ -2221,9 +2263,18 @@ const App = {
 
   async onModelChange(preferredVariantId = null) {
     const select = document.getElementById("model-select");
-    if (!select || !select.value) return;
-
-    const modelId = select.value;
+    const modelId = (select && select.value) ? select.value : this.state.selectedModel;
+    if (!modelId) return;
+    if (select && select.value !== modelId) {
+      const exists = Array.from(select.options).some(o => o.value === modelId);
+      if (!exists) {
+        const opt = document.createElement("option");
+        opt.value = modelId;
+        opt.textContent = modelId;
+        select.appendChild(opt);
+      }
+      select.value = modelId;
+    }
     const requestId = ++this.state.modelChangeRequestId;
     this.state.selectedModel = modelId;
 
@@ -3085,6 +3136,9 @@ const App = {
           this.stopPolling();
           this.setGenerating(false);
           this.showPreview(status.image_path);
+          if (window.Copilot && typeof window.Copilot.appendImageCard === "function") {
+            window.Copilot.appendImageCard(status.image_path, status.seed, status.steps);
+          }
           if (status.diagnostics) {
             console.info("[QuantFunc Telemetry]", status.diagnostics);
             const d = status.diagnostics;
@@ -5635,6 +5689,10 @@ const App = {
       const path = pathParts.join("::").replace(/\\/g, "/").replace(/^\/+/, "");
       if (repo.includes("/") && path) return { repo_id: repo, path };
     }
+    // Local weight file (used by the base-model transformer picker).
+    if (/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(text)) {
+      return { repo_id: "", path: text.replace(/\\/g, "/") };
+    }
     return null;
   },
 
@@ -5662,10 +5720,62 @@ const App = {
       });
       const existingModel = (this.state.models || []).find(m => m.id === modelId);
       const existingVae = existingModel?.vae || (Array.isArray(existingModel?.vae_files) ? existingModel.vae_files[0] : null);
+      const existingTransformers = Array.isArray(existingModel?.transformers) ? existingModel.transformers : [];
+      const editorEngine = card.engine || "sd_cpp";
+      const defaultSteps = Number(card.scheduler_presets?.default?.steps || 20);
+      const transformerIdFromPath = (path, fallback) => String(path || "").split("/").pop()
+        .replace(/\.[^.]+$/, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "") || fallback;
+      let editorTransformers = (Array.isArray(card.transformers) ? card.transformers : [])
+        .filter(tr => tr && typeof tr === "object" && (tr.path || tr.file))
+        .map((tr, idx) => {
+          const path = String(tr.path || tr.file || "").replace(/\\/g, "/");
+          const matched = existingTransformers.find(v => v.id === tr.id || v.path === path);
+          return {
+            ...tr,
+            id: String(tr.id || transformerIdFromPath(path, `transformer_${idx + 1}`)),
+            name: tr.name || "",
+            path,
+            repo_id: tr.repo_id || card.repo_id || "",
+            tier: tr.tier || "universal",
+            backend: tr.backend || editorEngine,
+            steps: Number(tr.steps || defaultSteps),
+            size_gb: Number(tr.size_gb || 0),
+            recommended: Boolean(tr.recommended),
+            note: tr.note || "",
+            installed: typeof tr.installed === "boolean" ? tr.installed : Boolean(matched?.installed),
+          };
+        });
+      if (!editorTransformers.length) {
+        const primaryPath = String(args.diffusion_model || args.model || args.checkpoint || "").replace(/\\/g, "/");
+        if (primaryPath) {
+          const matched = existingTransformers.find(v => v.path === primaryPath);
+          editorTransformers = [{
+            id: transformerIdFromPath(primaryPath, "primary"),
+            name: "",
+            path: primaryPath,
+            repo_id: card.repo_id || "",
+            tier: "universal",
+            backend: editorEngine,
+            steps: defaultSteps,
+            size_gb: 0,
+            recommended: true,
+            note: "",
+            installed: Boolean(matched?.installed) || Boolean(existingModel?.installed && existingModel?.model_path === primaryPath),
+          }];
+        }
+      }
+      if (editorTransformers.length && !editorTransformers.some(tr => tr.recommended)) {
+        editorTransformers[0].recommended = true;
+      }
       this.state.modelCardEditor = {
         modelId,
+        engine: editorEngine,
         repoId: card.repo_id || "",
         manifest: card,
+        transformers: editorTransformers,
         te: textEncoders.map(te => {
           const matched = (existingModel?.text_encoders || []).find(e => e.id === te.id || e.path === te.path || e.file === te.file);
           return {
@@ -5708,6 +5818,8 @@ const App = {
       if (statusEl) statusEl.textContent = t("models.card_editor.repo_hint");
       const suggestionsEl = document.getElementById("model-card-editor-suggestions");
       if (suggestionsEl) suggestionsEl.innerHTML = "";
+      const transformerRef = document.getElementById("model-card-editor-transformer-ref");
+      if (transformerRef) transformerRef.value = "";
 
       this.renderModelCardEditorComponents();
       document.getElementById("model-card-editor-modal").style.display = "flex";
@@ -5726,13 +5838,45 @@ const App = {
   renderModelCardEditorComponents() {
     const editor = this.state.modelCardEditor;
     if (!editor) return;
+    const transformersList = document.getElementById("model-card-editor-transformers-list");
     const teList = document.getElementById("model-card-editor-te-list");
     const vaeList = document.getElementById("model-card-editor-vae-list");
     const auxList = document.getElementById("model-card-editor-aux-list");
+    const transformersCount = document.getElementById("model-card-editor-transformers-count");
     const teCount = document.getElementById("model-card-editor-te-count");
     const auxCount = document.getElementById("model-card-editor-aux-count");
+    const transformerItems = Array.isArray(editor.transformers) ? editor.transformers : [];
+    if (transformersCount) transformersCount.textContent = String(transformerItems.length);
     if (teCount) teCount.textContent = String(editor.te.length);
     if (auxCount) auxCount.textContent = String(editor.aux.length);
+
+    if (transformersList) {
+      transformersList.innerHTML = transformerItems.length
+        ? transformerItems.map((tr, idx) => {
+            const fileName = String(tr.path || "").split("/").pop() || tr.id || t("models.card_editor.transformer_label");
+            const title = tr.name || fileName;
+            const tech = [
+              tr.repo_id,
+              tr.name ? tr.path : "",
+              tr.backend,
+              tr.size_gb ? `${tr.size_gb} GB` : "",
+              tr.steps ? t("models.card_editor.transformer_steps", { count: tr.steps }) : "",
+              tr.note,
+            ].filter(Boolean).join(" · ");
+            return `
+              <div class="component-item">
+                <div class="component-info">
+                  <span class="component-name">${escapeHtml(title)} ${tr.recommended ? `<span class="component-primary">${escapeHtml(t("models.card_editor.primary"))}</span>` : ""} ${tr.installed ? `<span class="component-state installed">${ICON_CHECK} ${escapeHtml(t("models.card_editor.in_cache"))}</span>` : `<span class="component-state missing">${ICON_DOWNLOAD} ${escapeHtml(t("models.card_editor.not_installed"))}</span>`}</span>
+                  <span class="component-sub" title="${escapeHtml(tech)}">${escapeHtml(tech)}</span>
+                </div>
+                <div class="component-actions">
+                  <button type="button" class="dock-ctrl-btn" onclick="App.makeCardTransformerPrimary(${idx})" title="${escapeHtml(t("models.card_editor.make_primary_transformer"))}">★</button>
+                  <button type="button" class="dock-ctrl-btn" onclick="App.removeCardComponent('transformer', ${idx})" title="${escapeHtml(t("models.card_editor.remove_transformer"))}">✕</button>
+                </div>
+              </div>`;
+          }).join("")
+        : `<div class="component-empty">${escapeHtml(t("models.card_editor.transformers_empty"))}</div>`;
+    }
 
     if (teList) {
       teList.innerHTML = editor.te.length
@@ -5787,12 +5931,54 @@ const App = {
     this.renderModelCardEditorComponents();
   },
 
+  syncCardTransformerEngineArg(transformer) {
+    const editor = this.state.modelCardEditor;
+    if (!editor || !transformer?.path) return;
+    const engine = document.getElementById("model-card-editor-engine")?.value
+      || editor.engine
+      || editor.manifest?.engine
+      || "sd_cpp";
+    const family = String(document.getElementById("model-card-editor-family")?.value || editor.manifest?.family || "").toLowerCase();
+    if (!editor.manifest) editor.manifest = {};
+    const args = editor.manifest.engine_args && typeof editor.manifest.engine_args === "object"
+      ? editor.manifest.engine_args
+      : (editor.manifest.engine_args = {});
+    if (["sd_cpp", "sdnq", "nunchaku", "orbitquant"].includes(engine)) {
+      args.diffusion_model = transformer.path;
+      if (engine === "sd_cpp" && family === "sdxl") {
+        args.checkpoint = transformer.path;
+        args.model = transformer.path;
+      } else if (family === "sdxl") {
+        args.model = transformer.path;
+      }
+    } else {
+      args.model = transformer.path;
+      delete args.diffusion_model;
+      delete args.checkpoint;
+    }
+  },
+
+  makeCardTransformerPrimary(index) {
+    const editor = this.state.modelCardEditor;
+    if (!editor || !editor.transformers?.[index]) return;
+    editor.transformers.forEach((tr, idx) => { tr.recommended = idx === index; });
+    this.syncCardTransformerEngineArg(editor.transformers[index]);
+    this.renderModelCardEditorComponents();
+  },
+
   removeCardComponent(role, index) {
     const editor = this.state.modelCardEditor;
     if (!editor) return;
     if (role === "te") editor.te.splice(index, 1);
     else if (role === "vae") editor.vae = null;
     else if (role === "aux") editor.aux.splice(index, 1);
+    else if (role === "transformer") {
+      const removed = editor.transformers.splice(index, 1)[0];
+      if (removed?.recommended && editor.transformers.length && !editor.transformers.some(tr => tr.recommended)) {
+        editor.transformers[0].recommended = true;
+        this.syncCardTransformerEngineArg(editor.transformers[0]);
+      }
+    }
     this.renderModelCardEditorComponents();
   },
 
@@ -5800,6 +5986,40 @@ const App = {
     const editor = this.state.modelCardEditor;
     if (!editor || !component || !component.path) return;
     const repo = component.repo_id || editor.repoId || "";
+    if (role === "transformer") {
+      const path = String(component.path || "").replace(/\\/g, "/");
+      if (editor.transformers.some(tr => tr.path === path)) {
+        this.toast("info", t("models.card_editor.transformer_already_added"));
+        return;
+      }
+      let baseId = String(path.split("/").pop() || "transformer").replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "transformer";
+      let trId = baseId;
+      let suffix = 2;
+      while (editor.transformers.some(tr => tr.id === trId)) {
+        trId = `${baseId}_${suffix}`;
+        suffix += 1;
+      }
+      const existingModel = (this.state.models || []).find(m => m.id === editor.modelId);
+      const existingVariant = (existingModel?.transformers || []).find(v => v.path === path);
+      const engine = document.getElementById("model-card-editor-engine")?.value || editor.engine || "sd_cpp";
+      const entry = {
+        id: trId,
+        name: component.name || path.split("/").pop(),
+        path,
+        repo_id: repo,
+        tier: component.tier || "universal",
+        backend: component.backend || engine,
+        steps: Number(component.steps || editor.manifest?.scheduler_presets?.default?.steps || 20),
+        size_gb: Number(component.size_gb || 0),
+        recommended: editor.transformers.length === 0,
+        note: component.note || (component.precision && component.precision !== "custom" ? component.precision : ""),
+        installed: typeof component.installed === "boolean" ? component.installed : Boolean(existingVariant?.installed),
+      };
+      editor.transformers.push(entry);
+      if (entry.recommended) this.syncCardTransformerEngineArg(entry);
+      this.renderModelCardEditorComponents();
+      return;
+    }
     if (role === "vae") {
       editor.vae = {
         repo_id: repo,
@@ -5843,7 +6063,13 @@ const App = {
   },
 
   addCardComponentFromInput(role) {
-    const inputId = role === "te" ? "model-card-editor-te-ref" : role === "vae" ? "model-card-editor-vae-ref" : "model-card-editor-aux-ref";
+    const inputId = role === "transformer"
+      ? "model-card-editor-transformer-ref"
+      : role === "te"
+        ? "model-card-editor-te-ref"
+        : role === "vae"
+          ? "model-card-editor-vae-ref"
+          : "model-card-editor-aux-ref";
     const input = document.getElementById(inputId);
     const parsed = this.parseComponentRef(input?.value || "");
     if (!parsed) {
@@ -5866,28 +6092,33 @@ const App = {
     try {
       const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(editor.repoId)}`);
       editor.repoInfo = info;
+      const transformerFiles = info.diffusion_files || [];
       const teFiles = info.text_encoder_files || [];
       const vaeFiles = info.vae_files || [];
       const auxFiles = info.aux_files || [];
       if (statusEl) {
         const parts = t("models.card_editor.repo_counts", {
+          transformers: transformerFiles.length,
           te: teFiles.length,
           vae: vaeFiles.length,
           aux: auxFiles.length,
         });
+        const foundAny = transformerFiles.length + teFiles.length + vaeFiles.length + auxFiles.length > 0;
         statusEl.innerHTML = escapeHtml(t("models.card_editor.repo_found", {
-          icon: teFiles.length ? "✅" : "⚠️",
+          icon: foundAny ? "✅" : "⚠️",
           parts,
         })) + (teFiles.length ? "" : escapeHtml(t("models.card_editor.te_not_found")));
       }
       if (!suggestionsEl) return;
       const rows = [];
       const pushSuggestion = (role, file, label) => {
-        const exists = role === "te"
-          ? editor.te.some(te => te.path === file.path)
-          : role === "vae"
-            ? editor.vae?.path === file.path
-            : editor.aux.some(aux => aux.path === file.path);
+        const exists = role === "transformer"
+          ? editor.transformers.some(tr => tr.path === file.path)
+          : role === "te"
+            ? editor.te.some(te => te.path === file.path)
+            : role === "vae"
+              ? editor.vae?.path === file.path
+              : editor.aux.some(aux => aux.path === file.path);
         const size = Number(file.size_gb || 0);
         rows.push(`
           <div class="card-editor-suggestion">
@@ -5897,6 +6128,7 @@ const App = {
               : `<button type="button" class="dock-mini-btn" data-role="${role}" data-repo="${escapeHtml(editor.repoId)}" data-path="${escapeHtml(file.path)}" data-size="${size}" onclick="App.addCardSuggestion(this.dataset.role, this.dataset.repo, this.dataset.path, this.dataset.size)">${escapeHtml(t("models.card_editor.add"))}</button>`}
           </div>`);
       };
+      transformerFiles.slice(0, 12).forEach(file => pushSuggestion("transformer", file, t("models.card_editor.transformer_label")));
       teFiles.slice(0, 8).forEach(file => pushSuggestion("te", file, t("models.card_editor.encoder_label")));
       vaeFiles.slice(0, 4).forEach(file => pushSuggestion("vae", file, "VAE"));
       auxFiles.slice(0, 8).forEach(file => pushSuggestion("aux", file, t("models.card_editor.sidecar_label")));
@@ -5921,16 +6153,33 @@ const App = {
     const editor = this.state.modelCardEditor;
     if (!editor) return;
     const value = id => document.getElementById(id)?.value ?? "";
+    const engine = value("model-card-editor-engine");
     const payload = {
       name: value("model-card-editor-name").trim(),
       family: value("model-card-editor-family").trim(),
-      engine: value("model-card-editor-engine"),
+      engine,
       pipeline: value("model-card-editor-pipeline"),
       steps: parseInt(value("model-card-editor-steps") || "20", 10),
       cfg: parseFloat(value("model-card-editor-cfg") || "1.0"),
       license: value("model-card-editor-license").trim(),
       base_repo_id: value("model-card-editor-base-repo").trim(),
       description: value("model-card-editor-description").trim(),
+      transformers: (editor.transformers || []).map(tr => {
+        const { installed, ...transformerPayload } = tr;
+        return {
+          ...transformerPayload,
+          id: tr.id,
+          name: tr.name || "",
+          path: tr.path,
+          repo_id: tr.repo_id || "",
+          tier: tr.tier || "universal",
+          backend: tr.backend || engine || "sd_cpp",
+          steps: Number(tr.steps || 20),
+          size_gb: Number(tr.size_gb || 0),
+          recommended: Boolean(tr.recommended),
+          note: tr.note || "",
+        };
+      }),
       text_encoders: editor.te.map(te => ({
         id: te.id,
         name: te.name,
@@ -5966,11 +6215,13 @@ const App = {
     const modal = document.getElementById("component-picker-modal");
     if (modal) modal.style.display = "flex";
     const title = document.getElementById("component-picker-title");
-    if (title) title.textContent = role === "vae"
-      ? t("models.component_picker.title_vae")
-      : role === "aux"
-        ? t("models.component_picker.title_aux")
-        : t("models.component_picker.title_te");
+    if (title) title.textContent = role === "transformer"
+      ? t("models.component_picker.title_transformer")
+      : role === "vae"
+        ? t("models.component_picker.title_vae")
+        : role === "aux"
+          ? t("models.component_picker.title_aux")
+          : t("models.component_picker.title_te");
     const search = document.getElementById("component-picker-search");
     if (search) search.value = "";
     const results = document.getElementById("component-picker-results");
@@ -5982,9 +6233,11 @@ const App = {
     const manual = document.getElementById("component-picker-manual");
     if (manual) {
       manual.value = "";
-      manual.placeholder = role === "vae"
-        ? t("models.component_picker.manual_vae")
-        : t("models.component_picker.manual_te");
+      manual.placeholder = role === "transformer"
+        ? t("models.component_picker.manual_transformer")
+        : role === "vae"
+          ? t("models.component_picker.manual_vae")
+          : t("models.component_picker.manual_te");
     }
     if (this.state.componentPicker.repoId) this.inspectComponentRepo();
   },
@@ -5999,7 +6252,13 @@ const App = {
     const picker = this.state.componentPicker;
     if (!picker) return;
     const input = document.getElementById("component-picker-search");
-    const query = (input?.value || "").trim() || (picker.role === "vae" ? "flux vae" : "flux text encoder");
+    const query = (input?.value || "").trim() || (
+      picker.role === "vae"
+        ? "flux vae"
+        : picker.role === "transformer"
+          ? "qwen image gguf"
+          : "flux text encoder"
+    );
     const resultsEl = document.getElementById("component-picker-results");
     if (resultsEl) { resultsEl.style.display = "block"; resultsEl.innerHTML = `<div class="component-empty">${escapeHtml(t("models.component_picker.searching"))}</div>`; }
     try {
@@ -6039,14 +6298,29 @@ const App = {
       const info = await this.apiGet(`/api/hf/repo-tree?repo_id=${encodeURIComponent(repoId)}`);
       picker.repoId = info.repo_id || repoId;
       picker.info = info;
-      const files = picker.role === "vae" ? (info.vae_files || []) : picker.role === "aux" ? (info.aux_files || []) : (info.text_encoder_files || []);
+      const transformerFolders = new Set(["transformer", "transformers", "diffusion_model", "diffusion_models", "unet", "dit"]);
+      const transformerFiles = (info.diffusion_files || []).filter(file => {
+        const path = String(file.path || "").replace(/\\/g, "/");
+        if (!/\.(gguf|safetensors|bin|ckpt)$/i.test(path)) return false;
+        const folders = path.split("/").slice(0, -1).map(part => part.toLowerCase());
+        return folders.length === 0 || folders.some(folder => transformerFolders.has(folder));
+      });
+      const files = picker.role === "transformer"
+        ? transformerFiles
+        : picker.role === "vae"
+          ? (info.vae_files || [])
+          : picker.role === "aux"
+            ? (info.aux_files || [])
+            : (info.text_encoder_files || []);
       if (!filesEl) return;
       if (!files.length) {
-        const what = picker.role === "vae"
-          ? t("models.component_picker.role_vae")
-          : picker.role === "aux"
-            ? t("models.component_picker.role_aux")
-            : t("models.component_picker.role_te");
+        const what = picker.role === "transformer"
+          ? t("models.component_picker.role_transformer")
+          : picker.role === "vae"
+            ? t("models.component_picker.role_vae")
+            : picker.role === "aux"
+              ? t("models.component_picker.role_aux")
+              : t("models.component_picker.role_te");
         filesEl.innerHTML = `<div class="component-empty">${escapeHtml(t("models.component_picker.no_files", { what }))}</div>`;
         return;
       }
@@ -6912,6 +7186,99 @@ const App = {
       const el3 = document.getElementById(`lora-weight-nd-${name}`);
       if (el3) el3.textContent = item.strength.toFixed(2);
     }
+  },
+
+  activateLoraByName(nameOrId, strength = 0.8, mode = "append") {
+    if (mode === "clear") {
+      this.state.activeLoras = [];
+      this.renderLoraUI();
+      this.updateDockPills?.();
+      return null;
+    }
+    const raw = String(nameOrId || "").trim();
+    if (!raw) return null;
+    const q = raw.toLowerCase();
+    const qStem = q.replace(/\.[^/.]+$/, "");
+    const lib = Array.isArray(this.state.loraLibrary) ? this.state.loraLibrary : [];
+
+    let item = lib.find(it => {
+      const n = String(it.name || "").toLowerCase();
+      const nStem = n.replace(/\.[^/.]+$/, "");
+      const lbl = String(it.label || "").toLowerCase();
+      const pth = String(it.path || "").toLowerCase();
+      const trg = String(it.trigger || "").toLowerCase();
+      return n === q || nStem === q || nStem === qStem || lbl === q || pth === q || (trg && trg === q);
+    });
+
+    if (!item && qStem.length >= 2) {
+      item = lib.find(it => {
+        const n = String(it.name || "").toLowerCase();
+        const nStem = n.replace(/\.[^/.]+$/, "");
+        const lbl = String(it.label || "").toLowerCase();
+        const pth = String(it.path || "").toLowerCase();
+        const trg = String(it.trigger || "").toLowerCase();
+        return n.includes(qStem) || qStem.includes(nStem) ||
+               (lbl && (lbl.includes(qStem) || qStem.includes(lbl))) ||
+               (pth && pth.includes(qStem)) ||
+               (trg && (trg.includes(qStem) || qStem.includes(trg)));
+      });
+    }
+
+    if (!item) return null;
+
+    let numStrength = parseFloat(strength);
+    if (!Number.isFinite(numStrength)) numStrength = 0.8;
+    numStrength = Math.max(-2.0, Math.min(2.0, Math.round(numStrength * 100) / 100));
+    item.strength = numStrength;
+
+    const existingIdx = this.state.activeLoras.findIndex(l => l.name === item.name);
+    if (mode === "remove") {
+      if (existingIdx >= 0) {
+        this.state.activeLoras.splice(existingIdx, 1);
+      }
+    } else if (existingIdx >= 0) {
+      this.state.activeLoras[existingIdx].strength = numStrength;
+      this.state.activeLoras[existingIdx].info = item;
+    } else {
+      this.state.activeLoras.push({
+        name: item.name,
+        strength: numStrength,
+        info: item,
+      });
+    }
+
+    this.renderLoraUI();
+    this.updateDockPills?.();
+    return item;
+  },
+
+  activateLoraDirect(nameOrId, strength = 0.8) {
+    return this.activateLoraByName(nameOrId, strength, "append");
+  },
+
+  applyLoraBatch(lorasList, mode = "set_active") {
+    if (mode === "clear") {
+      this.state.activeLoras = [];
+      this.renderLoraUI();
+      this.updateDockPills?.();
+      return [];
+    }
+    if (!Array.isArray(lorasList)) return [];
+    if (mode === "set_active" && lorasList.length > 0) {
+      this.state.activeLoras = [];
+    }
+    const matched = [];
+    const subMode = mode === "remove" ? "remove" : "append";
+    lorasList.forEach(l => {
+      if (!l) return;
+      const key = typeof l === "string" ? l : (l.file_name || l.name || l.lora_id || l.id || "");
+      const w = typeof l === "object" ? (l.scale ?? l.strength ?? 0.8) : 0.8;
+      const found = this.activateLoraByName(key, w, subMode);
+      if (found) matched.push(found);
+    });
+    this.renderLoraUI();
+    this.updateDockPills?.();
+    return matched;
   },
 
   openLoraModal() {
@@ -15057,6 +15424,7 @@ window.addEventListener("qf:locale-changed", () => {
   App.updateInpaintCropStatus();
   App.updateInpaintStatus();
   App.renderInpaintLayersUI();
+  if (App.state.modelCardEditor) App.renderModelCardEditorComponents();
 });
 
 // Export for inline scripts

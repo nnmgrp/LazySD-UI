@@ -10,7 +10,9 @@
 
   <title>LazySD UI</title>
 
-  <link rel="stylesheet" href="/css/styles.css?v=20261107_02">
+  <link rel="stylesheet" href="/css/styles.css?v=20261108_05">
+
+  <link rel="stylesheet" href="/css/copilot.css?v=20261108_05">
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%237C3AED'/%3E%3Ctext x='12' y='17' text-anchor='middle' fill='white' font-size='14' font-weight='bold' font-family='Arial'%3EL%3C/text%3E%3C/svg%3E">
 
@@ -101,6 +103,17 @@
           <span id="user-role-title">Хост</span>
 
         </div>
+
+        <button type="button" class="copilot-toggle-btn" id="copilot-toggle-btn" onclick="App.toggleCopilotDrawer()" title="Включить / открыть AI Copilot (Ctrl + Space)">
+          <span>💬</span>
+          <span>Copilot</span>
+          <span class="copilot-mode-badge" id="copilot-toggle-badge">RAM</span>
+        </button>
+
+        <button type="button" class="menubar-pill-btn" id="server-restart-btn" onclick="App.restartServer()" title="Перезапустить сервер (Ctrl+Alt+R)" data-i18n-title="system.restart_title" style="background: rgba(239, 68, 68, 0.14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.32); display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; font-weight: 500;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+          <span data-i18n="system.restart">Перезапуск</span>
+        </button>
 
         <div class="menubar-status">
 
@@ -513,6 +526,10 @@
               <div class="dock-res-grid">
 
                 <button type="button" class="dock-res-chip active" data-res="1024x1024" onclick="App.selectResolutionChip('1024x1024')">1024 × 1024 <small>1:1</small></button>
+
+                <button type="button" class="dock-res-chip" data-res="768x1152" onclick="App.selectResolutionChip('768x1152')">768 × 1152 <small>2:3</small></button>
+
+                <button type="button" class="dock-res-chip" data-res="1152x768" onclick="App.selectResolutionChip('1152x768')">1152 × 768 <small>3:2</small></button>
 
                 <button type="button" class="dock-res-chip" data-res="1152x896" onclick="App.selectResolutionChip('1152x896')">1152 × 896 <small>4:3</small></button>
 
@@ -1307,6 +1324,10 @@
 
                     <option value="1024x1024" data-i18n="controls.resolution.1024">1024 × 1024 (1:1)</option>
 
+                    <option value="768x1152" data-i18n="controls.resolution.768_1152">768 × 1152 (2:3)</option>
+
+                    <option value="1152x768" data-i18n="controls.resolution.1152_768">1152 × 768 (3:2)</option>
+
                     <option value="1152x896" data-i18n="controls.resolution.1152_896">1152 × 896 (4:3)</option>
 
                     <option value="896x1152" data-i18n="controls.resolution.896_1152">896 × 1152 (3:4)</option>
@@ -1314,6 +1335,10 @@
                     <option value="1344x768" data-i18n="controls.resolution.1344_768">1344 × 768 (16:9)</option>
 
                     <option value="768x1344" data-i18n="controls.resolution.768_1344">768 × 1344 (9:16)</option>
+
+                    <option value="832x1216" data-i18n="controls.resolution.832_1216">832 × 1216 (9:13)</option>
+
+                    <option value="1216x832" data-i18n="controls.resolution.1216_832">1216 × 832 (13:9)</option>
 
                     <option value="1536x1536" data-i18n="controls.resolution.1536">1536 × 1536 (1:1 HD)</option>
 
@@ -4771,7 +4796,9 @@
 
   <script src="/js/dropzone.js?v=20261022_01"></script>
 
-  <script src="/js/app.js?v=20261107_03"></script>
+  <script src="/js/app.js?v=20261108_05"></script>
+
+  <script src="/js/copilot.js?v=20261108_05"></script>
 
   <script>
 
@@ -6381,6 +6408,16 @@
         <div id="model-card-editor-suggestions" class="card-editor-suggestions"></div>
       </div>
 
+      <details class="card-editor-section" open>
+        <summary><span data-i18n="models.card_editor.transformers_section">Базовая модель / Диффузионный трансформер (DiT / Checkpoints)</span> (<span id="model-card-editor-transformers-count">0</span>)</summary>
+        <div id="model-card-editor-transformers-list" class="card-editor-component-list"></div>
+        <div class="card-editor-add-row">
+          <input type="text" id="model-card-editor-transformer-ref" placeholder="author/repo::path/to/model.gguf" data-i18n-placeholder="models.card_editor.transformer_placeholder">
+          <button type="button" class="dock-mini-btn" onclick="App.addCardComponentFromInput('transformer')" data-i18n="models.card_editor.add_by_ref">Добавить по ссылке</button>
+          <button type="button" class="dock-mini-btn" onclick="App.openComponentPicker('transformer')" data-i18n="models.card_editor.find_hf">🔎 Найти на HF</button>
+        </div>
+      </details>
+
       <details class="card-editor-section">
         <summary><span data-i18n="models.card_editor.te_section">Текстовые энкодеры</span> (<span id="model-card-editor-te-count">0</span>)</summary>
         <div id="model-card-editor-te-list" class="card-editor-component-list"></div>
@@ -6935,6 +6972,106 @@
     </div>
 
   </div>
+
+  <!-- AI Copilot 480px Slide-Over Drawer -->
+  <div id="copilot-backdrop" onclick="App.toggleCopilotDrawer(false)"></div>
+  <aside id="copilot-drawer" aria-label="AI Copilot">
+    <div class="copilot-header">
+      <div class="copilot-header-left">
+        <span class="copilot-title">💬 AI Copilot & Router</span>
+        <span class="copilot-mode-badge" id="copilot-header-badge" onclick="App.cycleCopilotMode()" title="Кликните для переключения режима памяти (Импульс / RAM / VRAM)" style="cursor: pointer;">⚡ ИМПУЛЬС</span>
+      </div>
+      <div class="copilot-header-actions">
+        <button type="button" class="copilot-icon-btn" id="copilot-settings-btn" onclick="App.toggleCopilotSettings()" title="Настройки модели, контекста и памяти">⚙️</button>
+        <button type="button" class="copilot-icon-btn" onclick="App.clearCopilotChat()" title="Очистить историю диалога">🗑</button>
+        <button type="button" class="copilot-icon-btn" onclick="App.toggleCopilotDrawer(false)" title="Закрыть (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="copilot-model-bar">
+      <label for="copilot-model-select" class="copilot-model-label" title="Активная модель / Instruct энкодер">
+        <span class="copilot-model-icon">🤖</span>
+      </label>
+      <select id="copilot-model-select" class="copilot-model-select" onchange="App.onCopilotModelChange(this.value)" aria-label="Выбор модели Copilot">
+        <option value="">Поиск моделей...</option>
+      </select>
+      <button type="button" class="copilot-model-reload-btn" onclick="App.refreshCopilotModels()" title="Обновить список моделей на диске">🔄</button>
+    </div>
+    <div class="copilot-context-bar">
+      <label for="copilot-pack-select" class="copilot-context-label" title="База знаний по тайтлу / вселенной">📚</label>
+      <select id="copilot-pack-select" class="copilot-pack-select" onchange="Copilot.onPackChange(this.value)" aria-label="База знаний по тайтлу">
+        <option value="">⚪ Без базы (Чистый промпт)</option>
+      </select>
+      <button type="button" class="copilot-mini-btn" id="copilot-pack-view-btn" onclick="Copilot.viewSelectedPack()" title="Просмотреть содержимое выбранной базы знаний" style="display: none;">👁️</button>
+      <label class="copilot-web-toggle" title="Искать описание персонажа/стиля в сети (Wikipedia / DuckDuckGo / Brave), если нет локальной LoRA">
+        <input type="checkbox" id="copilot-web-search-chk" onchange="Copilot.onWebSearchToggle(this.checked)">
+        <span>🌐 Поиск в сети</span>
+      </label>
+    </div>
+    <div class="copilot-status-bar" id="copilot-status-bar">
+      <div class="copilot-status-left">
+        <span class="copilot-status-dot" id="copilot-status-dot"></span>
+        <span class="copilot-status-text" id="copilot-status-text">⚡ Импульс: авто-загрузка и выгрузка (0 МБ в простое)</span>
+      </div>
+      <div class="copilot-status-actions">
+        <button type="button" class="copilot-mini-btn" id="copilot-download-btn" onclick="Copilot.downloadSelectedModel()" title="Скачать выбранную модель из HuggingFace в локальный кэш" style="display: none; background: rgba(16, 185, 129, 0.2); border-color: rgba(16, 185, 129, 0.5); color: #6ee7b7; font-weight: 600;">⬇️ Скачать</button>
+        <button type="button" class="copilot-mini-btn" id="copilot-preload-btn" onclick="Copilot.preloadModel()" title="Предзагрузить модель в память (как в LM Studio)">📥 В память</button>
+        <button type="button" class="copilot-mini-btn" id="copilot-unload-btn" onclick="Copilot.unloadModel()" title="Принудительно выгрузить модель из памяти" style="display: none;">⏏️ Выгрузить</button>
+      </div>
+    </div>
+    <div class="copilot-settings-panel" id="copilot-settings-panel" style="display: none;">
+      <div class="copilot-setting-row">
+        <label for="copilot-mode-select">Режим памяти:</label>
+        <select id="copilot-mode-select" class="copilot-setting-input" onchange="Copilot.updateConfig()">
+          <option value="pulse">⚡ Импульс (Загрузить → Ответить → Выгрузить, 0 МБ)</option>
+          <option value="ram">🧠 Держать в RAM (CPU, 0 МБ VRAM, быстрый отклик)</option>
+          <option value="vram_pingpong">🚀 GPU Импульс (VRAM ускорение + авто-выгрузка)</option>
+          <option value="off">⛔ Выключен (OFF)</option>
+        </select>
+      </div>
+      <div class="copilot-setting-grid">
+        <div class="copilot-setting-row">
+          <label for="copilot-ctx-select">Контекст (ctx_size):</label>
+          <select id="copilot-ctx-select" class="copilot-setting-input" onchange="Copilot.updateConfig()">
+            <option value="2048">2048 токенов (Эконом)</option>
+            <option value="4096" selected>4096 токенов (Стандарт)</option>
+            <option value="8192">8192 токена (Расширенный)</option>
+            <option value="16384">16384 токена (Макс.)</option>
+          </select>
+        </div>
+        <div class="copilot-setting-row">
+          <label for="copilot-temp-input">Температура (<span id="copilot-temp-val">0.3</span>):</label>
+          <input type="range" id="copilot-temp-input" min="0.1" max="1.0" step="0.05" value="0.3" oninput="document.getElementById('copilot-temp-val').textContent=this.value" onchange="Copilot.updateConfig()">
+        </div>
+      </div>
+      <div class="copilot-setting-row" style="margin-top: 6px;">
+        <label>Ключи облачных API (сохраняются локально в браузере):</label>
+        <div class="copilot-api-keys-row">
+          <input type="password" id="copilot-groq-key" class="copilot-setting-input" placeholder="Groq API Key (gsk_...)" onchange="Copilot.saveApiKeys()">
+          <input type="password" id="copilot-gemini-key" class="copilot-setting-input" placeholder="Gemini API Key (AIza...)" onchange="Copilot.saveApiKeys()">
+          <input type="password" id="copilot-brave-key" class="copilot-setting-input" placeholder="Brave Search Key (опц.)" onchange="Copilot.saveApiKeys()">
+        </div>
+      </div>
+    </div>
+    <div class="copilot-messages" id="copilot-messages">
+      <div class="copilot-msg assistant">
+        <div style="font-size: 13px; font-weight: 600;">👋 Привет! Я твой AI Copilot & NeuroRouter.</div>
+        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+          Напиши, что ты хочешь создать, или прикрепи картинку-референс. Я подберу нужные LoRA, разверну промпт под <b>FLUX.2 Klein</b> и выставлю оптимальные параметры.
+        </div>
+      </div>
+    </div>
+    <div id="copilot-attachments" class="copilot-attachments" style="display: none;"></div>
+    <div class="copilot-footer">
+      <div class="copilot-input-row">
+        <label for="copilot-file-input" class="copilot-icon-btn" title="Прикрепить изображение, документ (.txt, .md, .json) или карточку персонажа (можно перетащить файл в чат)" style="cursor: pointer; margin-bottom: 2px;">
+          📎
+          <input type="file" id="copilot-file-input" accept="image/*,.json,.txt,.md,.yaml,.yml,.csv" style="display: none;">
+        </label>
+        <textarea id="copilot-textarea" class="copilot-textarea" placeholder="Опишите сцену или идею... (Enter для отправки)" rows="1"></textarea>
+        <button type="button" class="copilot-send-btn" id="copilot-send-btn" onclick="App.sendCopilotMessage()" title="Отправить (Enter)">➤</button>
+      </div>
+    </div>
+  </aside>
 
 </body>
 

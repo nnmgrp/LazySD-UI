@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-WEIGHT_EXTS = (".gguf", ".safetensors")
+WEIGHT_EXTS = (".gguf", ".safetensors", ".bin", ".ckpt")
 
 SUPPORTED_ENGINES: dict[str, str] = {
     "sd_cpp": "SD.CPP (GGUF / safetensors)",

@@ -137,6 +137,10 @@ class CacheManager:
             pass
         return None
 
+    def is_installed(self, repo_id: str, file_path: str) -> bool:
+        """Fast existence check for a repository file in the local model cache."""
+        found = self.find_existing_file(repo_id, file_path)
+        return bool(found and found.is_file())
 
     # ---------- State inspection ----------
     def check_file(

@@ -180,7 +180,7 @@ def register_custom_model(data: dict) -> dict:
                 if cand.is_file():
                     all_diff_files.append(cand)
         if not all_diff_files:
-            for ext in ("*.gguf", "*.safetensors", "*.ckpt"):
+            for ext in ("*.gguf", "*.safetensors", "*.bin", "*.ckpt"):
                 for f in sorted(base_folder.rglob(ext)):
                     if f.is_file() and detect_file_metadata(f.name)["role"] in ("diffusion_model", "checkpoint"):
                         all_diff_files.append(f.resolve())
@@ -889,6 +889,118 @@ def _clean_size(value: Any) -> float:
     return round(max(0.0, size), 2)
 
 
+def _looks_like_local_path(value: Any) -> bool:
+    """True for absolute local paths (Windows drive / UNC / POSIX)."""
+    raw = str(value or "").strip().strip('"').strip("'").replace("\\", "/")
+    return bool(re.match(r"^(?:[A-Za-z]:/|//|/)", raw))
+
+
+def _clean_transformer_path(value: Any, field: str) -> str:
+    """Accept a repo-relative weight path or an absolute local file path."""
+    from .model_sniffer import WEIGHT_EXTS
+
+    raw = str(value or "").strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError(f"{field}: укажите путь к файлу весов")
+    normalized = raw.replace("\\", "/")
+    if not normalized.lower().endswith(WEIGHT_EXTS):
+        raise ValueError(f"{field}: поддерживаются только файлы весов (.gguf, .safetensors, .bin, .ckpt)")
+    if _looks_like_local_path(normalized):
+        return normalized
+    return _clean_component_path(normalized, field)
+
+
+def _normalize_transformers(items: Any, primary_repo: str, engine: str) -> list[dict[str, Any]]:
+    """Validate the card's base-model variants and keep primary ids stable."""
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ValueError("transformers должен быть списком")
+    if len(items) > 64:
+        raise ValueError("Слишком много вариантов трансформера (максимум 64)")
+
+    transformers: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError("Некорректная запись трансформера")
+
+        field = f"Трансформер #{index + 1}"
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        path = _clean_transformer_path(
+            item.get("path") or item.get("file") or source.get("file_path"),
+            field,
+        )
+
+        raw_repo = source.get("repo_id") or item.get("repo_id") or item.get("repo")
+        if raw_repo:
+            repo = _clean_repo_id(raw_repo, field)
+        elif primary_repo:
+            repo = primary_repo
+        elif _looks_like_local_path(path):
+            repo = ""
+        else:
+            raise ValueError(f"{field}: укажите репозиторий в формате author/repo")
+
+        tr_id = slugify(str(item.get("id") or Path(path).stem)) or f"transformer_{index + 1}"
+        base_id = tr_id
+        suffix = 2
+        while tr_id in used_ids:
+            tr_id = f"{base_id}_{suffix}"
+            suffix += 1
+        used_ids.add(tr_id)
+
+        raw_steps = item.get("steps")
+        if raw_steps in (None, ""):
+            steps = 20
+        else:
+            try:
+                steps = int(raw_steps)
+            except (TypeError, ValueError):
+                raise ValueError(f"{field}: steps должен быть целым числом")
+            if not 1 <= steps <= 150:
+                raise ValueError(f"{field}: steps должен быть от 1 до 150")
+
+        try:
+            size_bytes = max(0, int(item.get("size_bytes") or 0))
+        except (TypeError, ValueError):
+            size_bytes = 0
+        size_gb = _clean_size(item.get("size_gb"))
+        if size_gb <= 0 and size_bytes > 0:
+            size_gb = round(size_bytes / (1024 ** 3), 2)
+
+        entry: dict[str, Any] = {
+            "id": tr_id,
+            "path": path,
+            "repo_id": repo,
+            "tier": str(item.get("tier") or "universal").strip()[:40] or "universal",
+            "backend": str(item.get("backend") or engine or "sd_cpp").strip()[:40] or "sd_cpp",
+            "steps": steps,
+            "size_gb": size_gb,
+            "size_bytes": size_bytes,
+            "recommended": bool(item.get("recommended", False)),
+        }
+
+        name = str(item.get("name") or "").strip()
+        if name:
+            entry["name"] = name[:160]
+        note = str(item.get("note") or "").strip()
+        if note:
+            entry["note"] = note[:500]
+
+        # Preserve registry-specific metadata that the generic editor does not edit.
+        for key in ("prequant", "recommended_for_gpu", "klein_tier", "sha256", "precision"):
+            if key in item:
+                entry[key] = item[key]
+
+        transformers.append(entry)
+
+    if transformers and not any(tr.get("recommended") for tr in transformers):
+        transformers[0]["recommended"] = True
+    return transformers
+
+
 def _normalize_text_encoders(items: Any, primary_repo: str) -> list[dict[str, Any]]:
     if items is None:
         return []
@@ -991,11 +1103,43 @@ def _normalize_aux_files(items: Any, primary_repo: str) -> list[dict[str, Any]]:
 
 
 def _primary_weight_path(manifest: dict[str, Any]) -> str:
-    """Return the first transformer path declared by a model card."""
-    for variant in manifest.get("transformers") or []:
-        if isinstance(variant, dict) and variant.get("path"):
+    """Return the primary (recommended) transformer path of a model card."""
+    variants = [v for v in (manifest.get("transformers") or []) if isinstance(v, dict)]
+    for variant in variants:
+        if variant.get("recommended") and variant.get("path"):
+            return str(variant["path"])
+    for variant in variants:
+        if variant.get("path"):
             return str(variant["path"])
     return ""
+
+
+def _sync_primary_transformer_args(manifest: dict[str, Any], path: str, engine: str) -> None:
+    """Point engine_args at the primary transformer for the selected runtime."""
+    engine_args = manifest.setdefault("engine_args", {})
+    if not isinstance(engine_args, dict):
+        engine_args = {}
+        manifest["engine_args"] = engine_args
+
+    family = str(manifest.get("family") or "").strip().lower()
+    is_sdxl = family in ("sdxl", "sd15", "sd1.5", "sd_1_5")
+
+    if engine in ("sd_cpp", "sdnq", "nunchaku", "orbitquant"):
+        engine_args["diffusion_model"] = path
+        if engine == "sd_cpp" and is_sdxl:
+            # SD.CPP loads SDXL/SD1.5 checkpoints through --model; keep both
+            # manifest keys in sync so card edits cannot drift from runtime args.
+            engine_args["checkpoint"] = path
+        else:
+            engine_args.pop("checkpoint", None)
+        if is_sdxl:
+            engine_args["model"] = path
+        else:
+            engine_args.pop("model", None)
+    else:
+        engine_args["model"] = path
+        engine_args.pop("diffusion_model", None)
+        engine_args.pop("checkpoint", None)
 
 
 def _reconcile_engine_args(manifest: dict[str, Any], engine: str) -> None:
@@ -1139,6 +1283,15 @@ def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> di
             engine_args.pop("aux_files", None)
             engine_args.pop("aux_repo", None)
 
+    if "transformers" in updates:
+        current_engine = str(manifest.get("engine") or "sd_cpp").strip().lower() or "sd_cpp"
+        transformers = _normalize_transformers(updates.get("transformers"), primary_repo, current_engine)
+        manifest["transformers"] = transformers
+        if transformers:
+            primary_tr = next((tr for tr in transformers if tr.get("recommended")), transformers[0])
+            _sync_primary_transformer_args(manifest, primary_tr["path"], current_engine)
+            engine_args = manifest["engine_args"]
+
     manifest["default_cfg"] = round(float(cfg), 3)
     presets = manifest.setdefault("scheduler_presets", {})
     if not isinstance(presets, dict):
@@ -1150,6 +1303,52 @@ def _apply_card_updates(manifest: dict[str, Any], updates: dict[str, Any]) -> di
     presets["default"] = default_preset
 
     return manifest
+
+
+def _transformer_variant_installed(
+    variant: dict[str, Any],
+    primary_repo: str,
+    cache: Any,
+    is_custom: bool = False,
+) -> bool:
+    """Whether a card transformer file is physically present in the local cache."""
+    path = str(variant.get("path") or "").replace("\\", "/").strip()
+    if not path:
+        return False
+
+    if _looks_like_local_path(path):
+        try:
+            if Path(path).is_file():
+                return True
+        except OSError:
+            pass
+
+    repo = str(variant.get("repo_id") or primary_repo or "").strip()
+    if repo:
+        try:
+            if cache.is_installed(repo, path):
+                return True
+        except (AttributeError, OSError):
+            try:
+                found = cache.find_existing_file(repo, path)
+                if found and found.is_file():
+                    return True
+            except Exception:
+                pass
+
+    if is_custom:
+        try:
+            if (get_custom_models_dir() / path).is_file():
+                return True
+        except OSError:
+            pass
+
+    try:
+        if (Path(get_settings().models_dir) / path).is_file():
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def get_custom_model_card(model_id: str) -> dict[str, Any]:
@@ -1165,9 +1364,26 @@ def get_custom_model_card(model_id: str) -> dict[str, Any]:
     from .cache import CacheManager
     from .model_files import vae_payload_from_args
 
-    payload = vae_payload_from_args(manifest.get("engine_args") or {}, repo_id, CacheManager())
+    cache = CacheManager()
+    payload = vae_payload_from_args(manifest.get("engine_args") or {}, repo_id, cache)
     if payload is not None:
         card["vae"] = payload
+
+    transformers = manifest.get("transformers") or []
+    if isinstance(transformers, list):
+        card["transformers"] = [
+            {
+                **variant,
+                "installed": _transformer_variant_installed(
+                    variant,
+                    repo_id,
+                    cache,
+                    bool(manifest.get("is_custom")),
+                ),
+            }
+            for variant in transformers
+            if isinstance(variant, dict)
+        ]
     return card
 
 
