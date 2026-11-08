@@ -14,7 +14,7 @@ Adding a new model = creating a new .json file. No backend code changes.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
@@ -30,10 +30,12 @@ class TransformerVariant:
     tier: str                       # "50x-above" | "50x-below"
     backend: str                    # "lighting" | "svdq"
     steps: int                      # 4 (lighting-4steps) or 20 (svdq full)
+    name: Optional[str] = None      # Human-readable variant name
     prequant: bool = False
     size_gb: float = 0.0
     size_bytes: int = 0
     sha256: Optional[str] = None
+    precision: Optional[str] = None # Optional precision tag
     recommended: bool = False
     recommended_for_gpu: list[str] = field(default_factory=list)
     klein_tier: Optional[str] = None  # Only for Klein family: "30x-below" / "40x" / "50x"
@@ -192,10 +194,27 @@ class ModelSpec:
             if primary:
                 sources = ModelSources(primary=primary, mirror=mirror)
 
-        transformers = [TransformerVariant(**t) for t in data.get("transformers", [])]
-        prequant = [PrequantWeights(**p) for p in data.get("prequant_weights", [])]
-        precision = [PrecisionConfig(**p) for p in data.get("precision_configs", [])]
-        requirements = ModelRequirements(**data.get("requirements", {}))
+        tr_fields = {f.name for f in fields(TransformerVariant)}
+        transformers = [
+            TransformerVariant(**{k: v for k, v in t.items() if k in tr_fields})
+            for t in data.get("transformers", [])
+            if isinstance(t, dict)
+        ]
+        pq_fields = {f.name for f in fields(PrequantWeights)}
+        prequant = [
+            PrequantWeights(**{k: v for k, v in p.items() if k in pq_fields})
+            for p in data.get("prequant_weights", [])
+            if isinstance(p, dict)
+        ]
+        pr_fields = {f.name for f in fields(PrecisionConfig)}
+        precision = [
+            PrecisionConfig(**{k: v for k, v in p.items() if k in pr_fields})
+            for p in data.get("precision_configs", [])
+            if isinstance(p, dict)
+        ]
+        req_fields = {f.name for f in fields(ModelRequirements)}
+        raw_req = data.get("requirements", {})
+        requirements = ModelRequirements(**{k: v for k, v in raw_req.items() if k in req_fields}) if isinstance(raw_req, dict) else ModelRequirements()
 
         is_custom = bool(data.get("is_custom", False))
         local_folder = str(data.get("local_folder") or "").strip()

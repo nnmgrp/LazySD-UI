@@ -229,3 +229,31 @@ def test_normalize_transformers_rejects_non_weight_paths():
             primary_repo="org/qwen-gguf",
             engine="sd_cpp",
         )
+
+
+def test_loader_accepts_transformer_name_and_extra_fields():
+    from backend.registry.loader import ModelSpec
+
+    data = {
+        "id": "qwen_test_turbo",
+        "name": "Qwen Turbo",
+        "family": "qwen",
+        "pipeline": "text_to_image",
+        "transformers": [
+            {
+                "id": "q4_k_m",
+                "name": "Unsloth Q4_K_M Medium",
+                "path": "qwen-turbo.gguf",
+                "tier": "universal",
+                "backend": "sd_cpp",
+                "steps": 8,
+                "unknown_key": "safe_to_ignore",
+            }
+        ],
+        "requirements": {"vram_min_gb": 8, "future_feature_flag": True},
+    }
+
+    spec = ModelSpec.from_dict(data)
+    assert len(spec.transformers) == 1
+    assert spec.transformers[0].id == "q4_k_m"
+    assert spec.transformers[0].name == "Unsloth Q4_K_M Medium"
